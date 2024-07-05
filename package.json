@@ -1,0 +1,56 @@
+{
+  "name": "oxc-node",
+  "packageManager": "pnpm@9.4.0",
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0-alpha.56",
+    "@napi-rs/wasm-runtime": "^0.2.4",
+    "@oxc/node-core": "workspace:*",
+    "@taplo/cli": "^0.7.0",
+    "@types/node": "^20.14.9",
+    "ava": "^6.1.3",
+    "cross-env": "^7.0.3",
+    "husky": "^9.0.11",
+    "lint-staged": "^15.2.7",
+    "oxlint": "^0.5.2",
+    "prettier": "^3.3.2",
+    "typescript": "^5.5.3"
+  },
+  "scripts": {
+    "build:rs": "napi build --platform --release -o packages/core",
+    "format": "taplo fmt && prettier --write . && cargo fmt",
+    "test": "pnpm --filter=integrate-module run test:module"
+  },
+  "lint-staged": {
+    "*.@(js|ts|tsx|yml|yaml|md|json|html)": [
+      "prettier --write"
+    ],
+    "*.@(js|ts|tsx)": [
+      "oxlint --fix"
+    ]
+  },
+  "prettier": {
+    "printWidth": 120,
+    "semi": false,
+    "trailingComma": "all",
+    "singleQuote": true,
+    "arrowParens": "always"
+  },
+  "napi": {
+    "binaryName": "oxc-node",
+    "targets": [
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-linux-android",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-unknown-linux-musl",
+      "aarch64-pc-windows-msvc",
+      "armv7-unknown-linux-gnueabihf",
+      "x86_64-unknown-linux-musl",
+      "i686-pc-windows-msvc",
+      "armv7-linux-androideabi",
+      "wasm32-wasip1-threads"
+    ]
+  }
+}

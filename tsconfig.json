@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ESNext",
+    "moduleResolution": "NodeNext",
+    "module": "NodeNext"
+  },
+  "references": [
+    {
+      "path": "./packages/core"
+    },
+    {
+      "path": "./packages/integrate-module"
+    }
+  ],
+  "include": []
+}

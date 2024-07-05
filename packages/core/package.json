@@ -1,0 +1,19 @@
+{
+  "name": "@oxc/node-core",
+  "version": "0.0.0",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./index.js",
+      "require": "./index.js",
+      "types": "./index.d.ts"
+    },
+    "./esm": {
+      "import": "./esm.mjs"
+    },
+    "./register": {
+      "import": "./register.mjs"
+    }
+  }
+}
