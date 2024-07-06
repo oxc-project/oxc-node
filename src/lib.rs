@@ -18,7 +18,7 @@ use oxc::{
 use oxc_resolver::{ResolveOptions, Resolver, TsconfigOptions, TsconfigReferences};
 use phf::Set;
 
-#[cfg(any(not(target_arch = "arm"), not(target_family = "wasm")))]
+#[cfg(all(not(target_arch = "arm"), not(target_family = "wasm")))]
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
