@@ -19,7 +19,7 @@ tracing      = "0.1"
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt"] } # Omit the `regex` feature
 
-[target.'cfg(not(target_os = "linux"))'.dependencies]
+[target.'cfg(all(not(target_os = "linux"), not(target_family = "wasm")))'.dependencies]
 mimalloc = "0.1"
 
 [target.'cfg(all(target_os = "linux", not(target_arch = "arm")))'.dependencies]
