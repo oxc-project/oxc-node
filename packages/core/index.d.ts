@@ -13,6 +13,8 @@ export declare class Output {
   sourceMap(): string | null
 }
 
+export declare function initTracing(): void
+
 export declare function load(url: string, context: LoadContext, nextLoad: (arg0: string, arg1?: LoadContext | undefined | null) => unknown): unknown | LoadFnOutput
 
 export interface LoadContext {
@@ -47,4 +49,6 @@ export interface ResolveFnOutput {
   url: string
   importAttributes: Record<string, string> | undefined | null
 }
+
+export declare function transform(path: string, code: string): Output
 

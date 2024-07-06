@@ -234,7 +234,7 @@ jobs:
         with:
           image: ${{ steps.docker.outputs.IMAGE }}
           options: -v ${{ steps.docker.outputs.PNPM_STORE_PATH }}:${{ steps.docker.outputs.PNPM_STORE_PATH }} -v ${{ github.workspace }}:${{ github.workspace }} -w ${{ github.workspace }} --platform ${{ steps.docker.outputs.PLATFORM }}
-          run: npm run test
+          run: corepack enable && npm run test
   test-wasi:
     name: Test WASI target
     needs:

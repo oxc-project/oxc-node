@@ -362,5 +362,7 @@ if (!nativeBinding) {
 }
 
 module.exports.Output = nativeBinding.Output
+module.exports.initTracing = nativeBinding.initTracing
 module.exports.load = nativeBinding.load
 module.exports.resolve = nativeBinding.resolve
+module.exports.transform = nativeBinding.transform

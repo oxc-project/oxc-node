@@ -98,8 +98,17 @@ const NODE_MODULES_PATH: &str = "/node_modules/";
 #[cfg(target_os = "windows")]
 const NODE_MODULES_PATH: &str = "\\node_modules\\";
 
+#[cfg(target_family = "wasm")]
+#[napi]
+pub fn init_tracing() {
+    init();
+}
+
 #[cfg(not(target_family = "wasm"))]
-#[napi::module_init]
+#[napi]
+pub fn init_tracing() {}
+
+#[cfg_attr(not(target_family = "wasm"), napi::module_init)]
 fn init() {
     use tracing_subscriber::filter::Targets;
     use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
@@ -140,6 +149,49 @@ impl Output {
             .clone()
             .and_then(|s| s.to_json_string().ok())
     }
+}
+
+#[napi]
+pub fn transform(path: String, code: String) -> Result<Output> {
+    let allocator = Allocator::default();
+    let src_path = Path::new(&path);
+    let source_type = SourceType::from_path(src_path).unwrap_or_default();
+    let ParserReturn {
+        trivias,
+        mut program,
+        errors,
+        ..
+    } = Parser::new(&allocator, &code, source_type).parse();
+    if !errors.is_empty() {
+        for error in &errors {
+            eprintln!("{}", error);
+        }
+        return Err(Error::new(
+            Status::GenericFailure,
+            "Failed to parse source file",
+        ));
+    }
+    let TransformerReturn { errors, .. } = Transformer::new(
+        &allocator,
+        src_path,
+        source_type,
+        &code,
+        trivias,
+        Default::default(),
+    )
+    .build(&mut program);
+
+    if !errors.is_empty() {
+        for error in &errors {
+            eprintln!("{}", error);
+        }
+        return Err(Error::new(
+            Status::GenericFailure,
+            "Failed to transform source file",
+        ));
+    }
+
+    Ok(Output(CodeGenerator::new().build(&program)))
 }
 
 #[napi(object)]
@@ -270,7 +322,18 @@ pub fn resolve(
         {
             return Ok(Either::B(ResolveFnOutput {
                 short_circuit: true,
-                format: Either3::A("module".to_owned()),
+                format: Either3::A(
+                    if resolution
+                        .package_json()
+                        .and_then(|p| p.r#type.as_ref())
+                        .and_then(|t| t.as_str())
+                        .is_some_and(|t| t == "module")
+                    {
+                        "module".to_owned()
+                    } else {
+                        "commonjs".to_owned()
+                    },
+                ),
                 url: if resolution.query().is_some() || resolution.fragment().is_some() {
                     format!("file://{}", resolution.full_path().to_string_lossy())
                 } else {

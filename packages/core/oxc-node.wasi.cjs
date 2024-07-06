@@ -82,15 +82,19 @@ const { instance: __napiInstance, module: __wasiModule, napiModule: __napiModule
 })
 
 function __napi_rs_initialize_modules(__napiInstance) {
-  __napiInstance.exports['__napi_register__Output_struct_0']?.()
-  __napiInstance.exports['__napi_register__Output_impl_3']?.()
-  __napiInstance.exports['__napi_register__ResolveContext_struct_4']?.()
-  __napiInstance.exports['__napi_register__ResolveFnOutput_struct_5']?.()
-  __napiInstance.exports['__napi_register__resolve_6']?.()
-  __napiInstance.exports['__napi_register__LoadContext_struct_7']?.()
-  __napiInstance.exports['__napi_register__LoadFnOutput_struct_8']?.()
-  __napiInstance.exports['__napi_register__load_9']?.()
+  __napiInstance.exports['__napi_register__init_tracing_0']?.()
+  __napiInstance.exports['__napi_register__Output_struct_1']?.()
+  __napiInstance.exports['__napi_register__Output_impl_4']?.()
+  __napiInstance.exports['__napi_register__transform_5']?.()
+  __napiInstance.exports['__napi_register__ResolveContext_struct_6']?.()
+  __napiInstance.exports['__napi_register__ResolveFnOutput_struct_7']?.()
+  __napiInstance.exports['__napi_register__resolve_8']?.()
+  __napiInstance.exports['__napi_register__LoadContext_struct_9']?.()
+  __napiInstance.exports['__napi_register__LoadFnOutput_struct_10']?.()
+  __napiInstance.exports['__napi_register__load_11']?.()
 }
 module.exports.Output = __napiModule.exports.Output
+module.exports.initTracing = __napiModule.exports.initTracing
 module.exports.load = __napiModule.exports.load
 module.exports.resolve = __napiModule.exports.resolve
+module.exports.transform = __napiModule.exports.transform
