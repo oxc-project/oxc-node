@@ -23,6 +23,20 @@ use phf::Set;
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
+    "_http_agent",
+    "_http_client",
+    "_http_common",
+    "_http_incoming",
+    "_http_outgoing",
+    "_http_server",
+    "_stream_duplex",
+    "_stream_passthrough",
+    "_stream_readable",
+    "_stream_transform",
+    "_stream_wrap",
+    "_stream_writable",
+    "_tls_common",
+    "_tls_wrap",
     "assert",
     "assert/strict",
     "async_hooks",
@@ -44,7 +58,6 @@ const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
     "http2",
     "https",
     "inspector",
-    "inspector/promises",
     "module",
     "net",
     "os",
@@ -56,13 +69,13 @@ const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
     "punycode",
     "querystring",
     "readline",
-    "readline/promises",
     "repl",
     "stream",
     "stream/consumers",
     "stream/promises",
     "stream/web",
     "string_decoder",
+    "sys",
     "timers",
     "timers/promises",
     "tls",
@@ -73,9 +86,8 @@ const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
     "util/types",
     "v8",
     "vm",
-    "wasi",
     "worker_threads",
-    "zlib"
+    "zlib",
 };
 
 static RESOLVER: OnceLock<Resolver> = OnceLock::new();
@@ -213,7 +225,7 @@ pub fn resolve(
                 Either::B(output) => output,
             };
             output.short_circuit = true;
-            return Ok::<ResolveFnOutput, Error>(output);
+            Ok::<ResolveFnOutput, Error>(output)
         };
         return env
             .execute_tokio_future(resolve_import_assertion, |_env, o| Ok(o))
@@ -231,7 +243,7 @@ pub fn resolve(
                 .unwrap()
                 .strip_prefix("file://")
                 .map(|p| {
-                    let mut segments = p.split("/").collect::<Vec<_>>();
+                    let mut segments = p.split('/').collect::<Vec<_>>();
                     segments.pop();
                     segments.join("/")
                 })
@@ -260,12 +272,9 @@ pub fn resolve(
                 short_circuit: true,
                 format: Either3::A("module".to_owned()),
                 url: if resolution.query().is_some() || resolution.fragment().is_some() {
-                    format!(
-                        "file://{}",
-                        resolution.full_path().to_string_lossy().to_string()
-                    )
+                    format!("file://{}", resolution.full_path().to_string_lossy())
                 } else {
-                    format!("file://{}", resolution.path().to_string_lossy().to_string())
+                    format!("file://{}", resolution.path().to_string_lossy())
                 },
                 import_attributes: Either3::A(context.import_attributes.clone()),
             }));
@@ -366,7 +375,9 @@ pub fn load(
             Ok(LoadFnOutput {
                 format: output.format,
                 short_circuit: Some(true),
-                source: Some(Either3::A(CodeGenerator::new().build(&program).source_text)),
+                source: Some(Either3::B(Uint8Array::from_string(
+                    CodeGenerator::new().build(&program).source_text,
+                ))),
             })
         } else {
             Ok(LoadFnOutput {
@@ -389,13 +400,13 @@ impl TryAsStr for Either3<String, Uint8Array, Buffer> {
     fn try_as_str(&self) -> Result<&str> {
         match self {
             Either3::A(s) => Ok(s),
-            Either3::B(arr) => std::str::from_utf8(&arr).map_err(|_| {
+            Either3::B(arr) => std::str::from_utf8(arr).map_err(|_| {
                 Error::new(
                     Status::GenericFailure,
                     "Failed to convert Uint8Array to Vec<u8>",
                 )
             }),
-            Either3::C(buf) => std::str::from_utf8(&buf).map_err(|_| {
+            Either3::C(buf) => std::str::from_utf8(buf).map_err(|_| {
                 Error::new(
                     Status::GenericFailure,
                     "Failed to convert Buffer to Vec<u8>",
@@ -408,9 +419,9 @@ impl TryAsStr for Either3<String, Uint8Array, Buffer> {
 fn init_resolver() -> Resolver {
     let tsconfig = env::var("TS_NODE_PROJECT")
         .or_else(|_| env::var("OXC_TSCONFIG_PATH"))
-        .map(|s| Cow::Owned(s))
+        .map(Cow::Owned)
         .unwrap_or(Cow::Borrowed("tsconfig.json"));
-    let tsconfig_full_path = if !tsconfig.starts_with("/") {
+    let tsconfig_full_path = if !tsconfig.starts_with('/') {
         let current = env::current_dir().expect("Failed to get current directory");
         current.join(PathBuf::from(&*tsconfig))
     } else {
