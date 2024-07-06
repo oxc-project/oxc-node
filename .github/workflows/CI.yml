@@ -120,8 +120,8 @@ jobs:
         with:
           name: bindings-${{ matrix.settings.target }}
           path: |
-            ./packages/*.node
-            ./packages/*.wasm
+            ./packages/core/*.node
+            ./packages/core/*.wasm
           if-no-files-found: error
 
   test-macOS-windows-binding:
