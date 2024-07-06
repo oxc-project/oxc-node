@@ -10,7 +10,7 @@ importers:
     devDependencies:
       '@napi-rs/cli':
         specifier: ^3.0.0-alpha.56
-        version: 3.0.0-alpha.56(@emnapi/runtime@1.2.0)
+        version: 3.0.0-alpha.56(@emnapi/runtime@1.2.0)(emnapi@1.2.0)
       '@napi-rs/wasm-runtime':
         specifier: ^0.2.4
         version: 0.2.4
@@ -29,6 +29,9 @@ importers:
       cross-env:
         specifier: ^7.0.3
         version: 7.0.3
+      emnapi:
+        specifier: ^1.2.0
+        version: 1.2.0
       husky:
         specifier: ^9.0.11
         version: 9.0.11
@@ -914,6 +917,14 @@ packages:
     resolution: {integrity: sha512-tJdCJitoy2lrC2ldJcqN4vkqJ00lT+tOWNT1hBJjO/3FDMJa5TTIiYGCKGkn/WfCyOzUMObeohbVTj00fhiLiA==}
     engines: {node: '>=14.16'}
 
+  emnapi@1.2.0:
+    resolution: {integrity: sha512-rcq+dJCcfr08I0XM/57LPRqaUokGfni/+SvhO7NaJthTTjRdohhIy0FQwyC5rR1enAsjkldQg83th8J5hURv0Q==}
+    peerDependencies:
+      node-addon-api: '>= 6.1.0'
+    peerDependenciesMeta:
+      node-addon-api:
+        optional: true
+
   emoji-regex@10.3.0:
     resolution: {integrity: sha512-QpLs9D9v9kArv4lfDEgg1X/gN5XLnf/A6l9cs8SPZLRZR3ZkY9+kwIQTxm+fsSej5UMYGE8fdoaZVIBlqG0XTw==}
 
@@ -1739,7 +1750,7 @@ snapshots:
       - encoding
       - supports-color
 
-  '@napi-rs/cli@3.0.0-alpha.56(@emnapi/runtime@1.2.0)':
+  '@napi-rs/cli@3.0.0-alpha.56(@emnapi/runtime@1.2.0)(emnapi@1.2.0)':
     dependencies:
       '@napi-rs/cross-toolchain': 0.0.16
       '@napi-rs/wasm-tools': 0.0.2
@@ -1756,6 +1767,7 @@ snapshots:
       wasm-sjlj: 1.0.5
     optionalDependencies:
       '@emnapi/runtime': 1.2.0
+      emnapi: 1.2.0
     transitivePeerDependencies:
       - '@napi-rs/cross-toolchain-arm64-target-aarch64'
       - '@napi-rs/cross-toolchain-arm64-target-armv7'
@@ -2417,6 +2429,8 @@ snapshots:
   diff@4.0.2: {}
 
   emittery@1.0.3: {}
+
+  emnapi@1.2.0: {}
 
   emoji-regex@10.3.0: {}
 
