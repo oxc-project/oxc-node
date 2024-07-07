@@ -21,7 +21,8 @@
   "scripts": {
     "build": "napi build --platform --release -o packages/core",
     "format": "taplo fmt && prettier --write . && cargo fmt",
-    "test": "pnpm --filter=integrate-module run test:module"
+    "test": "pnpm --filter=integrate-module run test:module",
+    "prepare": "husky"
   },
   "lint-staged": {
     "*.@(js|ts|tsx|yml|yaml|md|json|html)": [
