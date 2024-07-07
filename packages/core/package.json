@@ -2,7 +2,15 @@
   "name": "@oxc/node-core",
   "version": "0.0.0",
   "main": "./index.js",
+  "browser": "./browser.js",
   "types": "./index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "esm.mjs",
+    "register.mjs",
+    "browser.js"
+  ],
   "exports": {
     ".": {
       "import": "./index.js",
@@ -12,8 +20,24 @@
     "./esm": {
       "import": "./esm.mjs"
     },
+    "./esm.mjs": {
+      "import": "./esm.mjs"
+    },
     "./register": {
       "import": "./register.mjs"
+    },
+    "./register.mjs": {
+      "import": "./register.mjs"
     }
-  }
+  },
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/Brooooooklyn"
+    },
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/Boshen"
+    }
+  ]
 }

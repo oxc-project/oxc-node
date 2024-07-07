@@ -237,3 +237,4 @@ target/
 
 *.node
 *.wasm
+pgo-data

@@ -1,4 +1,18 @@
-/.yarn/**            linguist-vendored
-/.yarn/releases/*    binary
-/.yarn/plugins/**/*  binary
-/.pnp.*              binary linguist-generated
+# Auto detect text files and perform LF normalization
+*        text=auto
+
+
+*.ts    text eol=lf merge=union 
+*.tsx   text eol=lf merge=union 
+*.rs    text eol=lf merge=union 
+*.js    text eol=lf merge=union 
+*.json  text eol=lf merge=union 
+*.debug text eol=lf merge=union 
+
+
+/packages/core/index.js                            linguist-detectable=false
+/packages/core/index.d.ts                          linguist-detectable=false
+/packages/core/oxc-node.wasi-browser.js            linguist-detectable=false
+/packages/core/oxc-node.wasi.cjs                   linguist-detectable=false
+/packages/core/wasi-workser.browser.mjs            linguist-detectable=false
+/packages/core/wasi-worker.mjs                     linguist-detectable=false

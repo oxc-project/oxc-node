@@ -1,5 +1,5 @@
 {
-  "name": "@oxc/node-bench",
+  "name": "bench",
   "version": "0.0.0",
   "private": true,
   "type": "module",

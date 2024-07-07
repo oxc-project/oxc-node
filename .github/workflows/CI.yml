@@ -2,7 +2,7 @@ name: CI
 env:
   DEBUG: napi:*
   APP_NAME: oxc-node
-  OXC_LOG: "debug"
+  OXC_LOG: 'debug'
   MACOSX_DEPLOYMENT_TARGET: '10.13'
   CC: clang
   CARGO_INCREMENTAL: '1'
@@ -299,13 +299,14 @@ jobs:
         run: |
           echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
           npm config set provenance true
-          pnpm napi pre-publish -t npm --package-json-path packages/core/package.json
           if git log -1 --pretty=%B | grep "^v\?[0-9]\+\.[0-9]\+\.[0-9]\+$";
           then
-            npm publish --access public
+            pnpm napi pre-publish -t npm --package-json-path packages/core/package.json
+            pnpm publish --filter=@oxc/node-core --access public
           elif git log -1 --pretty=%B | grep "^v\?[0-9]\+\.[0-9]\+\.[0-9]\+";
           then
-            npm publish --tag next --access public
+            pnpm napi pre-publish -t npm --package-json-path packages/core/package.json
+            pnpm --filter=@oxc/node-core publish --tag next --access public
           else
             echo "Not a release, skipping publish"
           fi

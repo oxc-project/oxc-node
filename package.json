@@ -1,5 +1,7 @@
 {
   "name": "oxc-node",
+  "version": "0.0.0",
+  "private": true,
   "packageManager": "pnpm@9.4.0",
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0-alpha.56",
@@ -38,6 +40,7 @@
   },
   "napi": {
     "binaryName": "oxc-node",
+    "packageName": "@oxc/node-core",
     "targets": [
       "x86_64-apple-darwin",
       "aarch64-apple-darwin",
