@@ -2,6 +2,7 @@ name: CI
 env:
   DEBUG: napi:*
   APP_NAME: oxc-node
+  OXC_LOG: "debug"
   MACOSX_DEPLOYMENT_TARGET: '10.13'
   CC: clang
 permissions:
