@@ -99,7 +99,7 @@ const NODE_MODULES_PATH: &str = "/node_modules/";
 const NODE_MODULES_PATH: &str = "\\node_modules\\";
 
 #[cfg(not(target_os = "windows"))]
-const PATH_PREFIX: &str = "file://";
+const PATH_PREFIX: &str = "file:///";
 
 #[cfg(target_os = "windows")]
 const PATH_PREFIX: &str = "file://";
