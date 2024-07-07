@@ -330,6 +330,16 @@ pub fn resolve(
             .map(|p| p.contains(NODE_MODULES_PATH))
             .unwrap_or(false)
         {
+            #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+            let mut url = if resolution.query().is_some() || resolution.fragment().is_some() {
+                format!("{PATH_PREFIX}{}", resolution.full_path().to_string_lossy())
+            } else {
+                format!("{PATH_PREFIX}{}", resolution.path().to_string_lossy())
+            };
+            #[cfg(target_os = "windows")]
+            {
+                url = url.replace("\\", "/");
+            }
             return Ok(Either::A(ResolveFnOutput {
                 short_circuit: Some(true),
                 format: {
@@ -346,11 +356,7 @@ pub fn resolve(
                     tracing::debug!(path = ?p, format = ?format);
                     Either3::A(format)
                 },
-                url: if resolution.query().is_some() || resolution.fragment().is_some() {
-                    format!("{PATH_PREFIX}{}", resolution.full_path().to_string_lossy())
-                } else {
-                    format!("{PATH_PREFIX}{}", resolution.path().to_string_lossy())
-                },
+                url,
                 import_attributes: Some(Either::A(context.import_attributes.clone())),
             }));
         }
