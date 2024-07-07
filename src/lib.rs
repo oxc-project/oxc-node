@@ -220,11 +220,11 @@ pub fn resolve(
     specifier: String,
     context: ResolveContext,
     next_resolve: Function<(String, Option<ResolveContext>), Unknown>,
-) -> Result<Either<Unknown, ResolveFnOutput>> {
+) -> Result<Either3<Unknown, ResolveFnOutput, PromiseRaw<ResolveFnOutput>>> {
     tracing::debug!(specifier = ?specifier, context = ?context);
     if specifier.starts_with("node:") || specifier.starts_with("nodejs:") {
         tracing::debug!("short-circuiting builtin protocol resolve: {}", specifier);
-        return Ok(Either::B(ResolveFnOutput {
+        return Ok(Either3::B(ResolveFnOutput {
             short_circuit: true,
             format: Either3::A("builtin".to_string()),
             url: specifier,
@@ -233,7 +233,7 @@ pub fn resolve(
     }
     if BUILTIN_MODULES.contains(specifier.as_str()) {
         tracing::debug!("short-circuiting builtin resolve: {}", specifier);
-        return Ok(Either::B(ResolveFnOutput {
+        return Ok(Either3::B(ResolveFnOutput {
             short_circuit: true,
             format: Either3::A("builtin".to_string()),
             url: format!("node:{specifier}"),
@@ -242,7 +242,7 @@ pub fn resolve(
     }
     if specifier.starts_with("data:") {
         tracing::debug!("short-circuiting data URL resolve: {}", specifier);
-        return Ok(Either::B(ResolveFnOutput {
+        return Ok(Either3::B(ResolveFnOutput {
             short_circuit: true,
             format: Either3::C(Null),
             url: specifier,
@@ -253,7 +253,7 @@ pub fn resolve(
     // entrypoint
     if context.parent_url.is_none() {
         tracing::debug!("short-circuiting entrypoint resolve: {}", specifier);
-        return Ok(Either::B(ResolveFnOutput {
+        return Ok(Either3::B(ResolveFnOutput {
             short_circuit: true,
             format: Either3::A("module".to_owned()),
             url: specifier,
@@ -280,8 +280,8 @@ pub fn resolve(
             Ok::<ResolveFnOutput, Error>(output)
         };
         return env
-            .execute_tokio_future(resolve_import_assertion, |_env, o| Ok(o))
-            .map(|promise| Either::A(promise.into_unknown()));
+            .spawn_future(resolve_import_assertion)
+            .map(|promise| Either3::C(promise));
     };
 
     let resolver = RESOLVER.get_or_init(init_resolver);
@@ -320,7 +320,7 @@ pub fn resolve(
             .map(|p| p.contains(NODE_MODULES_PATH))
             .unwrap_or(false)
         {
-            return Ok(Either::B(ResolveFnOutput {
+            return Ok(Either3::B(ResolveFnOutput {
                 short_circuit: true,
                 format: Either3::A(
                     if resolution
@@ -346,7 +346,7 @@ pub fn resolve(
 
     tracing::debug!("default resolve: {}", specifier);
 
-    next_resolve.call((specifier.clone(), None)).map(Either::A)
+    next_resolve.call((specifier.clone(), None)).map(Either3::A)
 }
 
 #[napi(object)]
@@ -365,7 +365,7 @@ pub struct LoadFnOutput {
     pub format: String,
     /// A signal that this hook intends to terminate the chain of `resolve` hooks.
     pub short_circuit: Option<bool>,
-    pub source: Option<Either3<String, Uint8Array, Buffer>>,
+    pub source: Option<Either4<String, Uint8Array, Buffer, Null>>,
 }
 
 #[napi]
@@ -374,7 +374,7 @@ pub fn load(
     url: String,
     context: LoadContext,
     next_load: Function<(String, Option<LoadContext>), Unknown>,
-) -> Result<Either<Unknown, LoadFnOutput>> {
+) -> Result<Either3<Unknown, LoadFnOutput, PromiseRaw<LoadFnOutput>>> {
     tracing::debug!(url = ?url, context = ?context);
     if url.starts_with("data:")
         || context.format == "builtin"
@@ -382,7 +382,7 @@ pub fn load(
         || context.format == "wasm"
     {
         tracing::debug!("short-circuiting load: {}", url);
-        return next_load.call((url, Some(context))).map(Either::A);
+        return next_load.call((url, Some(context))).map(Either3::A);
     }
 
     let loaded = next_load.call((url.clone(), Some(context)))?;
@@ -394,87 +394,92 @@ pub fn load(
             Either::B(output) => output,
         };
         tracing::debug!(url = ?url, format = ?output.format, has_source = output.source.is_some());
-        if let Some(s) = &output.source {
-            let source = s.try_as_str()?;
-            let allocator = Allocator::default();
-            let src_path = Path::new(&url);
-            let source_type = SourceType::from_path(src_path).unwrap_or_default();
-            let ParserReturn {
-                trivias,
-                mut program,
-                errors,
-                ..
-            } = Parser::new(&allocator, source, source_type).parse();
-            if !errors.is_empty() {
-                for error in &errors {
-                    eprintln!("{}", error);
-                }
-                return Err(Error::new(
-                    Status::GenericFailure,
-                    "Failed to parse source file",
-                ));
-            }
-            let TransformerReturn { errors, .. } = Transformer::new(
-                &allocator,
-                src_path,
-                source_type,
-                source,
-                trivias,
-                Default::default(),
-            )
-            .build(&mut program);
-
-            if !errors.is_empty() {
-                for error in &errors {
-                    eprintln!("{}", error);
-                }
-                return Err(Error::new(
-                    Status::GenericFailure,
-                    "Failed to transform source file",
-                ));
-            }
-
-            tracing::debug!("loaded {} format: {}", url, output.format);
-            Ok(LoadFnOutput {
-                format: output.format,
-                short_circuit: Some(true),
-                source: Some(Either3::B(Uint8Array::from_string(
-                    CodeGenerator::new().build(&program).source_text,
-                ))),
-            })
-        } else {
-            Ok(LoadFnOutput {
+        match &output.source {
+            Some(Either4::D(_)) | None => Ok(LoadFnOutput {
                 format: output.format,
                 short_circuit: Some(true),
                 source: output.source,
-            })
+            }),
+            Some(Either4::A(_) | Either4::B(_) | Either4::C(_)) => {
+                let source = output.source.as_ref().unwrap().try_as_str()?;
+                let allocator = Allocator::default();
+                let src_path = Path::new(&url);
+                let source_type = SourceType::from_path(src_path).unwrap_or_default();
+                let ParserReturn {
+                    trivias,
+                    mut program,
+                    errors,
+                    ..
+                } = Parser::new(&allocator, source, source_type).parse();
+                if !errors.is_empty() {
+                    for error in &errors {
+                        eprintln!("{}", error);
+                    }
+                    return Err(Error::new(
+                        Status::GenericFailure,
+                        "Failed to parse source file",
+                    ));
+                }
+                let TransformerReturn { errors, .. } = Transformer::new(
+                    &allocator,
+                    src_path,
+                    source_type,
+                    source,
+                    trivias,
+                    Default::default(),
+                )
+                .build(&mut program);
+
+                if !errors.is_empty() {
+                    for error in &errors {
+                        eprintln!("{}", error);
+                    }
+                    return Err(Error::new(
+                        Status::GenericFailure,
+                        "Failed to transform source file",
+                    ));
+                }
+
+                tracing::debug!("loaded {} format: {}", url, output.format);
+                Ok(LoadFnOutput {
+                    format: output.format,
+                    short_circuit: Some(true),
+                    source: Some(Either4::B(Uint8Array::from_string(
+                        CodeGenerator::new().build(&program).source_text,
+                    ))),
+                })
+            }
         }
     };
 
-    env.execute_tokio_future(load_hook, |_env, r| Ok(r))
-        .map(|promise| Either::A(promise.into_unknown()))
+    env.spawn_future(load_hook)
+        .map(|promise| Either3::C(promise))
 }
 
 trait TryAsStr {
     fn try_as_str(&self) -> Result<&str>;
 }
 
-impl TryAsStr for Either3<String, Uint8Array, Buffer> {
+impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
     fn try_as_str(&self) -> Result<&str> {
         match self {
-            Either3::A(s) => Ok(s),
-            Either3::B(arr) => std::str::from_utf8(arr).map_err(|_| {
+            Either4::A(s) => Ok(s),
+            Either4::B(arr) => std::str::from_utf8(arr).map_err(|_| {
                 Error::new(
                     Status::GenericFailure,
                     "Failed to convert Uint8Array to Vec<u8>",
                 )
             }),
-            Either3::C(buf) => std::str::from_utf8(buf).map_err(|_| {
+            Either4::C(buf) => std::str::from_utf8(buf).map_err(|_| {
                 Error::new(
                     Status::GenericFailure,
                     "Failed to convert Buffer to Vec<u8>",
                 )
             }),
+            Either4::D(_) => Err(Error::new(
+                Status::InvalidArg,
+                "Invalid value type in LoadFnOutput::source",
+            )),
         }
     }
 }
