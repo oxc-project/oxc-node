@@ -512,12 +512,14 @@ fn init_resolver() -> Resolver {
         .or_else(|_| env::var("OXC_TSCONFIG_PATH"))
         .map(Cow::Owned)
         .unwrap_or(Cow::Borrowed("tsconfig.json"));
+    tracing::debug!(tsconfig = ?tsconfig);
     let tsconfig_full_path = if !tsconfig.starts_with('/') {
         let current = env::current_dir().expect("Failed to get current directory");
         current.join(PathBuf::from(&*tsconfig))
     } else {
         PathBuf::from(&*tsconfig)
     };
+    tracing::debug!(tsconfig_full_path = ?tsconfig_full_path);
     Resolver::new(ResolveOptions {
         tsconfig: Some(TsconfigOptions {
             config_file: tsconfig_full_path,
