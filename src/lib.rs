@@ -275,16 +275,14 @@ pub fn resolve(
         match builtin_resolved {
             Either::A(mut output) => {
                 output.short_circuit = Some(true);
-                return Ok(Either::A(output));
+                Ok(Either::A(output))
             }
-            Either::B(mut promise) => {
-                return promise
-                    .then(|mut ctx| {
-                        ctx.value.short_circuit = Some(true);
-                        return Ok(ctx.value);
-                    })
-                    .map(Either::B);
-            }
+            Either::B(mut promise) => promise
+                .then(|mut ctx| {
+                    ctx.value.short_circuit = Some(true);
+                    Ok(ctx.value)
+                })
+                .map(Either::B),
         }
     };
 
