@@ -98,6 +98,12 @@ const NODE_MODULES_PATH: &str = "/node_modules/";
 #[cfg(target_os = "windows")]
 const NODE_MODULES_PATH: &str = "\\node_modules\\";
 
+#[cfg(not(target_os = "windows"))]
+const PATH_PREFIX: &str = "file://";
+
+#[cfg(target_os = "windows")]
+const PATH_PREFIX: &str = "file://";
+
 #[cfg(target_family = "wasm")]
 #[napi]
 pub fn init_tracing() {
@@ -301,7 +307,7 @@ pub fn resolve(
                 .parent_url
                 .as_deref()
                 .unwrap()
-                .strip_prefix("file://")
+                .strip_prefix(PATH_PREFIX)
                 .and_then(|p| Path::new(p).parent())
             {
                 tracing::debug!(directory = ?parent);
@@ -341,9 +347,9 @@ pub fn resolve(
                     Either3::A(format)
                 },
                 url: if resolution.query().is_some() || resolution.fragment().is_some() {
-                    format!("file://{}", resolution.full_path().to_string_lossy())
+                    format!("{PATH_PREFIX}{}", resolution.full_path().to_string_lossy())
                 } else {
-                    format!("file://{}", resolution.path().to_string_lossy())
+                    format!("{PATH_PREFIX}{}", resolution.path().to_string_lossy())
                 },
                 import_attributes: Some(Either::A(context.import_attributes.clone())),
             }));
