@@ -294,14 +294,10 @@ pub fn resolve(
                 .as_deref()
                 .unwrap()
                 .strip_prefix("file://")
-                .map(|p| {
-                    let mut segments = p.split('/').collect::<Vec<_>>();
-                    segments.pop();
-                    segments.join("/")
-                })
+                .and_then(|p| Path::new(p).parent())
             {
                 tracing::debug!(directory = ?parent);
-                Ok(PathBuf::from(parent))
+                Ok(parent)
             } else {
                 Err(Error::new(
                     Status::GenericFailure,
