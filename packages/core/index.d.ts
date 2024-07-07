@@ -13,7 +13,9 @@ export declare class Output {
   sourceMap(): string | null
 }
 
-export declare function load(url: string, context: LoadContext, nextLoad: (arg0: string, arg1?: LoadContext | undefined | null) => unknown): unknown | LoadFnOutput
+export declare function initTracing(): void
+
+export declare function load(url: string, context: LoadContext, nextLoad: (arg0: string, arg1?: LoadContext | undefined | null) => LoadFnOutput | Promise<LoadFnOutput>): LoadFnOutput | Promise<LoadFnOutput>
 
 export interface LoadContext {
   /** Export conditions of the relevant `package.json` */
@@ -28,10 +30,10 @@ export interface LoadFnOutput {
   format: string
   /** A signal that this hook intends to terminate the chain of `resolve` hooks. */
   shortCircuit?: boolean
-  source?: string | Uint8Array | Buffer
+  source?: string | Uint8Array | Buffer | null
 }
 
-export declare function resolve(specifier: string, context: ResolveContext, nextResolve: (arg0: string, arg1?: ResolveContext | undefined | null) => unknown): ResolveFnOutput | Promise<ResolveFnOutput>
+export declare function resolve(specifier: string, context: ResolveContext, nextResolve: (arg0: string, arg1?: ResolveContext | undefined | null) => ResolveFnOutput | Promise<ResolveFnOutput>): ResolveFnOutput | Promise<ResolveFnOutput>
 
 export interface ResolveContext {
   /** Export conditions of the relevant `package.json` */
@@ -43,8 +45,10 @@ export interface ResolveContext {
 
 export interface ResolveFnOutput {
   format: string | undefined | null
-  shortCircuit: boolean
+  shortCircuit?: boolean
   url: string
-  importAttributes: Record<string, string> | undefined | null
+  importAttributes?: Record<string, string> | null
 }
+
+export declare function transform(path: string, code: string): Output
 

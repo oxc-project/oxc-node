@@ -18,11 +18,25 @@ use oxc::{
 use oxc_resolver::{ResolveOptions, Resolver, TsconfigOptions, TsconfigReferences};
 use phf::Set;
 
-#[cfg(any(not(target_arch = "arm"), not(target_family = "wasm")))]
+#[cfg(all(not(target_arch = "arm"), not(target_family = "wasm")))]
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
+    "_http_agent",
+    "_http_client",
+    "_http_common",
+    "_http_incoming",
+    "_http_outgoing",
+    "_http_server",
+    "_stream_duplex",
+    "_stream_passthrough",
+    "_stream_readable",
+    "_stream_transform",
+    "_stream_wrap",
+    "_stream_writable",
+    "_tls_common",
+    "_tls_wrap",
     "assert",
     "assert/strict",
     "async_hooks",
@@ -44,7 +58,6 @@ const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
     "http2",
     "https",
     "inspector",
-    "inspector/promises",
     "module",
     "net",
     "os",
@@ -56,13 +69,13 @@ const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
     "punycode",
     "querystring",
     "readline",
-    "readline/promises",
     "repl",
     "stream",
     "stream/consumers",
     "stream/promises",
     "stream/web",
     "string_decoder",
+    "sys",
     "timers",
     "timers/promises",
     "tls",
@@ -73,9 +86,8 @@ const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
     "util/types",
     "v8",
     "vm",
-    "wasi",
     "worker_threads",
-    "zlib"
+    "zlib",
 };
 
 static RESOLVER: OnceLock<Resolver> = OnceLock::new();
@@ -86,8 +98,23 @@ const NODE_MODULES_PATH: &str = "/node_modules/";
 #[cfg(target_os = "windows")]
 const NODE_MODULES_PATH: &str = "\\node_modules\\";
 
+#[cfg(not(target_os = "windows"))]
+const PATH_PREFIX: &str = "file://";
+
+#[cfg(target_os = "windows")]
+const PATH_PREFIX: &str = "file:///";
+
+#[cfg(target_family = "wasm")]
+#[napi]
+pub fn init_tracing() {
+    init();
+}
+
 #[cfg(not(target_family = "wasm"))]
-#[napi::module_init]
+#[napi]
+pub fn init_tracing() {}
+
+#[cfg_attr(not(target_family = "wasm"), napi::module_init)]
 fn init() {
     use tracing_subscriber::filter::Targets;
     use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
@@ -130,6 +157,49 @@ impl Output {
     }
 }
 
+#[napi]
+pub fn transform(path: String, code: String) -> Result<Output> {
+    let allocator = Allocator::default();
+    let src_path = Path::new(&path);
+    let source_type = SourceType::from_path(src_path).unwrap_or_default();
+    let ParserReturn {
+        trivias,
+        mut program,
+        errors,
+        ..
+    } = Parser::new(&allocator, &code, source_type).parse();
+    if !errors.is_empty() {
+        for error in &errors {
+            eprintln!("{}", error);
+        }
+        return Err(Error::new(
+            Status::GenericFailure,
+            "Failed to parse source file",
+        ));
+    }
+    let TransformerReturn { errors, .. } = Transformer::new(
+        &allocator,
+        src_path,
+        source_type,
+        &code,
+        trivias,
+        Default::default(),
+    )
+    .build(&mut program);
+
+    if !errors.is_empty() {
+        for error in &errors {
+            eprintln!("{}", error);
+        }
+        return Err(Error::new(
+            Status::GenericFailure,
+            "Failed to transform source file",
+        ));
+    }
+
+    Ok(Output(CodeGenerator::new().build(&program)))
+}
+
 #[napi(object)]
 #[derive(Debug)]
 pub struct ResolveContext {
@@ -145,57 +215,76 @@ pub struct ResolveContext {
 #[napi(object)]
 pub struct ResolveFnOutput {
     pub format: Either3<String, Undefined, Null>,
-    pub short_circuit: bool,
+    pub short_circuit: Option<bool>,
     pub url: String,
-    pub import_attributes: Either3<HashMap<String, String>, Undefined, Null>,
+    pub import_attributes: Option<Either<HashMap<String, String>, Null>>,
 }
 
 #[napi(ts_return_type = "ResolveFnOutput | Promise<ResolveFnOutput>")]
 pub fn resolve(
-    env: Env,
     specifier: String,
     context: ResolveContext,
-    next_resolve: Function<(String, Option<ResolveContext>), Unknown>,
-) -> Result<Either<Unknown, ResolveFnOutput>> {
+    next_resolve: Function<
+        (String, Option<ResolveContext>),
+        Either<ResolveFnOutput, PromiseRaw<ResolveFnOutput>>,
+    >,
+) -> Result<Either<ResolveFnOutput, PromiseRaw<ResolveFnOutput>>> {
     tracing::debug!(specifier = ?specifier, context = ?context);
     if specifier.starts_with("node:") || specifier.starts_with("nodejs:") {
         tracing::debug!("short-circuiting builtin protocol resolve: {}", specifier);
-        return Ok(Either::B(ResolveFnOutput {
-            short_circuit: true,
+        return Ok(Either::A(ResolveFnOutput {
+            short_circuit: Some(true),
             format: Either3::A("builtin".to_string()),
             url: specifier,
-            import_attributes: Either3::B(()),
+            import_attributes: None,
         }));
     }
     if BUILTIN_MODULES.contains(specifier.as_str()) {
         tracing::debug!("short-circuiting builtin resolve: {}", specifier);
-        return Ok(Either::B(ResolveFnOutput {
-            short_circuit: true,
+        return Ok(Either::A(ResolveFnOutput {
+            short_circuit: Some(true),
             format: Either3::A("builtin".to_string()),
             url: format!("node:{specifier}"),
-            import_attributes: Either3::B(()),
+            import_attributes: None,
         }));
     }
     if specifier.starts_with("data:") {
         tracing::debug!("short-circuiting data URL resolve: {}", specifier);
-        return Ok(Either::B(ResolveFnOutput {
-            short_circuit: true,
+        return Ok(Either::A(ResolveFnOutput {
+            short_circuit: Some(true),
             format: Either3::C(Null),
             url: specifier,
-            import_attributes: Either3::B(()),
+            import_attributes: None,
         }));
     }
 
     // entrypoint
     if context.parent_url.is_none() {
         tracing::debug!("short-circuiting entrypoint resolve: {}", specifier);
-        return Ok(Either::B(ResolveFnOutput {
-            short_circuit: true,
+        return Ok(Either::A(ResolveFnOutput {
+            short_circuit: Some(true),
             format: Either3::A("module".to_owned()),
             url: specifier,
-            import_attributes: Either3::B(()),
+            import_attributes: None,
         }));
     }
+
+    let add_short_circuit = |context: ResolveContext| {
+        let builtin_resolved = next_resolve.call((specifier.clone(), Some(context)))?;
+
+        match builtin_resolved {
+            Either::A(mut output) => {
+                output.short_circuit = Some(true);
+                Ok(Either::A(output))
+            }
+            Either::B(mut promise) => promise
+                .then(|mut ctx| {
+                    ctx.value.short_circuit = Some(true);
+                    Ok(ctx.value)
+                })
+                .map(Either::B),
+        }
+    };
 
     // import attributes
     if !context.import_attributes.is_empty() {
@@ -204,20 +293,7 @@ pub fn resolve(
             specifier,
             context.import_attributes
         );
-        let builtin_resolved = next_resolve.call((specifier.clone(), Some(context)))?;
-        let narrow_to_resolved_result: Either<Promise<ResolveFnOutput>, ResolveFnOutput> =
-            FromNapiValue::from_unknown(builtin_resolved)?;
-        let resolve_import_assertion = async {
-            let mut output: ResolveFnOutput = match narrow_to_resolved_result {
-                Either::A(promise) => promise.await?,
-                Either::B(output) => output,
-            };
-            output.short_circuit = true;
-            return Ok::<ResolveFnOutput, Error>(output);
-        };
-        return env
-            .execute_tokio_future(resolve_import_assertion, |_env, o| Ok(o))
-            .map(|promise| Either::A(promise.into_unknown()));
+        return add_short_circuit(context);
     };
 
     let resolver = RESOLVER.get_or_init(init_resolver);
@@ -229,15 +305,11 @@ pub fn resolve(
                 .parent_url
                 .as_deref()
                 .unwrap()
-                .strip_prefix("file://")
-                .map(|p| {
-                    let mut segments = p.split("/").collect::<Vec<_>>();
-                    segments.pop();
-                    segments.join("/")
-                })
+                .strip_prefix(PATH_PREFIX)
+                .and_then(|p| Path::new(p).parent())
             {
                 tracing::debug!(directory = ?parent);
-                Ok(PathBuf::from(parent))
+                Ok(parent)
             } else {
                 Err(Error::new(
                     Status::GenericFailure,
@@ -256,25 +328,41 @@ pub fn resolve(
             .map(|p| p.contains(NODE_MODULES_PATH))
             .unwrap_or(false)
         {
-            return Ok(Either::B(ResolveFnOutput {
-                short_circuit: true,
-                format: Either3::A("module".to_owned()),
-                url: if resolution.query().is_some() || resolution.fragment().is_some() {
-                    format!(
-                        "file://{}",
-                        resolution.full_path().to_string_lossy().to_string()
-                    )
-                } else {
-                    format!("file://{}", resolution.path().to_string_lossy().to_string())
+            #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+            let mut url = if resolution.query().is_some() || resolution.fragment().is_some() {
+                format!("{PATH_PREFIX}{}", resolution.full_path().to_string_lossy())
+            } else {
+                format!("{PATH_PREFIX}{}", resolution.path().to_string_lossy())
+            };
+            #[cfg(target_os = "windows")]
+            {
+                url = url.replace("\\", "/");
+            }
+            return Ok(Either::A(ResolveFnOutput {
+                short_circuit: Some(true),
+                format: {
+                    let format = if resolution
+                        .package_json()
+                        .and_then(|p| p.r#type.as_ref())
+                        .and_then(|t| t.as_str())
+                        .is_some_and(|t| t == "module")
+                    {
+                        "module".to_owned()
+                    } else {
+                        "commonjs".to_owned()
+                    };
+                    tracing::debug!(path = ?p, format = ?format);
+                    Either3::A(format)
                 },
-                import_attributes: Either3::A(context.import_attributes.clone()),
+                url,
+                import_attributes: Some(Either::A(context.import_attributes.clone())),
             }));
         }
     }
 
     tracing::debug!("default resolve: {}", specifier);
 
-    next_resolve.call((specifier.clone(), None)).map(Either::A)
+    add_short_circuit(context)
 }
 
 #[napi(object)]
@@ -293,16 +381,18 @@ pub struct LoadFnOutput {
     pub format: String,
     /// A signal that this hook intends to terminate the chain of `resolve` hooks.
     pub short_circuit: Option<bool>,
-    pub source: Option<Either3<String, Uint8Array, Buffer>>,
+    pub source: Option<Either4<String, Uint8Array, Buffer, Null>>,
 }
 
 #[napi]
 pub fn load(
-    env: Env,
     url: String,
     context: LoadContext,
-    next_load: Function<(String, Option<LoadContext>), Unknown>,
-) -> Result<Either<Unknown, LoadFnOutput>> {
+    next_load: Function<
+        (String, Option<LoadContext>),
+        Either<LoadFnOutput, PromiseRaw<LoadFnOutput>>,
+    >,
+) -> Result<Either<LoadFnOutput, PromiseRaw<LoadFnOutput>>> {
     tracing::debug!(url = ?url, context = ?context);
     if url.starts_with("data:")
         || context.format == "builtin"
@@ -310,23 +400,48 @@ pub fn load(
         || context.format == "wasm"
     {
         tracing::debug!("short-circuiting load: {}", url);
-        return next_load.call((url, Some(context))).map(Either::A);
+        return next_load.call((url, Some(context)));
     }
 
     let loaded = next_load.call((url.clone(), Some(context)))?;
-    let narrow_to_loaded_result: Either<Promise<LoadFnOutput>, LoadFnOutput> =
-        FromNapiValue::from_unknown(loaded)?;
-    let load_hook = async move {
-        let output: LoadFnOutput = match narrow_to_loaded_result {
-            Either::A(promise) => promise.await?,
-            Either::B(output) => output,
-        };
-        tracing::debug!(url = ?url, format = ?output.format, has_source = output.source.is_some());
-        if let Some(s) = &output.source {
-            let source = s.try_as_str()?;
+    match loaded {
+        Either::A(output) => Ok(Either::A(oxc_transform(url, output)?)),
+        Either::B(mut promise) => promise
+            .then(move |ctx| oxc_transform(url, ctx.value))
+            .map(Either::B),
+    }
+}
+
+fn oxc_transform(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
+    match &output.source {
+        Some(Either4::D(_)) | None => {
+            tracing::debug!("No source code to transform {}", url);
+            Ok(LoadFnOutput {
+                format: output.format,
+                short_circuit: Some(true),
+                source: output.source,
+            })
+        }
+        Some(Either4::A(_) | Either4::B(_) | Either4::C(_)) => {
+            let source = output.source.as_ref().unwrap().try_as_str()?;
             let allocator = Allocator::default();
             let src_path = Path::new(&url);
-            let source_type = SourceType::from_path(src_path).unwrap_or_default();
+            let jsx = src_path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext == "tsx" || ext == "jsx")
+                .unwrap_or_default();
+            tracing::debug!(url = ?url, jsx = ?jsx, src_path = ?src_path, "running oxc transform");
+            let source_type = match output.format.as_str() {
+                "commonjs" => SourceType::default().with_script(true).with_jsx(jsx),
+                "module" => SourceType::default().with_module(true).with_jsx(jsx),
+                _ => {
+                    return Err(Error::new(
+                        Status::InvalidArg,
+                        format!("Unknown module format {}", output.format),
+                    ))
+                }
+            };
             let ParserReturn {
                 trivias,
                 mut program,
@@ -339,7 +454,7 @@ pub fn load(
                 }
                 return Err(Error::new(
                     Status::GenericFailure,
-                    "Failed to parse source file",
+                    format!("Failed to parse source file {}", url),
                 ));
             }
             let TransformerReturn { errors, .. } = Transformer::new(
@@ -366,41 +481,38 @@ pub fn load(
             Ok(LoadFnOutput {
                 format: output.format,
                 short_circuit: Some(true),
-                source: Some(Either3::A(CodeGenerator::new().build(&program).source_text)),
-            })
-        } else {
-            Ok(LoadFnOutput {
-                format: output.format,
-                short_circuit: Some(true),
-                source: output.source,
+                source: Some(Either4::B(Uint8Array::from_string(
+                    CodeGenerator::new().build(&program).source_text,
+                ))),
             })
         }
-    };
-
-    env.execute_tokio_future(load_hook, |_env, r| Ok(r))
-        .map(|promise| Either::A(promise.into_unknown()))
+    }
 }
 
 trait TryAsStr {
     fn try_as_str(&self) -> Result<&str>;
 }
 
-impl TryAsStr for Either3<String, Uint8Array, Buffer> {
+impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
     fn try_as_str(&self) -> Result<&str> {
         match self {
-            Either3::A(s) => Ok(s),
-            Either3::B(arr) => std::str::from_utf8(&arr).map_err(|_| {
+            Either4::A(s) => Ok(s),
+            Either4::B(arr) => std::str::from_utf8(arr).map_err(|_| {
                 Error::new(
                     Status::GenericFailure,
                     "Failed to convert Uint8Array to Vec<u8>",
                 )
             }),
-            Either3::C(buf) => std::str::from_utf8(&buf).map_err(|_| {
+            Either4::C(buf) => std::str::from_utf8(buf).map_err(|_| {
                 Error::new(
                     Status::GenericFailure,
                     "Failed to convert Buffer to Vec<u8>",
                 )
             }),
+            Either4::D(_) => Err(Error::new(
+                Status::InvalidArg,
+                "Invalid value type in LoadFnOutput::source",
+            )),
         }
     }
 }
@@ -408,14 +520,16 @@ impl TryAsStr for Either3<String, Uint8Array, Buffer> {
 fn init_resolver() -> Resolver {
     let tsconfig = env::var("TS_NODE_PROJECT")
         .or_else(|_| env::var("OXC_TSCONFIG_PATH"))
-        .map(|s| Cow::Owned(s))
+        .map(Cow::Owned)
         .unwrap_or(Cow::Borrowed("tsconfig.json"));
-    let tsconfig_full_path = if !tsconfig.starts_with("/") {
+    tracing::debug!(tsconfig = ?tsconfig);
+    let tsconfig_full_path = if !tsconfig.starts_with('/') {
         let current = env::current_dir().expect("Failed to get current directory");
         current.join(PathBuf::from(&*tsconfig))
     } else {
         PathBuf::from(&*tsconfig)
     };
+    tracing::debug!(tsconfig_full_path = ?tsconfig_full_path);
     Resolver::new(ResolveOptions {
         tsconfig: Some(TsconfigOptions {
             config_file: tsconfig_full_path,

@@ -3,3 +3,4 @@ packages/*/index.js
 packages/*/browser.js
 packages/*/wasi-worker*
 packages/*/index.d.ts
+pnpm-lock.yaml
