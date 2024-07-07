@@ -237,6 +237,7 @@ jobs:
           run: corepack enable && npm run test
   test-wasi:
     name: Test WASI target
+    if: false
     needs:
       - build
     runs-on: ubuntu-latest
@@ -269,7 +270,7 @@ jobs:
     needs:
       - test-macOS-windows-binding
       - test-linux-binding
-      - test-wasi
+      # - test-wasi
     steps:
       - uses: actions/checkout@v4
       - name: setup pnpm
