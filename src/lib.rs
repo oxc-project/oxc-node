@@ -15,7 +15,9 @@ use oxc::{
     span::SourceType,
     transformer::{Transformer, TransformerReturn},
 };
-use oxc_resolver::{ResolveOptions, Resolver, TsconfigOptions, TsconfigReferences};
+use oxc_resolver::{
+    EnforceExtension, ResolveOptions, Resolver, TsconfigOptions, TsconfigReferences,
+};
 use phf::Set;
 
 #[cfg(all(not(target_arch = "arm"), not(target_family = "wasm")))]
@@ -549,6 +551,19 @@ fn init_resolver() -> Resolver {
                 ".cjs".to_owned(),
                 vec![".cjs".to_owned(), ".cts".to_owned()],
             ),
+        ],
+        enforce_extension: EnforceExtension::Auto,
+        extensions: vec![
+            ".js".to_owned(),
+            ".mjs".to_owned(),
+            ".cjs".to_owned(),
+            ".ts".to_owned(),
+            ".tsx".to_owned(),
+            ".mts".to_owned(),
+            ".cts".to_owned(),
+            ".json".to_owned(),
+            ".wasm".to_owned(),
+            ".node".to_owned(),
         ],
         ..Default::default()
     })
