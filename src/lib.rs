@@ -381,9 +381,9 @@ pub struct LoadContext {
 #[napi(object)]
 pub struct LoadFnOutput {
     pub format: String,
-    /// A signal that this hook intends to terminate the chain of `resolve` hooks.
-    pub short_circuit: Option<bool>,
     pub source: Option<Either4<String, Uint8Array, Buffer, Null>>,
+    #[napi(js_name = "responseURL")]
+    pub response_url: Option<String>,
 }
 
 #[napi]
@@ -420,8 +420,8 @@ fn oxc_transform(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
             tracing::debug!("No source code to transform {}", url);
             Ok(LoadFnOutput {
                 format: output.format,
-                short_circuit: Some(true),
-                source: output.source,
+                source: None,
+                response_url: Some(url),
             })
         }
         Some(Either4::A(_) | Either4::B(_) | Either4::C(_)) => {
@@ -482,10 +482,10 @@ fn oxc_transform(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
             tracing::debug!("loaded {} format: {}", url, output.format);
             Ok(LoadFnOutput {
                 format: output.format,
-                short_circuit: Some(true),
                 source: Some(Either4::B(Uint8Array::from_string(
                     CodeGenerator::new().build(&program).source_text,
                 ))),
+                response_url: Some(url),
             })
         }
     }

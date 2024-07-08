@@ -2,7 +2,7 @@
   "name": "oxc-node",
   "version": "0.0.0",
   "private": true,
-  "packageManager": "pnpm@9.4.0",
+  "packageManager": "pnpm@9.5.0",
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0-alpha.56",
     "@napi-rs/wasm-runtime": "^0.2.4",
@@ -14,6 +14,7 @@
     "emnapi": "^1.2.0",
     "husky": "^9.0.11",
     "lint-staged": "^15.2.7",
+    "npm-run-all2": "^6.2.2",
     "oxlint": "^0.5.2",
     "prettier": "^3.3.2",
     "typescript": "^5.5.3"
@@ -22,7 +23,7 @@
     "build": "napi build --platform --release -o packages/core",
     "format": "taplo fmt && prettier --write . && cargo fmt",
     "lint": "oxlint",
-    "test": "pnpm --filter=integrate-module run test:module",
+    "test": "pnpm --filter=integrate-module* run test",
     "prepare": "husky"
   },
   "lint-staged": {

@@ -13,6 +13,7 @@ import { bar } from './subdirectory/bar'
 import { baz } from './subdirectory/index'
 import { Component } from './component'
 import './js-module'
+import babelGeneratedDoubleDefault from './babel-generated-double-default'
 
 const { foo: fooWithQuery } = await import(`./foo.js?q=${Date.now()}`)
 
@@ -55,4 +56,8 @@ await test('resolve @napi-rs projects', () => {
 
 await test('resolve simple-git', () => {
   assert.ok(simpleGit)
+})
+
+await test('import default from babel-generated cjs file', () => {
+  assert.equal(babelGeneratedDoubleDefault.default(), 'default.default')
 })
