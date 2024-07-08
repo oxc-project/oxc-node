@@ -11,6 +11,9 @@
     },
     {
       "path": "./packages/integrate-module"
+    },
+    {
+      "path": "./packages/integrate-module-bundler"
     }
   ],
   "include": []

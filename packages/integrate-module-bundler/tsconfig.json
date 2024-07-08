@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "composite": true,
+    "jsx": "react-jsx",
+    "outDir": "dist",
+    "baseUrl": "./",
+    "paths": {
+      "@subdirectory/*": ["./src/subdirectory/*"]
+    }
+  },
+  "include": ["src", "package.json"]
+}
