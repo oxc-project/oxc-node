@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { transformSync } from '@swc/core'
-import { transform as oxc } from '@oxc/node-core'
+import { transform as oxc } from '@oxc-node/core'
 import { Bench } from 'tinybench'
 import { fileURLToPath } from 'node:url'
 

@@ -6,7 +6,7 @@
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0-alpha.56",
     "@napi-rs/wasm-runtime": "^0.2.4",
-    "@oxc/node-core": "workspace:*",
+    "@oxc-node/core": "workspace:*",
     "@taplo/cli": "^0.7.0",
     "@types/node": "^20.14.9",
     "ava": "^6.1.3",

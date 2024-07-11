@@ -8,12 +8,12 @@
     "p-timeout": "^6.1.2"
   },
   "scripts": {
-    "test": "node --import @oxc/node-core/register ./src/index.ts"
+    "test": "node --import @oxc-node/core/register ./src/index.ts"
   },
   "devDependencies": {
     "@napi-rs/simple-git": "^0.1.16",
     "@napi-rs/wasm-runtime": "^0.2.4",
-    "@oxc/node-core": "workspace:*",
+    "@oxc-node/core": "workspace:*",
     "@types/node": "^20.14.9",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",

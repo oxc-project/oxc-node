@@ -14,7 +14,7 @@ importers:
       '@napi-rs/wasm-runtime':
         specifier: ^0.2.4
         version: 0.2.4
-      '@oxc/node-core':
+      '@oxc-node/core':
         specifier: workspace:*
         version: link:packages/core
       '@taplo/cli':
@@ -56,7 +56,7 @@ importers:
 
   packages/bench:
     devDependencies:
-      '@oxc/node-core':
+      '@oxc-node/core':
         specifier: workspace:*
         version: link:../core
       '@swc/core':
@@ -86,7 +86,7 @@ importers:
       '@napi-rs/wasm-runtime':
         specifier: ^0.2.4
         version: 0.2.4
-      '@oxc/node-core':
+      '@oxc-node/core':
         specifier: workspace:*
         version: link:../core
       '@types/node':
@@ -126,7 +126,7 @@ importers:
       '@napi-rs/wasm-runtime':
         specifier: ^0.2.4
         version: 0.2.4
-      '@oxc/node-core':
+      '@oxc-node/core':
         specifier: workspace:*
         version: link:../core
       '@types/node':
@@ -153,46 +153,6 @@ importers:
       tsx:
         specifier: ^4.16.2
         version: 4.16.2
-
-  packages/integrate-module-bundler/dist:
-    dependencies:
-      file-type:
-        specifier: ^19.0.0
-        version: 19.0.0
-      p-timeout:
-        specifier: ^6.1.2
-        version: 6.1.2
-    devDependencies:
-      '@napi-rs/simple-git':
-        specifier: ^0.1.16
-        version: 0.1.16
-      '@napi-rs/wasm-runtime':
-        specifier: ^0.2.4
-        version: 0.2.4
-      '@oxc/node-core':
-        specifier: workspace:*
-        version: link:../../core
-      '@types/node':
-        specifier: ^20.14.9
-        version: 20.14.9
-      '@types/react':
-        specifier: ^18.3.3
-        version: 18.3.3
-      '@types/react-dom':
-        specifier: ^18.3.0
-        version: 18.3.0
-      react:
-        specifier: ^18.3.1
-        version: 18.3.1
-      react-dom:
-        specifier: ^18.3.1
-        version: 18.3.1(react@18.3.1)
-      simple-git:
-        specifier: ^3.25.0
-        version: 3.25.0
-      ts-node:
-        specifier: ^10.9.2
-        version: 10.9.2(@swc/core@1.6.7)(@types/node@20.14.9)(typescript@5.5.3)
 
   packages/integrate-module-bundler/src/babel-generated-double-default: {}
 
@@ -3627,10 +3587,6 @@ packages:
     resolution: {integrity: sha512-YuKoXDAhBYxY7SfOKxHBDoSyENFeW5VvIIQp2TGQuit8gpK6MnWaQelBKxso72DoxTZfZdcP3W90LqpSkgPzLQ==}
     engines: {node: ^14.17.0 || ^16.13.0 || >=18.0.0}
 
-  validate-npm-package-name@5.0.1:
-    resolution: {integrity: sha512-OljLrQ9SQdOUqTaQxqL5dEfZWrXExyyWsozYlAWFawPVNuD83igl7uJD2RTkNMbniIYgt8l81eCJGIdQF7avLQ==}
-    engines: {node: ^14.17.0 || ^16.13.0 || >=18.0.0}
-
   wasm-sjlj@1.0.5:
     resolution: {integrity: sha512-Z/MHJeOkAvJJVWnGX3/YZGYldGaawZbYHX4ldYG9kLhcdB8H31F5x66M7Zc4BP/7pg0aLsusQj1629m2B3Rilg==}
 
@@ -5727,7 +5683,7 @@ snapshots:
       read-package-json: 6.0.4
       semver: 7.6.2
       validate-npm-package-license: 3.0.4
-      validate-npm-package-name: 5.0.1
+      validate-npm-package-name: 5.0.0
 
   inquirer@8.2.6:
     dependencies:
@@ -6390,14 +6346,14 @@ snapshots:
       hosted-git-info: 6.1.1
       proc-log: 3.0.0
       semver: 7.6.2
-      validate-npm-package-name: 5.0.1
+      validate-npm-package-name: 5.0.0
 
   npm-package-arg@11.0.2:
     dependencies:
       hosted-git-info: 7.0.2
       proc-log: 4.2.0
       semver: 7.6.2
-      validate-npm-package-name: 5.0.1
+      validate-npm-package-name: 5.0.0
 
   npm-package-arg@8.1.1:
     dependencies:
@@ -6708,7 +6664,7 @@ snapshots:
   path-scurry@1.11.1:
     dependencies:
       lru-cache: 10.4.3
-      minipass: 7.1.2
+      minipass: 5.0.0
 
   path-type@3.0.0:
     dependencies:
@@ -7314,8 +7270,6 @@ snapshots:
   validate-npm-package-name@5.0.0:
     dependencies:
       builtins: 5.1.0
-
-  validate-npm-package-name@5.0.1: {}
 
   wasm-sjlj@1.0.5: {}
 
