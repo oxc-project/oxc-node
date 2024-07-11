@@ -28,9 +28,8 @@ export interface LoadContext {
 
 export interface LoadFnOutput {
   format: string
-  /** A signal that this hook intends to terminate the chain of `resolve` hooks. */
-  shortCircuit?: boolean
   source?: string | Uint8Array | Buffer | null
+  responseURL?: string
 }
 
 export declare function resolve(specifier: string, context: ResolveContext, nextResolve: (arg0: string, arg1?: ResolveContext | undefined | null) => ResolveFnOutput | Promise<ResolveFnOutput>): ResolveFnOutput | Promise<ResolveFnOutput>
