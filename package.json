@@ -21,6 +21,7 @@
     "typescript": "^5.5.3"
   },
   "scripts": {
+    "bench": "pnpm --filter=bench bench",
     "build": "napi build --platform --release -o packages/core --package-json-path packages/core/package.json",
     "format": "taplo fmt && prettier --write . && cargo fmt",
     "lint": "oxlint",
