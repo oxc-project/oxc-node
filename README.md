@@ -4,12 +4,12 @@
 
 Fast and friendly Node.js devtools based on [OXC](https://github.com/oxc-project/oxc)
 
-## `@oxc/node-core`
+## `@oxc-node/core`
 
 Transformer and register for Node.js projects.
 
 ### Usage
 
 ```bash
-node --import @oxc/node-core ./path/to/entry.ts
+node --import @oxc-node/core ./path/to/entry.ts
 ```

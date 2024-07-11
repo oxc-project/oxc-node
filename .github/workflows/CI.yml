@@ -320,8 +320,8 @@ jobs:
           path: artifacts
       - name: create npm dirs
         run: |
-          pnpm napi create-npm-dirs
-          pnpm napi artifacts --build-output-dir packages/core
+          pnpm napi create-npm-dirs --package-json-path packages/core/package.json
+          pnpm napi artifacts --package-json-path packages/core/package.json --build-output-dir packages/core
       - name: List packages
         run: ls -R ./npm
         shell: bash
@@ -332,11 +332,11 @@ jobs:
           if git log -1 --pretty=%B | grep "^v\?[0-9]\+\.[0-9]\+\.[0-9]\+$";
           then
             pnpm napi pre-publish -t npm --package-json-path packages/core/package.json
-            pnpm publish --filter=@oxc/node-core --access public
+            pnpm publish --filter=@oxc/node-core --access public --no-git-checks
           elif git log -1 --pretty=%B | grep "^v\?[0-9]\+\.[0-9]\+\.[0-9]\+";
           then
             pnpm napi pre-publish -t npm --package-json-path packages/core/package.json
-            pnpm --filter=@oxc/node-core publish --tag next --access public
+            pnpm --filter=@oxc/node-core publish --tag next --access public --no-git-checks
           else
             echo "Not a release, skipping publish"
           fi

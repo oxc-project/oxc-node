@@ -1,5 +1,5 @@
 {
-  "name": "@oxc/node-core",
+  "name": "@oxc-node/core",
   "version": "0.0.0",
   "main": "./index.js",
   "browser": "./browser.js",
@@ -29,6 +29,32 @@
     "./register.mjs": {
       "import": "./register.mjs"
     }
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "napi": {
+    "binaryName": "oxc-node",
+    "targets": [
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-linux-android",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-unknown-linux-musl",
+      "aarch64-pc-windows-msvc",
+      "armv7-unknown-linux-gnueabihf",
+      "x86_64-unknown-linux-musl",
+      "i686-pc-windows-msvc",
+      "armv7-linux-androideabi",
+      "wasm32-wasip1-threads"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oxc-project/oxc-node.git"
   },
   "funding": [
     {

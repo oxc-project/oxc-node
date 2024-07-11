@@ -21,7 +21,7 @@
     "typescript": "^5.5.3"
   },
   "scripts": {
-    "build": "napi build --platform --release -o packages/core",
+    "build": "napi build --platform --release -o packages/core --package-json-path packages/core/package.json",
     "format": "taplo fmt && prettier --write . && cargo fmt",
     "lint": "oxlint",
     "test": "pnpm --filter=integrate-module* run test",
@@ -41,24 +41,5 @@
     "trailingComma": "all",
     "singleQuote": true,
     "arrowParens": "always"
-  },
-  "napi": {
-    "binaryName": "oxc-node",
-    "packageName": "@oxc/node-core",
-    "targets": [
-      "x86_64-apple-darwin",
-      "aarch64-apple-darwin",
-      "x86_64-pc-windows-msvc",
-      "x86_64-unknown-linux-gnu",
-      "aarch64-linux-android",
-      "aarch64-unknown-linux-gnu",
-      "aarch64-unknown-linux-musl",
-      "aarch64-pc-windows-msvc",
-      "armv7-unknown-linux-gnueabihf",
-      "x86_64-unknown-linux-musl",
-      "i686-pc-windows-msvc",
-      "armv7-linux-androideabi",
-      "wasm32-wasip1-threads"
-    ]
   }
 }
