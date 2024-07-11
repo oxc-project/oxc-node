@@ -4,6 +4,7 @@
   "main": "./index.js",
   "browser": "./browser.js",
   "types": "./index.d.ts",
+  "license": "MIT",
   "files": [
     "index.js",
     "index.d.ts",
