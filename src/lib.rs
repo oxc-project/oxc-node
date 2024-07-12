@@ -299,27 +299,36 @@ pub fn resolve(
     };
 
     let resolver = RESOLVER.get_or_init(init_resolver);
-
+    let directory = {
+        if let Some(parent) = context
+            .parent_url
+            .as_deref()
+            .unwrap()
+            .strip_prefix(PATH_PREFIX)
+            .and_then(|p| Path::new(p).parent())
+        {
+            tracing::debug!(directory = ?parent);
+            Ok(parent)
+        } else {
+            Err(Error::new(
+                Status::GenericFailure,
+                "Parent URL is not a file URL",
+            ))
+        }
+    }?;
+    let is_absolute_path = specifier.starts_with(PATH_PREFIX);
     // parent_url.is_none() has been early returned
     let resolution = resolver.resolve(
-        {
-            if let Some(parent) = context
-                .parent_url
-                .as_deref()
-                .unwrap()
-                .strip_prefix(PATH_PREFIX)
-                .and_then(|p| Path::new(p).parent())
-            {
-                tracing::debug!(directory = ?parent);
-                Ok(parent)
-            } else {
-                Err(Error::new(
-                    Status::GenericFailure,
-                    "Parent URL is not a file URL",
-                ))
-            }
-        }?,
-        &specifier,
+        if is_absolute_path {
+            Path::new("/")
+        } else {
+            directory
+        },
+        if is_absolute_path {
+            specifier.strip_prefix(PATH_PREFIX).unwrap()
+        } else {
+            &specifier
+        },
     );
 
     if let Ok(resolution) = resolution {

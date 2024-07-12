@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "lib",
+    "composite": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler"
+  },
+  "references": [{ "path": "../core" }]
+}
