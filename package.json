@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@9.5.0",
   "devDependencies": {
-    "@napi-rs/cli": "^3.0.0-alpha.56",
+    "@napi-rs/cli": "^3.0.0-alpha.58",
     "@napi-rs/wasm-runtime": "^0.2.4",
     "@oxc-node/core": "workspace:*",
     "@taplo/cli": "^0.7.0",
@@ -25,7 +25,7 @@
     "build": "napi build --platform --release -o packages/core --package-json-path packages/core/package.json",
     "format": "taplo fmt && prettier --write . && cargo fmt",
     "lint": "oxlint",
-    "test": "pnpm --filter=integrate-module* run test",
+    "test": "pnpm --sequential --filter=integrate* run test",
     "prepare": "husky"
   },
   "lint-staged": {

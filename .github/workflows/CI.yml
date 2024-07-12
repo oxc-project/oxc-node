@@ -214,6 +214,10 @@ jobs:
         node:
           - '18'
           - '20'
+        exclude:
+          # too slow
+          - target: aarch64-unknown-linux-gnu
+            node: '18'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

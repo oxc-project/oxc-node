@@ -1,0 +1,22 @@
+{
+  "name": "integrate-ava",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "ava"
+  },
+  "devDependencies": {
+    "@oxc-node/core": "workspace:*",
+    "ava": "^6.1.3"
+  },
+  "ava": {
+    "extensions": {
+      "ts": "module"
+    },
+    "cache": false,
+    "nodeArguments": [
+      "--import",
+      "@oxc-node/core/register"
+    ]
+  }
+}
