@@ -49,5 +49,5 @@ export interface ResolveFnOutput {
   importAttributes?: Record<string, string> | null
 }
 
-export declare function transform(path: string, code: string): Output
+export declare function transform(path: string, code: string | Uint8Array): Output
 
