@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
-    env,
+    env, mem,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -160,9 +160,46 @@ impl Output {
 }
 
 #[napi]
-pub fn transform(path: String, code: Either<String, &[u8]>) -> Result<Output> {
-    let allocator = Allocator::default();
+pub fn transform(path: String, source: Either<String, &[u8]>) -> Result<Output> {
     let src_path = Path::new(&path);
+    oxc_transform(src_path, &source)
+}
+
+pub struct TransformTask {
+    path: String,
+    source: Either3<String, Uint8Array, Buffer>,
+}
+
+#[napi]
+impl Task for TransformTask {
+    type Output = Output;
+    type JsValue = Output;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        let src_path = Path::new(&self.path);
+        oxc_transform(src_path, &self.source)
+    }
+
+    fn resolve(&mut self, _: Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(output)
+    }
+
+    fn finally(&mut self, _: Env) -> Result<()> {
+        mem::drop(mem::replace(&mut self.source, Either3::A(String::new())));
+        Ok(())
+    }
+}
+
+#[napi]
+pub fn transform_async(
+    path: String,
+    source: Either3<String, Uint8Array, Buffer>,
+) -> AsyncTask<TransformTask> {
+    AsyncTask::new(TransformTask { path, source })
+}
+
+fn oxc_transform<S: TryAsStr>(src_path: &Path, code: &S) -> Result<Output> {
+    let allocator = Allocator::default();
     let source_type = SourceType::from_path(src_path).unwrap_or_default();
     let source_str = code.try_as_str()?;
     let ParserReturn {
@@ -428,14 +465,14 @@ pub fn load(
 
     let loaded = next_load.call((url.clone(), Some(context)))?;
     match loaded {
-        Either::A(output) => Ok(Either::A(oxc_transform(url, output)?)),
+        Either::A(output) => Ok(Either::A(transform_output(url, output)?)),
         Either::B(mut promise) => promise
-            .then(move |ctx| oxc_transform(url, ctx.value))
+            .then(move |ctx| transform_output(url, ctx.value))
             .map(Either::B),
     }
 }
 
-fn oxc_transform(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
+fn transform_output(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
     match &output.source {
         Some(Either4::D(_)) | None => {
             tracing::debug!("No source code to transform {}", url);
@@ -446,8 +483,6 @@ fn oxc_transform(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
             })
         }
         Some(Either4::A(_) | Either4::B(_) | Either4::C(_)) => {
-            let source = output.source.as_ref().unwrap().try_as_str()?;
-            let allocator = Allocator::default();
             let src_path = Path::new(&url);
             let ext = src_path.extension().and_then(|ext| ext.to_str());
             let jsx = ext
@@ -471,46 +506,13 @@ fn oxc_transform(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
                 }
             };
             tracing::debug!(url = ?url, jsx = ?jsx, src_path = ?src_path, source_type = ?source_type, "running oxc transform");
-            let ParserReturn {
-                trivias,
-                mut program,
-                errors,
-                ..
-            } = Parser::new(&allocator, source, source_type).parse();
-            if !errors.is_empty() {
-                for error in &errors {
-                    eprintln!("{}", error);
-                }
-                return Err(Error::new(
-                    Status::GenericFailure,
-                    format!("Failed to parse source file {}", url),
-                ));
-            }
-            let TransformerReturn { errors, .. } = Transformer::new(
-                &allocator,
-                src_path,
-                source_type,
-                source,
-                trivias,
-                Default::default(),
-            )
-            .build(&mut program);
-
-            if !errors.is_empty() {
-                for error in &errors {
-                    eprintln!("{}", error);
-                }
-                return Err(Error::new(
-                    Status::GenericFailure,
-                    "Failed to transform source file",
-                ));
-            }
+            let transform_output = oxc_transform(src_path, output.source.as_ref().unwrap())?;
 
             tracing::debug!("loaded {} format: {}", url, output.format);
             Ok(LoadFnOutput {
                 format: output.format,
                 source: Some(Either4::B(Uint8Array::from_string(
-                    CodeGenerator::new().build(&program).source_text,
+                    transform_output.0.source_text,
                 ))),
                 response_url: Some(url),
             })
@@ -530,6 +532,26 @@ impl TryAsStr for Either<String, &[u8]> {
                 Error::new(
                     Status::GenericFailure,
                     format!("Failed to convert &[u8] to &str: {}", err),
+                )
+            }),
+        }
+    }
+}
+
+impl TryAsStr for Either3<String, Uint8Array, Buffer> {
+    fn try_as_str(&self) -> Result<&str> {
+        match self {
+            Either3::A(s) => Ok(s),
+            Either3::B(arr) => std::str::from_utf8(arr).map_err(|_| {
+                Error::new(
+                    Status::GenericFailure,
+                    "Failed to convert Uint8Array to Vec<u8>",
+                )
+            }),
+            Either3::C(buf) => std::str::from_utf8(buf).map_err(|_| {
+                Error::new(
+                    Status::GenericFailure,
+                    "Failed to convert Buffer to Vec<u8>",
                 )
             }),
         }
