@@ -4,6 +4,7 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "allowJs": true,
     "composite": true,
     "jsx": "react-jsx",
     "outDir": "dist",

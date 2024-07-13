@@ -160,16 +160,17 @@ impl Output {
 }
 
 #[napi]
-pub fn transform(path: String, code: String) -> Result<Output> {
+pub fn transform(path: String, code: Either<String, &[u8]>) -> Result<Output> {
     let allocator = Allocator::default();
     let src_path = Path::new(&path);
     let source_type = SourceType::from_path(src_path).unwrap_or_default();
+    let source_str = code.try_as_str()?;
     let ParserReturn {
         trivias,
         mut program,
         errors,
         ..
-    } = Parser::new(&allocator, &code, source_type).parse();
+    } = Parser::new(&allocator, source_str, source_type).parse();
     if !errors.is_empty() {
         for error in &errors {
             eprintln!("{}", error);
@@ -183,7 +184,7 @@ pub fn transform(path: String, code: String) -> Result<Output> {
         &allocator,
         src_path,
         source_type,
-        &code,
+        source_str,
         trivias,
         Default::default(),
     )
@@ -352,16 +353,27 @@ pub fn resolve(
             return Ok(Either::A(ResolveFnOutput {
                 short_circuit: Some(true),
                 format: {
-                    let format = if resolution
-                        .package_json()
-                        .and_then(|p| p.r#type.as_ref())
-                        .and_then(|t| t.as_str())
-                        .is_some_and(|t| t == "module")
-                    {
-                        "module".to_owned()
-                    } else {
-                        "commonjs".to_owned()
-                    };
+                    let format = p
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .and_then(|ext| {
+                            if ext == "cjs" || ext == "cts" {
+                                None
+                            } else {
+                                resolution
+                                    .package_json()
+                                    .and_then(|p| p.r#type.as_ref())
+                                    .and_then(|t| t.as_str())
+                                    .and_then(|format| {
+                                        if format == "module" {
+                                            Some("module".to_owned())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                            }
+                        })
+                        .unwrap_or_else(|| "commonjs".to_owned());
                     tracing::debug!(path = ?p, format = ?format);
                     Either3::A(format)
                 },
@@ -437,15 +449,20 @@ fn oxc_transform(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
             let source = output.source.as_ref().unwrap().try_as_str()?;
             let allocator = Allocator::default();
             let src_path = Path::new(&url);
-            let jsx = src_path
-                .extension()
-                .and_then(|ext| ext.to_str())
+            let ext = src_path.extension().and_then(|ext| ext.to_str());
+            let jsx = ext
                 .map(|ext| ext == "tsx" || ext == "jsx")
                 .unwrap_or_default();
-            tracing::debug!(url = ?url, jsx = ?jsx, src_path = ?src_path, "running oxc transform");
+            let ts = ext.map(|ext| ext.contains("ts")).unwrap_or_default();
             let source_type = match output.format.as_str() {
-                "commonjs" => SourceType::default().with_script(true).with_jsx(jsx),
-                "module" => SourceType::default().with_module(true).with_jsx(jsx),
+                "commonjs" => SourceType::default()
+                    .with_script(true)
+                    .with_typescript(ts)
+                    .with_jsx(jsx),
+                "module" => SourceType::default()
+                    .with_module(true)
+                    .with_typescript(ts)
+                    .with_jsx(jsx),
                 _ => {
                     return Err(Error::new(
                         Status::InvalidArg,
@@ -453,6 +470,7 @@ fn oxc_transform(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
                     ))
                 }
             };
+            tracing::debug!(url = ?url, jsx = ?jsx, src_path = ?src_path, source_type = ?source_type, "running oxc transform");
             let ParserReturn {
                 trivias,
                 mut program,
@@ -504,6 +522,20 @@ trait TryAsStr {
     fn try_as_str(&self) -> Result<&str>;
 }
 
+impl TryAsStr for Either<String, &[u8]> {
+    fn try_as_str(&self) -> Result<&str> {
+        match self {
+            Either::A(s) => Ok(s),
+            Either::B(b) => std::str::from_utf8(b).map_err(|err| {
+                Error::new(
+                    Status::GenericFailure,
+                    format!("Failed to convert &[u8] to &str: {}", err),
+                )
+            }),
+        }
+    }
+}
+
 impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
     fn try_as_str(&self) -> Result<&str> {
         match self {
@@ -546,7 +578,11 @@ fn init_resolver() -> Resolver {
             config_file: tsconfig_full_path,
             references: TsconfigReferences::Auto,
         }),
-        condition_names: vec!["node".to_owned(), "import".to_owned()],
+        condition_names: vec![
+            "node".to_owned(),
+            "import".to_owned(),
+            "node-addons".to_owned(),
+        ],
         extension_alias: vec![
             (
                 ".js".to_owned(),

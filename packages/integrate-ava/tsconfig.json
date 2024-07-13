@@ -6,5 +6,7 @@
     "module": "ESNext",
     "moduleResolution": "Bundler"
   },
+  "include": ["__tests__/**/*.ts"],
+  "exclude": ["__tests__/fixtures/**/*"],
   "references": [{ "path": "../core" }]
 }

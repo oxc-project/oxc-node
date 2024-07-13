@@ -17,6 +17,9 @@
     "nodeArguments": [
       "--import",
       "@oxc-node/core/register"
+    ],
+    "files": [
+      "__tests__/**/*.spec.ts"
     ]
   }
 }

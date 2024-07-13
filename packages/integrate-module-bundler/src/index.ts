@@ -8,6 +8,7 @@ import { renderToString } from 'react-dom/server'
 import { simpleGit } from 'simple-git'
 
 import { CompiledClass } from './compiled'
+import { common } from './common.cjs'
 import { foo } from './foo'
 import { bar } from './subdirectory/bar'
 import { baz } from './subdirectory/index'
@@ -60,4 +61,8 @@ await test('resolve simple-git', () => {
 
 await test('import default from babel-generated cjs file', () => {
   assert.equal(babelGeneratedDoubleDefault.default(), 'default.default')
+})
+
+await test('resolve cjs in type module package', () => {
+  assert.equal(common, 'common')
 })
