@@ -366,3 +366,4 @@ module.exports.initTracing = nativeBinding.initTracing
 module.exports.load = nativeBinding.load
 module.exports.resolve = nativeBinding.resolve
 module.exports.transform = nativeBinding.transform
+module.exports.transformAsync = nativeBinding.transformAsync
