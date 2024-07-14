@@ -13,6 +13,7 @@ import { bar } from './subdirectory/bar.mjs'
 import { baz } from './subdirectory/index.mjs'
 import { Component } from './component.js'
 import './js-module.mjs'
+import pkgJson from '../package.json'
 
 const { foo: fooWithQuery } = await import(`./foo.mjs?q=${Date.now()}`)
 
@@ -55,4 +56,8 @@ await test('resolve @napi-rs projects', () => {
 
 await test('resolve simple-git', () => {
   assert.ok(simpleGit)
+})
+
+await test('resolve package.json', () => {
+  assert.equal(pkgJson.name, 'integrate-module')
 })
