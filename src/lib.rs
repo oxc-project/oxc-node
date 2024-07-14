@@ -11,6 +11,7 @@ use napi_derive::napi;
 use oxc::{
     allocator::Allocator,
     codegen::{CodeGenerator, CodegenReturn},
+    diagnostics::OxcDiagnostic,
     parser::{Parser, ParserReturn},
     span::SourceType,
     transformer::{Transformer, TransformerReturn},
@@ -209,12 +210,10 @@ fn oxc_transform<S: TryAsStr>(src_path: &Path, code: &S) -> Result<Output> {
         ..
     } = Parser::new(&allocator, source_str, source_type).parse();
     if !errors.is_empty() {
-        for error in &errors {
-            eprintln!("{}", error);
-        }
+        let msg = join_errors(errors, source_str);
         return Err(Error::new(
             Status::GenericFailure,
-            "Failed to parse source file",
+            format!("Failed to parse {}: {}", src_path.display(), msg),
         ));
     }
     let TransformerReturn { errors, .. } = Transformer::new(
@@ -228,12 +227,10 @@ fn oxc_transform<S: TryAsStr>(src_path: &Path, code: &S) -> Result<Output> {
     .build(&mut program);
 
     if !errors.is_empty() {
-        for error in &errors {
-            eprintln!("{}", error);
-        }
+        let msg = join_errors(errors, source_str);
         return Err(Error::new(
             Status::GenericFailure,
-            "Failed to transform source file",
+            format!("Failed to transform {}: {}", src_path.display(), msg),
         ));
     }
 
@@ -646,4 +643,12 @@ fn init_resolver() -> Resolver {
         ],
         ..Default::default()
     })
+}
+
+fn join_errors(errors: Vec<OxcDiagnostic>, source_str: &str) -> String {
+    errors
+        .into_iter()
+        .map(|err| err.with_source_code(source_str.to_owned()).to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
