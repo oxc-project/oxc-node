@@ -5,6 +5,7 @@
     "composite": true,
     "jsx": "react-jsx",
     "outDir": "dist",
+    "resolveJsonModule": true,
     "baseUrl": "./",
     "paths": {
       "@subdirectory/*": ["./src/subdirectory/*"]

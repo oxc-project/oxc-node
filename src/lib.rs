@@ -260,7 +260,7 @@ pub struct ResolveFnOutput {
 #[napi(ts_return_type = "ResolveFnOutput | Promise<ResolveFnOutput>")]
 pub fn resolve(
     specifier: String,
-    context: ResolveContext,
+    mut context: ResolveContext,
     next_resolve: Function<
         (String, Option<ResolveContext>),
         Either<ResolveFnOutput, PromiseRaw<ResolveFnOutput>>,
@@ -387,29 +387,38 @@ pub fn resolve(
             return Ok(Either::A(ResolveFnOutput {
                 short_circuit: Some(true),
                 format: {
-                    let format = p
-                        .extension()
-                        .and_then(|ext| ext.to_str())
-                        .and_then(|ext| {
-                            if ext == "cjs" || ext == "cts" {
-                                None
-                            } else {
-                                resolution
-                                    .package_json()
-                                    .and_then(|p| p.r#type.as_ref())
-                                    .and_then(|t| t.as_str())
-                                    .and_then(|format| {
-                                        if format == "module" {
-                                            Some("module".to_owned())
-                                        } else {
-                                            None
-                                        }
-                                    })
-                            }
-                        })
-                        .unwrap_or_else(|| "commonjs".to_owned());
-                    tracing::debug!(path = ?p, format = ?format);
-                    Either3::A(format)
+                    let ext = p.extension().and_then(|ext| ext.to_str());
+                    // handle TypeScript `resolveJsonModule` option
+                    if ext.map(|e| e == "json").unwrap_or_default() {
+                        context
+                            .import_attributes
+                            .insert("type".to_owned(), "json".to_owned());
+                        Either3::A("json".to_owned())
+                    } else if ext.map(|e| e == "wasm").unwrap_or_default() {
+                        Either3::A("wasm".to_owned())
+                    } else {
+                        let format = ext
+                            .and_then(|ext| {
+                                if ext == "cjs" || ext == "cts" || ext == "node" {
+                                    None
+                                } else {
+                                    resolution
+                                        .package_json()
+                                        .and_then(|p| p.r#type.as_ref())
+                                        .and_then(|t| t.as_str())
+                                        .and_then(|format| {
+                                            if format == "module" {
+                                                Some("module".to_owned())
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                }
+                            })
+                            .unwrap_or_else(|| "commonjs".to_owned());
+                        tracing::debug!(path = ?p, format = ?format);
+                        Either3::A(format)
+                    }
                 },
                 url,
                 import_attributes: Some(Either::A(context.import_attributes.clone())),
