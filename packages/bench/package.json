@@ -10,6 +10,7 @@
     "@oxc-node/core": "workspace:*",
     "@swc/core": "=1.6.7",
     "tinybench": "^2.8.0",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "typescript": "^5.5.3"
   }
 }

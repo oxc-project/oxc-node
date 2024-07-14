@@ -1,10 +1,11 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { transformSync } from '@swc/core'
 import { transform as oxc } from '@oxc-node/core'
 import { Bench } from 'tinybench'
-import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
 
 const bench = new Bench({ time: 1000 })
 
@@ -29,6 +30,17 @@ bench
   })
   .add('oxc', () => {
     oxc('ajax.ts', fixture)
+  })
+  .add('typescript', () => {
+    ts.transpileModule(fixture, {
+      fileName: 'ajax.ts',
+      compilerOptions: {
+        target: ts.ScriptTarget.ESNext,
+        module: ts.ModuleKind.ESNext,
+        isolatedModules: true,
+        sourceMap: true,
+      },
+    })
   })
 
 await bench.warmup() // make results more reliable, ref: https://github.com/tinylibs/tinybench/pull/50
