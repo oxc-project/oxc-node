@@ -507,13 +507,25 @@ fn transform_output(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
             };
             tracing::debug!(url = ?url, jsx = ?jsx, src_path = ?src_path, source_type = ?source_type, "running oxc transform");
             let transform_output = oxc_transform(src_path, output.source.as_ref().unwrap())?;
+            let output_code = transform_output
+                .0
+                .source_map
+                .and_then(|sm| sm.to_data_url().ok())
+                .map(|sm| {
+                    const SOURCEMAP_PREFIX: &str = "\n//# sourceMappingURL=";
+                    let len = sm.len() + transform_output.0.source_text.len() + 22;
+                    let mut output_code = String::with_capacity(len + 22);
+                    output_code.push_str(&transform_output.0.source_text);
+                    output_code.push_str(SOURCEMAP_PREFIX);
+                    output_code.push_str(sm.as_str());
+                    output_code
+                })
+                .unwrap_or_else(|| transform_output.0.source_text);
 
             tracing::debug!("loaded {} format: {}", url, output.format);
             Ok(LoadFnOutput {
                 format: output.format,
-                source: Some(Either4::B(Uint8Array::from_string(
-                    transform_output.0.source_text,
-                ))),
+                source: Some(Either4::B(Uint8Array::from_string(output_code))),
                 response_url: Some(url),
             })
         }
