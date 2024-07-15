@@ -490,6 +490,15 @@ fn transform_output(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
         }
         Some(Either4::A(_) | Either4::B(_) | Either4::C(_)) => {
             let src_path = Path::new(&url);
+            if env::var("OXC_TRANSFORM_ALL").is_err()
+                && src_path
+                    .to_str()
+                    .map(|p| p.contains(NODE_MODULES_PATH))
+                    .unwrap_or(false)
+            {
+                tracing::debug!("Skip transforming node_modules {}", url);
+                return Ok(output);
+            }
             let ext = src_path.extension().and_then(|ext| ext.to_str());
             let jsx = ext
                 .map(|ext| ext == "tsx" || ext == "jsx")
