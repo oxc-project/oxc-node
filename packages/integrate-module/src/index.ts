@@ -6,6 +6,7 @@ import { bar as subBar } from '@subdirectory/bar.mjs'
 import { supportedExtensions } from 'file-type'
 import { renderToString } from 'react-dom/server'
 import { simpleGit } from 'simple-git'
+import ipaddr from 'ipaddr.js'
 
 import { CompiledClass } from './compiled.js'
 import { foo } from './foo.mjs'
@@ -60,4 +61,8 @@ await test('resolve simple-git', () => {
 
 await test('resolve package.json', () => {
   assert.equal(pkgJson.name, 'integrate-module')
+})
+
+await test('resolve ipaddr.js', () => {
+  assert.ok(ipaddr.isValid('::1'))
 })
