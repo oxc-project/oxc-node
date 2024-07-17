@@ -260,7 +260,7 @@ pub struct ResolveFnOutput {
 #[napi(ts_return_type = "ResolveFnOutput | Promise<ResolveFnOutput>")]
 pub fn resolve(
     specifier: String,
-    mut context: ResolveContext,
+    context: ResolveContext,
     next_resolve: Function<
         (String, Option<ResolveContext>),
         Either<ResolveFnOutput, PromiseRaw<ResolveFnOutput>>,
@@ -388,37 +388,28 @@ pub fn resolve(
                 short_circuit: Some(true),
                 format: {
                     let ext = p.extension().and_then(|ext| ext.to_str());
-                    // handle TypeScript `resolveJsonModule` option
-                    if ext.map(|e| e == "json").unwrap_or(false) {
-                        context
-                            .import_attributes
-                            .insert("type".to_owned(), "json".to_owned());
-                        Either3::A("json".to_owned())
-                    } else if ext.map(|e| e == "wasm").unwrap_or(false) {
-                        Either3::A("wasm".to_owned())
-                    } else {
-                        let format = ext
-                            .and_then(|ext| {
-                                if ext == "cjs" || ext == "cts" || ext == "node" {
-                                    None
-                                } else {
-                                    resolution
-                                        .package_json()
-                                        .and_then(|p| p.r#type.as_ref())
-                                        .and_then(|t| t.as_str())
-                                        .and_then(|format| {
-                                            if format == "module" {
-                                                Some("module".to_owned())
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                }
-                            })
-                            .unwrap_or_else(|| "commonjs".to_owned());
-                        tracing::debug!(path = ?p, format = ?format);
-                        Either3::A(format)
-                    }
+
+                    let format = ext
+                        .and_then(|ext| {
+                            if ext == "cjs" || ext == "cts" || ext == "node" {
+                                None
+                            } else {
+                                resolution
+                                    .package_json()
+                                    .and_then(|p| p.r#type.as_ref())
+                                    .and_then(|t| t.as_str())
+                                    .and_then(|format| {
+                                        if format == "module" {
+                                            Some("module".to_owned())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                            }
+                        })
+                        .unwrap_or_else(|| "commonjs".to_owned());
+                    tracing::debug!(path = ?p, format = ?format);
+                    Either3::A(format)
                 },
                 url,
                 import_attributes: Some(Either::A(context.import_attributes.clone())),
@@ -504,6 +495,35 @@ fn transform_output(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
                 .map(|ext| ext == "tsx" || ext == "jsx")
                 .unwrap_or_default();
             let ts = ext.map(|ext| ext.contains("ts")).unwrap_or(false);
+            if ext.map(|ext| ext == "json").unwrap_or(false) {
+                let source_str = output.source.as_ref().unwrap().try_as_str()?;
+                let json: serde_json::Value = serde_json::from_str(source_str)?;
+                if let serde_json::Value::Object(obj) = json {
+                    let obj_len = obj.len();
+                    let mut source = String::with_capacity(obj_len * 24 + source_str.len() * 2);
+                    source.push_str("const json = ");
+                    source.push_str(source_str);
+                    source.push('\n');
+                    source.push_str("export default json\n");
+                    for key in obj.keys() {
+                        if !oxc::syntax::keyword::is_reserved_keyword(key)
+                            && oxc::syntax::identifier::is_identifier_name(key)
+                        {
+                            source.push_str(&format!("export const {key} = json.{key};\n"));
+                        }
+                    }
+                    return Ok(LoadFnOutput {
+                        format: "module".to_owned(),
+                        source: Some(Either4::A(source)),
+                        response_url: Some(url),
+                    });
+                }
+                return Ok(LoadFnOutput {
+                    format: "commonjs".to_owned(),
+                    source: Some(Either4::A(format!("module.exports = {}", source_str))),
+                    response_url: Some(url),
+                });
+            }
             let source_type = match output.format.as_str() {
                 "commonjs" => SourceType::default()
                     .with_script(true)
