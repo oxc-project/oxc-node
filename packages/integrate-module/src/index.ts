@@ -8,6 +8,7 @@ import { renderToString } from 'react-dom/server'
 import { simpleGit } from 'simple-git'
 import ipaddr from 'ipaddr.js'
 import postgres from 'postgres'
+import canvaskit from 'canvaskit-wasm'
 
 import { CompiledClass } from './compiled.js'
 import { foo } from './foo.mjs'
@@ -71,4 +72,14 @@ await test('resolve ipaddr.js', () => {
 await test('resolve postgres', () => {
   const sql = postgres()
   assert.ok(sql)
+})
+
+await test('resolve canvaskit-wasm', async () => {
+  if (process.arch === 's390x') {
+    assert.ok('skipping test on s390x')
+    return
+  }
+  // @ts-expect-error
+  const canvas = await canvaskit()
+  assert.ok(canvas.MakeSurface(100, 100))
 })
