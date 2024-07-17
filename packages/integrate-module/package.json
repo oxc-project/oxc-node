@@ -11,7 +11,7 @@
     "test": "node --import @oxc-node/core/register ./src/index.ts"
   },
   "devDependencies": {
-    "@napi-rs/simple-git": "^0.1.16",
+    "@napi-rs/simple-git": "^0.1.17",
     "@napi-rs/wasm-runtime": "^0.2.4",
     "@oxc-node/core": "workspace:*",
     "@types/node": "^20.14.9",
