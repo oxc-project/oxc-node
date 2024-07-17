@@ -97,6 +97,18 @@ jobs:
             target: aarch64-pc-windows-msvc
             build: pnpm build --target aarch64-pc-windows-msvc
           - host: ubuntu-latest
+            target: powerpc64le-unknown-linux-gnu
+            build: |
+              sudo apt-get update
+              sudo apt-get install -y gcc-powerpc64le-linux-gnu
+              pnpm build --target powerpc64le-unknown-linux-gnu
+          - host: ubuntu-latest
+            target: s390x-unknown-linux-gnu
+            build: |
+              sudo apt-get update
+              sudo apt-get install -y gcc-s390x-linux-gnu
+              pnpm build --target s390x-unknown-linux-gnu
+          - host: ubuntu-latest
             target: wasm32-wasip1-threads
             build: pnpm build --target wasm32-wasip1-threads
     name: stable - ${{ matrix.settings.target }} - node@20
@@ -267,6 +279,7 @@ jobs:
           - aarch64-unknown-linux-gnu
           - aarch64-unknown-linux-musl
           - armv7-unknown-linux-gnueabihf
+          - s390x-unknown-linux-gnu
         node:
           - '18'
           - '20'
@@ -292,6 +305,10 @@ jobs:
               console.log('PLATFORM=linux/arm64')
             } else if ('${{ matrix.target }}'.startsWith('armv7')) {
               console.log('PLATFORM=linux/arm/v7')
+            } else if ('${{ matrix.target }}'.startsWith('powerpc64le')) {
+              console.log('PLATFORM=linux/ppc64le')
+            } else if ('${{ matrix.target }}'.startsWith('s390x')) {
+              console.log('PLATFORM=linux/s390x')
             } else {
               console.log('PLATFORM=linux/amd64')
             }
