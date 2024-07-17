@@ -389,12 +389,12 @@ pub fn resolve(
                 format: {
                     let ext = p.extension().and_then(|ext| ext.to_str());
                     // handle TypeScript `resolveJsonModule` option
-                    if ext.map(|e| e == "json").unwrap_or_default() {
+                    if ext.map(|e| e == "json").unwrap_or(false) {
                         context
                             .import_attributes
                             .insert("type".to_owned(), "json".to_owned());
                         Either3::A("json".to_owned())
-                    } else if ext.map(|e| e == "wasm").unwrap_or_default() {
+                    } else if ext.map(|e| e == "wasm").unwrap_or(false) {
                         Either3::A("wasm".to_owned())
                     } else {
                         let format = ext
@@ -490,11 +490,11 @@ fn transform_output(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
         }
         Some(Either4::A(_) | Either4::B(_) | Either4::C(_)) => {
             let src_path = Path::new(&url);
-            if env::var("OXC_TRANSFORM_ALL").is_err()
-                && src_path
-                    .to_str()
-                    .map(|p| p.contains(NODE_MODULES_PATH))
-                    .unwrap_or(false)
+            // url is a file path, so it's always unix style path separator in it
+            if env::var("OXC_TRANSFORM_ALL")
+                .map(|value| value.is_empty() || value == "0" || value == "false")
+                .unwrap_or(true)
+                && url.contains("/node_modules/")
             {
                 tracing::debug!("Skip transforming node_modules {}", url);
                 return Ok(output);
@@ -503,7 +503,7 @@ fn transform_output(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
             let jsx = ext
                 .map(|ext| ext == "tsx" || ext == "jsx")
                 .unwrap_or_default();
-            let ts = ext.map(|ext| ext.contains("ts")).unwrap_or_default();
+            let ts = ext.map(|ext| ext.contains("ts")).unwrap_or(false);
             let source_type = match output.format.as_str() {
                 "commonjs" => SourceType::default()
                     .with_script(true)

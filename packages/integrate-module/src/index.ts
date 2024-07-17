@@ -7,6 +7,7 @@ import { supportedExtensions } from 'file-type'
 import { renderToString } from 'react-dom/server'
 import { simpleGit } from 'simple-git'
 import ipaddr from 'ipaddr.js'
+import postgres from 'postgres'
 
 import { CompiledClass } from './compiled.js'
 import { foo } from './foo.mjs'
@@ -65,4 +66,9 @@ await test('resolve package.json', () => {
 
 await test('resolve ipaddr.js', () => {
   assert.ok(ipaddr.isValid('::1'))
+})
+
+await test('resolve postgres', () => {
+  const sql = postgres()
+  assert.ok(sql)
 })
