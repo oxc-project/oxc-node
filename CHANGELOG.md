@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.0.9](https://github.com/Brooooooklyn/oxc-node/compare/v0.0.8...v0.0.9) (2024-07-17)
+
+**Note:** Version bump only for package oxc-node
+
 ## [0.0.8](https://github.com/Brooooooklyn/oxc-node/compare/v0.0.7...v0.0.8) (2024-07-16)
 
 ### Features
