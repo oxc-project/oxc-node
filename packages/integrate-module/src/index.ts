@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import test from 'node:test'
 
 import { RepositoryState } from '@napi-rs/simple-git'
+import { transform } from '@oxc-node/core'
 import { bar as subBar } from '@subdirectory/bar.mjs'
 import { supportedExtensions } from 'file-type'
 import { renderToString } from 'react-dom/server'
@@ -17,6 +18,7 @@ import { baz } from './subdirectory/index.mjs'
 import { Component } from './component.js'
 import './js-module.mjs'
 import pkgJson from '../package.json'
+import { version } from '../package.json'
 
 const { foo: fooWithQuery } = await import(`./foo.mjs?q=${Date.now()}`)
 
@@ -65,6 +67,10 @@ await test('resolve package.json', () => {
   assert.equal(pkgJson.name, 'integrate-module')
 })
 
+await test('named import from json', () => {
+  assert.equal(version, '0.0.0')
+})
+
 await test('resolve ipaddr.js', () => {
   assert.ok(ipaddr.isValid('::1'))
 })
@@ -82,4 +88,9 @@ await test('resolve canvaskit-wasm', async () => {
   // @ts-expect-error
   const canvas = await canvaskit()
   assert.ok(canvas.MakeSurface(100, 100))
+})
+
+await test('should resolve native addon', async () => {
+  const result = await transform('index.ts', 'const a: number = 1')
+  assert.equal(result.source(), 'const a = 1;\n')
 })
