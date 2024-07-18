@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.0.10](https://github.com/oxc-project/oxc-node/compare/v0.0.9...v0.0.10) (2024-07-18)
+
+### Features
+
+- support named import from json ([#20](https://github.com/oxc-project/oxc-node/issues/20)) ([622f1fa](https://github.com/oxc-project/oxc-node/commit/622f1fa880cd596057bf41ea44dca60951f80180))
+
 ## [0.0.9](https://github.com/Brooooooklyn/oxc-node/compare/v0.0.8...v0.0.9) (2024-07-17)
 
 **Note:** Version bump only for package oxc-node
