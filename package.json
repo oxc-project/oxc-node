@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@9.5.0",
   "devDependencies": {
-    "@napi-rs/cli": "^3.0.0-alpha.60",
+    "@napi-rs/cli": "^3.0.0-alpha.62",
     "@napi-rs/wasm-runtime": "^0.2.4",
     "@oxc-node/core": "workspace:*",
     "@taplo/cli": "^0.7.0",

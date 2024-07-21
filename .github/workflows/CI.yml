@@ -342,7 +342,6 @@ jobs:
           run: corepack enable && npm run test
   test-wasi:
     name: Test WASI target
-    if: false
     needs:
       - build
     runs-on: ubuntu-latest
@@ -356,7 +355,7 @@ jobs:
           node-version: 20
           cache: pnpm
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --force
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -377,7 +376,7 @@ jobs:
       - test-macOS-windows-binding
       - test-linux-binding
       - build-freebsd
-      # - test-wasi
+      - test-wasi
     steps:
       - uses: actions/checkout@v4
       - name: setup pnpm

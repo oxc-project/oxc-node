@@ -257,8 +257,29 @@ pub struct ResolveFnOutput {
     pub import_attributes: Option<Either<HashMap<String, String>, Null>>,
 }
 
-#[napi(ts_return_type = "ResolveFnOutput | Promise<ResolveFnOutput>")]
-pub fn resolve(
+#[cfg_attr(
+    not(target_family = "wasm"),
+    napi(object, object_from_js = false, object_to_js = false)
+)]
+#[cfg_attr(target_family = "wasm", napi(object, object_to_js = false))]
+pub struct OxcResolveOptions {
+    pub get_current_directory: Option<FunctionRef<(), String>>,
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl FromNapiValue for OxcResolveOptions {
+    unsafe fn from_napi_value(_: sys::napi_env, _value: sys::napi_value) -> Result<Self> {
+        Ok(OxcResolveOptions {
+            get_current_directory: None,
+        })
+    }
+}
+
+#[napi]
+#[cfg_attr(not(target_family = "wasm"), allow(unused_variables))]
+pub fn create_resolve(
+    env: Env,
+    options: OxcResolveOptions,
     specifier: String,
     context: ResolveContext,
     next_resolve: Function<
@@ -333,7 +354,19 @@ pub fn resolve(
         return add_short_circuit(context);
     };
 
-    let resolver = RESOLVER.get_or_init(init_resolver);
+    #[cfg(target_family = "wasm")]
+    let cwd = {
+        if let Some(get_cwd) = options.get_current_directory {
+            Path::new(get_cwd.borrow_back(&env)?.call(())?.as_str()).to_path_buf()
+        } else {
+            Path::new("/").to_path_buf()
+        }
+    };
+
+    #[cfg(not(target_family = "wasm"))]
+    let cwd = env::current_dir()?;
+
+    let resolver = RESOLVER.get_or_init(|| init_resolver(cwd));
     let directory = {
         if let Some(parent) = context
             .parent_url
@@ -450,7 +483,7 @@ pub fn load(
         Either<LoadFnOutput, PromiseRaw<LoadFnOutput>>,
     >,
 ) -> Result<Either<LoadFnOutput, PromiseRaw<LoadFnOutput>>> {
-    tracing::debug!(url = ?url, context = ?context);
+    tracing::debug!(url = ?url, context = ?context, "load");
     if url.starts_with("data:")
         || context.format == "builtin"
         || context.format == "json"
@@ -629,15 +662,14 @@ impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
     }
 }
 
-fn init_resolver() -> Resolver {
+fn init_resolver(cwd: PathBuf) -> Resolver {
     let tsconfig = env::var("TS_NODE_PROJECT")
         .or_else(|_| env::var("OXC_TSCONFIG_PATH"))
         .map(Cow::Owned)
         .unwrap_or(Cow::Borrowed("tsconfig.json"));
     tracing::debug!(tsconfig = ?tsconfig);
     let tsconfig_full_path = if !tsconfig.starts_with('/') {
-        let current = env::current_dir().expect("Failed to get current directory");
-        current.join(PathBuf::from(&*tsconfig))
+        cwd.join(PathBuf::from(&*tsconfig))
     } else {
         PathBuf::from(&*tsconfig)
     };

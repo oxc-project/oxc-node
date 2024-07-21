@@ -13,6 +13,8 @@ export declare class Output {
   sourceMap(): string | null
 }
 
+export declare function createResolve(options: OxcResolveOptions, specifier: string, context: ResolveContext, nextResolve: (arg0: string, arg1?: ResolveContext | undefined | null) => ResolveFnOutput | Promise<ResolveFnOutput>): ResolveFnOutput | Promise<ResolveFnOutput>
+
 export declare function initTracing(): void
 
 export declare function load(url: string, context: LoadContext, nextLoad: (arg0: string, arg1?: LoadContext | undefined | null) => LoadFnOutput | Promise<LoadFnOutput>): LoadFnOutput | Promise<LoadFnOutput>
@@ -32,7 +34,9 @@ export interface LoadFnOutput {
   responseURL?: string
 }
 
-export declare function resolve(specifier: string, context: ResolveContext, nextResolve: (arg0: string, arg1?: ResolveContext | undefined | null) => ResolveFnOutput | Promise<ResolveFnOutput>): ResolveFnOutput | Promise<ResolveFnOutput>
+export interface OxcResolveOptions {
+  getCurrentDirectory?: () => string
+}
 
 export interface ResolveContext {
   /** Export conditions of the relevant `package.json` */
