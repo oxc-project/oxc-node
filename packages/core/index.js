@@ -336,7 +336,7 @@ if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
     nativeBinding = require('./oxc-node.wasi.cjs')
   } catch (err) {
     if (process.env.NAPI_RS_FORCE_WASI) {
-      console.error(err)
+      loadErrors.push(err)
     }
   }
   if (!nativeBinding) {
@@ -344,7 +344,7 @@ if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
       nativeBinding = require('@oxc-node/core-wasm32-wasi')
     } catch (err) {
       if (process.env.NAPI_RS_FORCE_WASI) {
-        console.error(err)
+        loadErrors.push(err)
       }
     }
   }
@@ -362,8 +362,8 @@ if (!nativeBinding) {
 }
 
 module.exports.Output = nativeBinding.Output
+module.exports.createResolve = nativeBinding.createResolve
 module.exports.initTracing = nativeBinding.initTracing
 module.exports.load = nativeBinding.load
-module.exports.resolve = nativeBinding.resolve
 module.exports.transform = nativeBinding.transform
 module.exports.transformAsync = nativeBinding.transformAsync

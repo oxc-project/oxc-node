@@ -1,7 +1,7 @@
 import assert from 'node:assert'
 import test from 'node:test'
 
-import { RepositoryState } from '@napi-rs/simple-git'
+import { EntryType } from '@napi-rs/tar'
 import { transform } from '@oxc-node/core'
 import { bar as subBar } from '@subdirectory/bar.mjs'
 import { supportedExtensions } from 'file-type'
@@ -56,7 +56,7 @@ await test('jsx should work', () => {
 })
 
 await test('resolve @napi-rs projects', () => {
-  assert.equal(RepositoryState.ApplyMailbox, 10)
+  assert.equal(EntryType.GNUSparse, 10)
 })
 
 await test('resolve simple-git', () => {

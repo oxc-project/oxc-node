@@ -59,14 +59,15 @@ function __napi_rs_initialize_modules(__napiInstance) {
   __napiInstance.exports['__napi_register__transform_async_7']?.()
   __napiInstance.exports['__napi_register__ResolveContext_struct_8']?.()
   __napiInstance.exports['__napi_register__ResolveFnOutput_struct_9']?.()
-  __napiInstance.exports['__napi_register__resolve_10']?.()
-  __napiInstance.exports['__napi_register__LoadContext_struct_11']?.()
-  __napiInstance.exports['__napi_register__LoadFnOutput_struct_12']?.()
-  __napiInstance.exports['__napi_register__load_13']?.()
+  __napiInstance.exports['__napi_register__OxcResolveOptions_struct_10']?.()
+  __napiInstance.exports['__napi_register__create_resolve_11']?.()
+  __napiInstance.exports['__napi_register__LoadContext_struct_12']?.()
+  __napiInstance.exports['__napi_register__LoadFnOutput_struct_13']?.()
+  __napiInstance.exports['__napi_register__load_14']?.()
 }
 export const Output = __napiModule.exports.Output
+export const createResolve = __napiModule.exports.createResolve
 export const initTracing = __napiModule.exports.initTracing
 export const load = __napiModule.exports.load
-export const resolve = __napiModule.exports.resolve
 export const transform = __napiModule.exports.transform
 export const transformAsync = __napiModule.exports.transformAsync
