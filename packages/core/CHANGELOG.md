@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.0.11](https://github.com/oxc-project/oxc-node/compare/v0.0.10...v0.0.11) (2024-07-21)
+
+### Bug Fixes
+
+- **core:** wasi target ([#22](https://github.com/oxc-project/oxc-node/issues/22)) ([e7a57f3](https://github.com/oxc-project/oxc-node/commit/e7a57f334bce84f15b04f781b5ce7078d52a8872))
+
 ## [0.0.10](https://github.com/oxc-project/oxc-node/compare/v0.0.9...v0.0.10) (2024-07-18)
 
 **Note:** Version bump only for package @oxc-node/core
