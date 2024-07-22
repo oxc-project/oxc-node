@@ -62,55 +62,55 @@ jobs:
         settings:
           - host: macos-latest
             target: x86_64-apple-darwin
-            build: pnpm build --target x86_64-apple-darwin
+            build: pnpm --filter=@oxc-node/core build --target x86_64-apple-darwin
           - host: windows-latest
-            build: pnpm build --target x86_64-pc-windows-msvc
+            build: pnpm --filter=@oxc-node/core build --target x86_64-pc-windows-msvc
             target: x86_64-pc-windows-msvc
           - host: windows-latest
-            build: pnpm build --target i686-pc-windows-msvc
+            build: pnpm --filter=@oxc-node/core build --target i686-pc-windows-msvc
             target: i686-pc-windows-msvc
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            build: pnpm build --target x86_64-unknown-linux-gnu --use-napi-cross
+            build: pnpm --filter=@oxc-node/core build --target x86_64-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            build: pnpm build --target x86_64-unknown-linux-musl -x
+            build: pnpm --filter=@oxc-node/core build --target x86_64-unknown-linux-musl -x
           - host: macos-latest
             target: aarch64-apple-darwin
-            build: pnpm build --target aarch64-apple-darwin
+            build: pnpm --filter=@oxc-node/core build --target aarch64-apple-darwin
           - host: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            build: pnpm build --target aarch64-unknown-linux-gnu --use-napi-cross
+            build: pnpm --filter=@oxc-node/core build --target aarch64-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
             target: armv7-unknown-linux-gnueabihf
-            build: pnpm build --target armv7-unknown-linux-gnueabihf --use-napi-cross
+            build: pnpm --filter=@oxc-node/core build --target armv7-unknown-linux-gnueabihf --use-napi-cross
           - host: ubuntu-latest
             target: aarch64-linux-android
-            build: pnpm build --target aarch64-linux-android
+            build: pnpm --filter=@oxc-node/core build --target aarch64-linux-android
           - host: ubuntu-latest
             target: armv7-linux-androideabi
-            build: pnpm build --target armv7-linux-androideabi
+            build: pnpm --filter=@oxc-node/core build --target armv7-linux-androideabi
           - host: ubuntu-latest
             target: aarch64-unknown-linux-musl
-            build: pnpm build --target aarch64-unknown-linux-musl -x
+            build: pnpm --filter=@oxc-node/core build --target aarch64-unknown-linux-musl -x
           - host: windows-latest
             target: aarch64-pc-windows-msvc
-            build: pnpm build --target aarch64-pc-windows-msvc
+            build: pnpm --filter=@oxc-node/core build --target aarch64-pc-windows-msvc
           - host: ubuntu-latest
             target: powerpc64le-unknown-linux-gnu
             build: |
               sudo apt-get update
               sudo apt-get install -y gcc-powerpc64le-linux-gnu
-              pnpm build --target powerpc64le-unknown-linux-gnu
+              pnpm --filter=@oxc-node/core build --target powerpc64le-unknown-linux-gnu
           - host: ubuntu-latest
             target: s390x-unknown-linux-gnu
             build: |
               sudo apt-get update
               sudo apt-get install -y gcc-s390x-linux-gnu
-              pnpm build --target s390x-unknown-linux-gnu
+              pnpm --filter=@oxc-node/core build --target s390x-unknown-linux-gnu
           - host: ubuntu-latest
             target: wasm32-wasip1-threads
-            build: pnpm build --target wasm32-wasip1-threads
+            build: pnpm --filter=@oxc-node/core build --target wasm32-wasip1-threads
     name: stable - ${{ matrix.settings.target }} - node@20
     runs-on: ${{ matrix.settings.host }}
     steps:
@@ -204,14 +204,15 @@ jobs:
             env
             sudo corepack enable
             pnpm install
-            pnpm build --target x86_64-unknown-freebsd
+            pnpm --filter=@oxc-node/core build --target x86_64-unknown-freebsd
+            pnpm --filter="@oxc-node/cli" build
             pnpm --filter="\!integrate-ava" run test
             rm -rf node_modules
             rm -rf target
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bindings-freebsd
+          name: bindings-x86_64-unknown-freebsd
           path: ./packages/core/*.node
           if-no-files-found: error
 
@@ -259,6 +260,10 @@ jobs:
       - name: List packages
         run: ls -R .
         shell: bash
+      - name: Build cli
+        run: pnpm --filter="@oxc-node/cli" build
+      - name: Rebuild
+        run: pnpm rb
       - name: Test bindings
         run: pnpm test
         env:
@@ -329,6 +334,8 @@ jobs:
       - name: List packages
         run: ls -R .
         shell: bash
+      - name: Build cli
+        run: pnpm --filter="@oxc-node/cli" build
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
@@ -339,7 +346,11 @@ jobs:
         with:
           image: ${{ steps.docker.outputs.IMAGE }}
           options: -v ${{ steps.docker.outputs.PNPM_STORE_PATH }}:${{ steps.docker.outputs.PNPM_STORE_PATH }} -v ${{ github.workspace }}:${{ github.workspace }} -w ${{ github.workspace }} --platform ${{ steps.docker.outputs.PLATFORM }}
-          run: corepack enable && npm run test
+          run: >-
+            corepack enable &&
+            pnpm config set store-dir ${{ steps.docker.outputs.PNPM_STORE_PATH }} --global &&
+            pnpm rb &&
+            pnpm test
   test-wasi:
     name: Test WASI target
     needs:
@@ -364,6 +375,10 @@ jobs:
       - name: List packages
         run: ls -R .
         shell: bash
+      - name: Build cli
+        run: pnpm --filter="@oxc-node/cli" build
+      - name: Rebuild
+        run: pnpm rb
       - name: Test bindings
         run: pnpm test
         env:
@@ -399,6 +414,8 @@ jobs:
       - name: List packages
         run: ls -R ./npm
         shell: bash
+      - name: Build cli
+        run: pnpm --filter="@oxc-node/cli" build
       - name: Publish
         run: |
           echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc

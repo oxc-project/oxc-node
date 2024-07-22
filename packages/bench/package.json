@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "bench": "node --import @oxc-node/core/register index.ts"
+    "bench": "oxnode index.ts"
   },
   "devDependencies": {
-    "@oxc-node/core": "workspace:*",
-    "@swc/core": "=1.6.7",
+    "@oxc-node/cli": "workspace:*",
+    "@swc/core": "^1.7.0",
+    "esbuild": "^0.23.0",
     "tinybench": "^2.8.0",
     "rxjs": "^7.8.1",
     "typescript": "^5.5.3"

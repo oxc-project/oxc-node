@@ -12,6 +12,9 @@
     "register.mjs",
     "browser.js"
   ],
+  "scripts": {
+    "build": "napi build --platform --release --manifest-path ../../Cargo.toml -o ."
+  },
   "exports": {
     ".": {
       "import": "./index.js",

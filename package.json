@@ -6,6 +6,7 @@
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0-alpha.62",
     "@napi-rs/wasm-runtime": "^0.2.4",
+    "@oxc-node/cli": "workspace:*",
     "@oxc-node/core": "workspace:*",
     "@taplo/cli": "^0.7.0",
     "@types/node": "^20.14.9",
@@ -13,7 +14,6 @@
     "cross-env": "^7.0.3",
     "emnapi": "^1.2.0",
     "husky": "^9.0.11",
-    "lerna": "8.1.4",
     "lint-staged": "^15.2.7",
     "npm-run-all2": "^6.2.2",
     "oxlint": "^0.5.2",
@@ -22,7 +22,6 @@
   },
   "scripts": {
     "bench": "pnpm --filter=bench bench",
-    "build": "napi build --platform --release -o packages/core --package-json-path packages/core/package.json",
     "format": "taplo fmt && prettier --write . && cargo fmt",
     "lint": "oxlint",
     "test": "pnpm --sequential --filter=integrate* run test",

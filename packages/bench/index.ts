@@ -2,12 +2,14 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { transformSync } from '@swc/core'
+import { transformSync as swc } from '@swc/core'
 import { transform as oxc } from '@oxc-node/core'
+import { transformSync as esbuild } from 'esbuild'
 import { Bench } from 'tinybench'
 import ts from 'typescript'
 
-const bench = new Bench({ time: 1000 })
+// https://github.com/tinylibs/tinybench/issues/83
+const bench = new Bench({ iterations: 1000 })
 
 const fixture = (
   await readFile(join(fileURLToPath(import.meta.url), '..', 'node_modules/rxjs/src/internal/ajax/ajax.ts'))
@@ -15,7 +17,7 @@ const fixture = (
 
 bench
   .add('@swc/core', () => {
-    transformSync(fixture, {
+    swc(fixture, {
       filename: 'ajax.ts',
       jsc: {
         target: 'esnext',
@@ -26,10 +28,18 @@ bench
           decorators: false,
         },
       },
+      sourceMaps: true,
     })
   })
   .add('oxc', () => {
-    oxc('ajax.ts', fixture)
+    const { source: _source, sourceMap: _sourceMap } = oxc('ajax.ts', fixture)
+  })
+  .add('esbuild', () => {
+    esbuild(fixture, {
+      loader: 'ts',
+      format: 'esm',
+      target: 'esnext',
+    })
   })
   .add('typescript', () => {
     ts.transpileModule(fixture, {
