@@ -1,0 +1,34 @@
+{
+  "name": "@oxc-node/cli",
+  "version": "0.0.0",
+  "license": "MIT",
+  "type": "module",
+  "description": "OXC Node cli",
+  "bin": {
+    "oxnode": "./dist/index.js"
+  },
+  "dependencies": {
+    "@oxc-node/core": "workspace:*"
+  },
+  "devDependencies": {
+    "clipanion": "^4.0.0-rc.3",
+    "rolldown": "^0.12.2"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rolldown --config ./rolldown.config.js",
+    "dev": "node --import @oxc-node/core/register ./src/index.ts"
+  },
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/Brooooooklyn"
+    },
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/Boshen"
+    }
+  ]
+}
