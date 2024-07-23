@@ -55,6 +55,28 @@ jobs:
       - name: Toml
         run: pnpm taplo fmt --check
 
+  build-cli:
+    name: Build CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: setup pnpm
+        uses: pnpm/action-setup@v4
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install
+      - name: Build
+        run: pnpm --filter="@oxc-node/cli" build
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli
+          path: ./packages/cli/dist
+
   build:
     strategy:
       fail-fast: false
@@ -205,8 +227,6 @@ jobs:
             sudo corepack enable
             pnpm install
             pnpm --filter=@oxc-node/core build --target x86_64-unknown-freebsd
-            pnpm --filter="@oxc-node/cli" build
-            pnpm --filter="\!integrate-ava" run test
             rm -rf node_modules
             rm -rf target
       - name: Upload artifact
@@ -220,6 +240,7 @@ jobs:
     name: Test bindings on ${{ matrix.settings.target }} - node@${{ matrix.node }} - transform all@${{ matrix.transform_all }}
     needs:
       - build
+      - build-cli
     strategy:
       fail-fast: false
       matrix:
@@ -250,6 +271,10 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
           architecture: ${{ matrix.settings.architecture }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli
+          path: ./packages/cli/dist
       - name: Install dependencies
         run: pnpm install
       - name: Download artifacts
@@ -260,10 +285,6 @@ jobs:
       - name: List packages
         run: ls -R .
         shell: bash
-      - name: Build cli
-        run: pnpm --filter="@oxc-node/cli" build
-      - name: Rebuild
-        run: pnpm rb
       - name: Test bindings
         run: pnpm test
         env:
@@ -272,6 +293,7 @@ jobs:
     name: Test ${{ matrix.target }} - node@${{ matrix.node }}
     needs:
       - build
+      - build-cli
     strategy:
       fail-fast: false
       matrix:
@@ -323,6 +345,10 @@ jobs:
             }
           " >> $GITHUB_OUTPUT
           echo "PNPM_STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli
+          path: ./packages/cli/dist
       # use --force to download the all platform/arch dependencies
       - name: Install dependencies
         run: pnpm install --force
@@ -334,8 +360,6 @@ jobs:
       - name: List packages
         run: ls -R .
         shell: bash
-      - name: Build cli
-        run: pnpm --filter="@oxc-node/cli" build
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
@@ -346,15 +370,12 @@ jobs:
         with:
           image: ${{ steps.docker.outputs.IMAGE }}
           options: -v ${{ steps.docker.outputs.PNPM_STORE_PATH }}:${{ steps.docker.outputs.PNPM_STORE_PATH }} -v ${{ github.workspace }}:${{ github.workspace }} -w ${{ github.workspace }} --platform ${{ steps.docker.outputs.PLATFORM }}
-          run: >-
-            corepack enable &&
-            pnpm config set store-dir ${{ steps.docker.outputs.PNPM_STORE_PATH }} --global &&
-            pnpm rb &&
-            pnpm test
+          run: corepack enable && pnpm test
   test-wasi:
     name: Test WASI target
     needs:
       - build
+      - build-cli
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -365,6 +386,10 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli
+          path: ./packages/cli/dist
       - name: Install dependencies
         run: pnpm install --force
       - name: Download artifacts
@@ -375,10 +400,6 @@ jobs:
       - name: List packages
         run: ls -R .
         shell: bash
-      - name: Build cli
-        run: pnpm --filter="@oxc-node/cli" build
-      - name: Rebuild
-        run: pnpm rb
       - name: Test bindings
         run: pnpm test
         env:
@@ -414,8 +435,10 @@ jobs:
       - name: List packages
         run: ls -R ./npm
         shell: bash
-      - name: Build cli
-        run: pnpm --filter="@oxc-node/cli" build
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli
+          path: ./packages/cli/dist
       - name: Publish
         run: |
           echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
