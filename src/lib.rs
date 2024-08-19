@@ -153,10 +153,7 @@ impl Output {
     /// Returns the source map as a JSON string
     /// Cache the result of this function if you need to use it multiple times
     pub fn source_map(&self) -> Option<String> {
-        self.0
-            .source_map
-            .clone()
-            .and_then(|s| s.to_json_string().ok())
+        self.0.source_map.clone().map(|s| s.to_json_string())
     }
 }
 
@@ -578,7 +575,7 @@ fn transform_output(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
             let output_code = transform_output
                 .0
                 .source_map
-                .and_then(|sm| sm.to_data_url().ok())
+                .map(|sm| sm.to_data_url())
                 .map(|sm| {
                     const SOURCEMAP_PREFIX: &str = "\n//# sourceMappingURL=";
                     let len = sm.len() + transform_output.0.source_text.len() + 22;
