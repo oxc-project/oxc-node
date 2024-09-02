@@ -464,7 +464,7 @@ pub struct LoadContext {
     /// Export conditions of the relevant `package.json`
     pub conditions: Option<Vec<String>>,
     /// The format optionally supplied by the `resolve` hook chain
-    pub format: String,
+    pub format: Either<String, Null>,
     /// An object whose key-value pairs represent the assertions for the module to import
     pub import_attributes: HashMap<String, String>,
 }
@@ -487,11 +487,12 @@ pub fn load(
     >,
 ) -> Result<Either<LoadFnOutput, PromiseRaw<LoadFnOutput>>> {
     tracing::debug!(url = ?url, context = ?context, "load");
-    if url.starts_with("data:")
-        || context.format == "builtin"
-        || context.format == "json"
-        || context.format == "wasm"
-    {
+    if url.starts_with("data:") || {
+        match context.format {
+            Either::A(ref format) => format == "builtin" || format == "json" || format == "wasm",
+            _ => true,
+        }
+    } {
         tracing::debug!("short-circuiting load: {}", url);
         return next_load.call((url, Some(context)));
     }

@@ -23,7 +23,7 @@ export interface LoadContext {
   /** Export conditions of the relevant `package.json` */
   conditions?: Array<string>
   /** The format optionally supplied by the `resolve` hook chain */
-  format: string
+  format: string | null
   /** An object whose key-value pairs represent the assertions for the module to import */
   importAttributes: Record<string, string>
 }
