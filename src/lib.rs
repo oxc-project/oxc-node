@@ -13,6 +13,7 @@ use oxc::{
     codegen::{CodeGenerator, CodegenReturn},
     diagnostics::OxcDiagnostic,
     parser::{Parser, ParserReturn},
+    semantic::SemanticBuilder,
     span::SourceType,
     transformer::{Transformer, TransformerReturn},
 };
@@ -213,6 +214,11 @@ fn oxc_transform<S: TryAsStr>(src_path: &Path, code: &S) -> Result<Output> {
             format!("Failed to parse {}: {}", src_path.display(), msg),
         ));
     }
+    let (symbols, scopes) = SemanticBuilder::new(source_str, source_type)
+        .build(&program)
+        .semantic
+        .into_symbol_table_and_scope_tree();
+
     let TransformerReturn { errors, .. } = Transformer::new(
         &allocator,
         src_path,
@@ -221,7 +227,7 @@ fn oxc_transform<S: TryAsStr>(src_path: &Path, code: &S) -> Result<Output> {
         trivias,
         Default::default(),
     )
-    .build(&mut program);
+    .build_with_symbols_and_scopes(symbols, scopes, &mut program);
 
     if !errors.is_empty() {
         let msg = join_errors(errors, source_str);
