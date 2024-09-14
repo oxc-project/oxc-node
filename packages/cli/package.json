@@ -12,7 +12,7 @@
   },
   "devDependencies": {
     "clipanion": "^4.0.0-rc.3",
-    "rolldown": "^0.12.2"
+    "rolldown": "^0.13.0"
   },
   "files": [
     "dist"
