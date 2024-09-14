@@ -214,7 +214,7 @@ fn oxc_transform<S: TryAsStr>(src_path: &Path, code: &S) -> Result<Output> {
             format!("Failed to parse {}: {}", src_path.display(), msg),
         ));
     }
-    let (symbols, scopes) = SemanticBuilder::new(source_str, source_type)
+    let (symbols, scopes) = SemanticBuilder::new(source_str)
         .build(&program)
         .semantic
         .into_symbol_table_and_scope_tree();
