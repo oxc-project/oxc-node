@@ -147,14 +147,14 @@ impl Output {
     /// Returns the generated code
     /// Cache the result of this function if you need to use it multiple times
     pub fn source(&self) -> String {
-        self.0.source_text.clone()
+        self.0.code.clone()
     }
 
     #[napi]
     /// Returns the source map as a JSON string
     /// Cache the result of this function if you need to use it multiple times
     pub fn source_map(&self) -> Option<String> {
-        self.0.source_map.clone().map(|s| s.to_json_string())
+        self.0.map.clone().map(|s| s.to_json_string())
     }
 }
 
@@ -183,7 +183,7 @@ impl Task for TransformTask {
         Ok(output)
     }
 
-    fn finally(&mut self, _: Env) -> Result<()> {
+    fn finally(mut self, _: Env) -> Result<()> {
         mem::drop(mem::replace(&mut self.source, Either3::A(String::new())));
         Ok(())
     }
@@ -202,7 +202,6 @@ fn oxc_transform<S: TryAsStr>(src_path: &Path, code: &S) -> Result<Output> {
     let source_type = SourceType::from_path(src_path).unwrap_or_default();
     let source_str = code.try_as_str()?;
     let ParserReturn {
-        trivias,
         mut program,
         errors,
         ..
@@ -214,7 +213,7 @@ fn oxc_transform<S: TryAsStr>(src_path: &Path, code: &S) -> Result<Output> {
             format!("Failed to parse {}: {}", src_path.display(), msg),
         ));
     }
-    let (symbols, scopes) = SemanticBuilder::new(source_str)
+    let (symbols, scopes) = SemanticBuilder::new()
         .build(&program)
         .semantic
         .into_symbol_table_and_scope_tree();
@@ -222,10 +221,7 @@ fn oxc_transform<S: TryAsStr>(src_path: &Path, code: &S) -> Result<Output> {
     let TransformerReturn { errors, .. } = Transformer::new(
         &allocator,
         src_path,
-        source_type,
-        source_str,
-        trivias,
-        Default::default(),
+        &Default::default(),
     )
     .build_with_symbols_and_scopes(symbols, scopes, &mut program);
 
@@ -581,18 +577,18 @@ fn transform_output(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
             let transform_output = oxc_transform(src_path, output.source.as_ref().unwrap())?;
             let output_code = transform_output
                 .0
-                .source_map
+                .map
                 .map(|sm| sm.to_data_url())
                 .map(|sm| {
                     const SOURCEMAP_PREFIX: &str = "\n//# sourceMappingURL=";
-                    let len = sm.len() + transform_output.0.source_text.len() + 22;
+                    let len = sm.len() + transform_output.0.code.len() + 22;
                     let mut output_code = String::with_capacity(len + 22);
-                    output_code.push_str(&transform_output.0.source_text);
+                    output_code.push_str(&transform_output.0.code);
                     output_code.push_str(SOURCEMAP_PREFIX);
                     output_code.push_str(sm.as_str());
                     output_code
                 })
-                .unwrap_or_else(|| transform_output.0.source_text);
+                .unwrap_or_else(|| transform_output.0.code);
 
             tracing::debug!("loaded {} format: {}", url, output.format);
             Ok(LoadFnOutput {
