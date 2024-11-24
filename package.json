@@ -8,6 +8,7 @@
     "@napi-rs/wasm-runtime": "^0.2.5",
     "@oxc-node/cli": "workspace:*",
     "@oxc-node/core": "workspace:*",
+    "@oxc-node/ts-wasm-language-service": "workspace:*",
     "@taplo/cli": "^0.7.0",
     "@types/node": "^22.9.3",
     "ava": "^6.2.0",
@@ -23,6 +24,7 @@
   },
   "scripts": {
     "bench": "pnpm --filter=bench bench",
+    "build:ts": "tsc -b ./tsconfig.json",
     "format": "taplo fmt && prettier --write . && cargo fmt",
     "lint": "oxlint",
     "test": "pnpm --sequential --filter=integrate* run test",

@@ -3,7 +3,13 @@
     "strict": true,
     "target": "ESNext",
     "moduleResolution": "NodeNext",
-    "module": "NodeNext"
+    "module": "NodeNext",
+    "skipLibCheck": true,
+    "plugins": [
+      {
+        "name": "@oxc-node/ts-wasm-language-service"
+      }
+    ]
   },
   "references": [
     {
@@ -17,6 +23,9 @@
     },
     {
       "path": "./packages/integrate-module-bundler"
+    },
+    {
+      "path": "./packages/ts-wasm-language-service"
     }
   ],
   "include": []

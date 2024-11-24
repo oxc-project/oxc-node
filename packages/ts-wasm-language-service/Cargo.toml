@@ -1,0 +1,23 @@
+[package]
+edition = "2021"
+name    = "ts-wasm-language-service"
+version = "0.1.0"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+napi        = { workspace = true }
+napi-derive = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+walrus      = { workspace = true }
+
+[target.'cfg(all(not(target_os = "linux"), not(target_family = "wasm")))'.dependencies]
+mimalloc = { workspace = true }
+
+[target.'cfg(all(target_os = "linux", not(target_arch = "arm")))'.dependencies]
+mimalloc = { workspace = true, features = ["local_dynamic_tls"] }
+
+[build-dependencies]
+napi-build = { workspace = true }

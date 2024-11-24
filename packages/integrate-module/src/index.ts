@@ -19,6 +19,7 @@ import { Component } from './component.js'
 import './js-module.mjs'
 import pkgJson from '../package.json'
 import { version } from '../package.json'
+import { add } from './add.wasm'
 
 const { foo: fooWithQuery } = await import(`./foo.mjs?q=${Date.now()}`)
 
@@ -85,7 +86,7 @@ await test('resolve canvaskit-wasm', async () => {
     assert.ok('skipping test on s390x')
     return
   }
-  // @ts-expect-error
+
   const canvas = await canvaskit()
   assert.ok(canvas.MakeSurface(100, 100))
 })
