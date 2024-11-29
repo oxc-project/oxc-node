@@ -11,8 +11,8 @@
     "@oxc-node/core": "workspace:*"
   },
   "devDependencies": {
-    "clipanion": "^4.0.0-rc.3",
-    "rolldown": "^0.13.0"
+    "clipanion": "^4.0.0-rc.4",
+    "rolldown": "^0.14.0"
   },
   "files": [
     "dist"

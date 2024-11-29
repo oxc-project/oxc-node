@@ -1,0 +1,13 @@
+{
+  "name": "@oxc-node/ts-wasm-language-service",
+  "version": "0.0.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "napi build --platform --release"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0-alpha.62",
+    "@rollup/wasm-node": "^4.27.4",
+    "typescript": "5.7.2"
+  }
+}

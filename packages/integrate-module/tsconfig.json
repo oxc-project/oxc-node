@@ -6,6 +6,8 @@
     "jsx": "react-jsx",
     "outDir": "dist",
     "resolveJsonModule": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "baseUrl": "./",
     "paths": {
       "@subdirectory/*": ["./src/subdirectory/*"]
