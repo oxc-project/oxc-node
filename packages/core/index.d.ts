@@ -56,4 +56,3 @@ export interface ResolveFnOutput {
 export declare function transform(path: string, source: string | Uint8Array): Output
 
 export declare function transformAsync(path: string, source: string | Uint8Array | Buffer): Promise<Output>
-
