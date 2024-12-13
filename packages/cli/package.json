@@ -1,6 +1,6 @@
 {
   "name": "@oxc-node/cli",
-  "version": "0.0.15",
+  "version": "0.0.16",
   "license": "MIT",
   "type": "module",
   "description": "OXC Node cli",
