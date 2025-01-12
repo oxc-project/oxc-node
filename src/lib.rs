@@ -22,7 +22,11 @@ use oxc_resolver::{
 };
 use phf::Set;
 
-#[cfg(all(not(target_arch = "arm"), not(target_family = "wasm")))]
+#[cfg(all(
+    not(target_arch = "arm"),
+    not(target_os = "freebsd"),
+    not(target_family = "wasm")
+))]
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -315,16 +319,53 @@ pub fn create_resolve(
         }));
     }
 
-    // entrypoint
-    if context.parent_url.is_none() {
-        tracing::debug!("short-circuiting entrypoint resolve: {}", specifier);
-        return Ok(Either::A(ResolveFnOutput {
-            short_circuit: Some(true),
-            format: Either3::A("module".to_owned()),
-            url: specifier,
-            import_attributes: None,
-        }));
-    }
+    #[cfg(target_family = "wasm")]
+    let cwd = {
+        if let Some(get_cwd) = options.get_current_directory {
+            Path::new(get_cwd.borrow_back(&env)?.call(())?.as_str()).to_path_buf()
+        } else {
+            Path::new("/").to_path_buf()
+        }
+    };
+
+    #[cfg(not(target_family = "wasm"))]
+    let cwd = env::current_dir()?;
+
+    let resolver = RESOLVER.get_or_init(|| init_resolver(cwd.clone()));
+
+    let is_absolute_path = specifier.starts_with(PATH_PREFIX);
+
+    let directory = {
+        if let Some(parent) = context.parent_url.as_deref() {
+            if let Some(parent) = parent
+                .strip_prefix(PATH_PREFIX)
+                .and_then(|p| Path::new(p).parent())
+            {
+                tracing::debug!(directory = ?parent);
+                Ok(parent)
+            } else {
+                Err(Error::new(
+                    Status::GenericFailure,
+                    "Parent URL is not a file URL",
+                ))
+            }
+        } else {
+            Ok(cwd.as_path())
+        }
+    }?;
+
+    let resolution = resolver.resolve(
+        if is_absolute_path {
+            Path::new("/")
+        } else {
+            directory
+        },
+        if is_absolute_path {
+            specifier.strip_prefix(PATH_PREFIX).unwrap()
+        } else {
+            &specifier
+        },
+    );
 
     let add_short_circuit = |context: ResolveContext| {
         let builtin_resolved = next_resolve.call((specifier.clone(), Some(context)))?;
@@ -352,51 +393,6 @@ pub fn create_resolve(
         );
         return add_short_circuit(context);
     };
-
-    #[cfg(target_family = "wasm")]
-    let cwd = {
-        if let Some(get_cwd) = options.get_current_directory {
-            Path::new(get_cwd.borrow_back(&env)?.call(())?.as_str()).to_path_buf()
-        } else {
-            Path::new("/").to_path_buf()
-        }
-    };
-
-    #[cfg(not(target_family = "wasm"))]
-    let cwd = env::current_dir()?;
-
-    let resolver = RESOLVER.get_or_init(|| init_resolver(cwd));
-    let directory = {
-        if let Some(parent) = context
-            .parent_url
-            .as_deref()
-            .unwrap()
-            .strip_prefix(PATH_PREFIX)
-            .and_then(|p| Path::new(p).parent())
-        {
-            tracing::debug!(directory = ?parent);
-            Ok(parent)
-        } else {
-            Err(Error::new(
-                Status::GenericFailure,
-                "Parent URL is not a file URL",
-            ))
-        }
-    }?;
-    let is_absolute_path = specifier.starts_with(PATH_PREFIX);
-    // parent_url.is_none() has been early returned
-    let resolution = resolver.resolve(
-        if is_absolute_path {
-            Path::new("/")
-        } else {
-            directory
-        },
-        if is_absolute_path {
-            specifier.strip_prefix(PATH_PREFIX).unwrap()
-        } else {
-            &specifier
-        },
-    );
 
     if let Ok(resolution) = resolution {
         tracing::debug!(resolution = ?resolution, "resolved");
