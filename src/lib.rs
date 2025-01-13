@@ -280,16 +280,18 @@ impl FromNapiValue for OxcResolveOptions {
 
 #[napi]
 #[cfg_attr(not(target_family = "wasm"), allow(unused_variables))]
-pub fn create_resolve(
-    env: Env,
+#[allow(clippy::type_complexity)]
+pub fn create_resolve<'env>(
+    env: &'env Env,
     options: OxcResolveOptions,
     specifier: String,
     context: ResolveContext,
     next_resolve: Function<
-        (String, Option<ResolveContext>),
-        Either<ResolveFnOutput, PromiseRaw<ResolveFnOutput>>,
+        'env,
+        FnArgs<(String, Option<ResolveContext>)>,
+        Either<ResolveFnOutput, PromiseRaw<'env, ResolveFnOutput>>,
     >,
-) -> Result<Either<ResolveFnOutput, PromiseRaw<ResolveFnOutput>>> {
+) -> Result<Either<ResolveFnOutput, PromiseRaw<'env, ResolveFnOutput>>> {
     tracing::debug!(specifier = ?specifier, context = ?context);
     if specifier.starts_with("node:") || specifier.starts_with("nodejs:") {
         tracing::debug!("short-circuiting builtin protocol resolve: {}", specifier);
@@ -368,14 +370,14 @@ pub fn create_resolve(
     );
 
     let add_short_circuit = |context: ResolveContext| {
-        let builtin_resolved = next_resolve.call((specifier.clone(), Some(context)))?;
+        let builtin_resolved = next_resolve.call((specifier.clone(), Some(context)).into())?;
 
         match builtin_resolved {
             Either::A(mut output) => {
                 output.short_circuit = Some(true);
                 Ok(Either::A(output))
             }
-            Either::B(mut promise) => promise
+            Either::B(promise) => promise
                 .then(|mut ctx| {
                     ctx.value.short_circuit = Some(true);
                     Ok(ctx.value)
@@ -470,14 +472,16 @@ pub struct LoadFnOutput {
 }
 
 #[napi]
-pub fn load(
+#[allow(clippy::type_complexity)]
+pub fn load<'env>(
     url: String,
     context: LoadContext,
     next_load: Function<
-        (String, Option<LoadContext>),
-        Either<LoadFnOutput, PromiseRaw<LoadFnOutput>>,
+        'env,
+        FnArgs<(String, Option<LoadContext>)>,
+        Either<LoadFnOutput, PromiseRaw<'env, LoadFnOutput>>,
     >,
-) -> Result<Either<LoadFnOutput, PromiseRaw<LoadFnOutput>>> {
+) -> Result<Either<LoadFnOutput, PromiseRaw<'env, LoadFnOutput>>> {
     tracing::debug!(url = ?url, context = ?context, "load");
     if url.starts_with("data:") || {
         match context.format {
@@ -486,13 +490,13 @@ pub fn load(
         }
     } {
         tracing::debug!("short-circuiting load: {}", url);
-        return next_load.call((url, Some(context)));
+        return next_load.call((url, Some(context)).into());
     }
 
-    let loaded = next_load.call((url.clone(), Some(context)))?;
+    let loaded = next_load.call((url.clone(), Some(context)).into())?;
     match loaded {
         Either::A(output) => Ok(Either::A(transform_output(url, output)?)),
-        Either::B(mut promise) => promise
+        Either::B(promise) => promise
             .then(move |ctx| transform_output(url, ctx.value))
             .map(Either::B),
     }
