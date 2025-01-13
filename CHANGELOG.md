@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.0.17](https://github.com/oxc-project/oxc-node/compare/v0.0.16...v0.0.17) (2025-01-13)
+
+### Bug Fixes
+
+- **core:** resolve entry with oxc_resolver ([#53](https://github.com/oxc-project/oxc-node/issues/53)) ([85af142](https://github.com/oxc-project/oxc-node/commit/85af1423129a582a72aea52de426f1f6cc5c091f))
+
 ## [0.0.16](https://github.com/oxc-project/oxc-node/compare/v0.0.15...v0.0.16) (2024-12-13)
 
 **Note:** Version bump only for package oxc-node
