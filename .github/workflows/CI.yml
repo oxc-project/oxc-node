@@ -148,12 +148,14 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.settings.target }}
       - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref_name == 'main' }}
+          shared-key: ${{ matrix.settings.target }}-${{ matrix.settings.host }}
+      - name: Cache cross toolchain
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cargo
-            ~/.napi-rs
-            ./target
+          path: ~/.napi-rs
           key: ${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}
       - uses: goto-bus-stop/setup-zig@v2
         if: ${{ contains(matrix.settings.target, 'musl') }}
@@ -303,6 +305,7 @@ jobs:
           - aarch64-unknown-linux-musl
           - armv7-unknown-linux-gnueabihf
           - s390x-unknown-linux-gnu
+          - powerpc64le-unknown-linux-gnu
         node:
           - '18'
           - '20'
@@ -333,6 +336,8 @@ jobs:
               console.log('PLATFORM=linux/ppc64le')
             } else if ('${{ matrix.target }}'.startsWith('s390x')) {
               console.log('PLATFORM=linux/s390x')
+            } else if ('${{ matrix.target }}'.startsWith('powerpc64le')) {
+              console.log('PLATFORM=linux/ppc64le')
             } else {
               console.log('PLATFORM=linux/amd64')
             }
