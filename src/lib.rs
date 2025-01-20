@@ -420,22 +420,20 @@ pub fn create_resolve<'env>(
                     let ext = p.extension().and_then(|ext| ext.to_str());
 
                     let format = ext
-                        .and_then(|ext| {
-                            if ext == "cjs" || ext == "cts" || ext == "node" {
-                                None
-                            } else {
-                                resolution
-                                    .package_json()
-                                    .and_then(|p| p.r#type.as_ref())
-                                    .and_then(|t| t.as_str())
-                                    .and_then(|format| {
-                                        if format == "module" {
-                                            Some("module".to_owned())
-                                        } else {
-                                            None
-                                        }
-                                    })
-                            }
+                        .and_then(|ext| match ext {
+                            "cjs" | "cts" | "node" => None,
+                            "mts" | "mjs" => Some("module".to_owned()),
+                            _ => resolution
+                                .package_json()
+                                .and_then(|p| p.r#type.as_ref())
+                                .and_then(|t| t.as_str())
+                                .and_then(|format| {
+                                    if format == "module" {
+                                        Some("module".to_owned())
+                                    } else {
+                                        None
+                                    }
+                                }),
                         })
                         .unwrap_or_else(|| "commonjs".to_owned());
                     tracing::debug!(path = ?p, format = ?format);

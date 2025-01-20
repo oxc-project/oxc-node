@@ -15,7 +15,7 @@ import { baz } from './subdirectory/index'
 import { Component } from './component'
 import './js-module'
 import babelGeneratedDoubleDefault from './babel-generated-double-default'
-
+import { exportFromMts } from './enforce-mts/index.mjs'
 const { foo: fooWithQuery } = await import(`./foo.js?q=${Date.now()}`)
 
 await test('file-type should work', () => {
@@ -65,4 +65,8 @@ await test('import default from babel-generated cjs file', () => {
 
 await test('resolve cjs in type module package', () => {
   assert.equal(common, 'common')
+})
+
+await test('resolve mts in type commonjs package', () => {
+  assert.equal(exportFromMts, 'exportFromMts')
 })
