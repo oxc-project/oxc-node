@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@10.0.0",
   "devDependencies": {
-    "@napi-rs/cli": "3.0.0-alpha.67",
+    "@napi-rs/cli": "3.0.0-alpha.68",
     "@napi-rs/wasm-runtime": "^0.2.6",
     "@oxc-node/cli": "workspace:*",
     "@oxc-node/core": "workspace:*",

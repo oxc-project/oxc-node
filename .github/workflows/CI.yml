@@ -121,9 +121,8 @@ jobs:
           - host: ubuntu-latest
             target: powerpc64le-unknown-linux-gnu
             build: |
-              sudo apt-get update
-              sudo apt-get install -y gcc-powerpc64le-linux-gnu
-              pnpm --filter=@oxc-node/core build --target powerpc64le-unknown-linux-gnu
+              export CC=clang
+              pnpm --filter=@oxc-node/core build --target powerpc64le-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
             target: s390x-unknown-linux-gnu
             build: |

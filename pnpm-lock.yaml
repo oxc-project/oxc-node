@@ -9,8 +9,8 @@ importers:
   .:
     devDependencies:
       '@napi-rs/cli':
-        specifier: 3.0.0-alpha.67
-        version: 3.0.0-alpha.67(@emnapi/runtime@1.3.1)(@types/node@22.10.7)(emnapi@1.3.1)
+        specifier: 3.0.0-alpha.68
+        version: 3.0.0-alpha.68(@emnapi/runtime@1.3.1)(@types/node@22.10.7)(emnapi@1.3.1)
       '@napi-rs/wasm-runtime':
         specifier: ^0.2.6
         version: 0.2.6
@@ -485,8 +485,8 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  '@napi-rs/cli@3.0.0-alpha.67':
-    resolution: {integrity: sha512-jUrniNLjkyWODnpYAFKKAdpwzZLAsZhJNh1+uYCyttlU//tbRg2lZ+hGzMG+Gx1T04TTbCn6SCDl8McNvD48iA==}
+  '@napi-rs/cli@3.0.0-alpha.68':
+    resolution: {integrity: sha512-pT6LAb2HpeoAT80lXx6wQ/6PnDn1bxIVb3BiaFHrrNhklxBvIdSWI3AGepFoXR7tKykCA+Oz+jCn0WGyLWtPvQ==}
     engines: {node: '>= 16'}
     hasBin: true
     peerDependencies:
@@ -498,15 +498,15 @@ packages:
       emnapi:
         optional: true
 
-  '@napi-rs/cross-toolchain@0.0.18':
-    resolution: {integrity: sha512-w/cqhZCoEodtFSjdJCWGyEyZliYPkak2mJeVg1TNooVPdUn79k2FWbVGR7VZ+kBMB25V6+angx/sxCZ7yoq5Dw==}
+  '@napi-rs/cross-toolchain@0.0.19':
+    resolution: {integrity: sha512-StHXqYANdTaMFqJJ3JXHqKQMylOzOJPcrOCd9Nt2NIGfvfaXK3SzpmNfkJimkOAYfTsfpfuRERsML0bUZCpHBQ==}
     peerDependencies:
-      '@napi-rs/cross-toolchain-arm64-target-aarch64': ^0.0.18
-      '@napi-rs/cross-toolchain-arm64-target-armv7': ^0.0.18
-      '@napi-rs/cross-toolchain-arm64-target-x86_64': ^0.0.18
-      '@napi-rs/cross-toolchain-x64-target-aarch64': ^0.0.18
-      '@napi-rs/cross-toolchain-x64-target-armv7': ^0.0.18
-      '@napi-rs/cross-toolchain-x64-target-x86_64': ^0.0.18
+      '@napi-rs/cross-toolchain-arm64-target-aarch64': ^0.0.19
+      '@napi-rs/cross-toolchain-arm64-target-armv7': ^0.0.19
+      '@napi-rs/cross-toolchain-arm64-target-x86_64': ^0.0.19
+      '@napi-rs/cross-toolchain-x64-target-aarch64': ^0.0.19
+      '@napi-rs/cross-toolchain-x64-target-armv7': ^0.0.19
+      '@napi-rs/cross-toolchain-x64-target-x86_64': ^0.0.19
     peerDependenciesMeta:
       '@napi-rs/cross-toolchain-arm64-target-aarch64':
         optional: true
@@ -4135,10 +4135,10 @@ snapshots:
       - encoding
       - supports-color
 
-  '@napi-rs/cli@3.0.0-alpha.67(@emnapi/runtime@1.3.1)(@types/node@22.10.7)(emnapi@1.3.1)':
+  '@napi-rs/cli@3.0.0-alpha.68(@emnapi/runtime@1.3.1)(@types/node@22.10.7)(emnapi@1.3.1)':
     dependencies:
       '@inquirer/prompts': 7.2.3(@types/node@22.10.7)
-      '@napi-rs/cross-toolchain': 0.0.18
+      '@napi-rs/cross-toolchain': 0.0.19
       '@napi-rs/wasm-tools': 0.0.2
       '@octokit/rest': 21.1.0
       clipanion: 3.2.1(typanion@3.14.0)
@@ -4163,7 +4163,7 @@ snapshots:
       - '@types/node'
       - supports-color
 
-  '@napi-rs/cross-toolchain@0.0.18':
+  '@napi-rs/cross-toolchain@0.0.19':
     dependencies:
       '@napi-rs/lzma': 1.4.1
       '@napi-rs/tar': 0.1.4
