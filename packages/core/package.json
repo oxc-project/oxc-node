@@ -15,6 +15,9 @@
   "scripts": {
     "build": "napi build --platform --release --manifest-path ../../Cargo.toml -o ."
   },
+  "devDependencies": {
+    "@napi-rs/cli": "3.0.0-alpha.68"
+  },
   "exports": {
     ".": {
       "import": "./index.js",
