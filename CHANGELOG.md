@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.0.18](https://github.com/oxc-project/oxc-node/compare/v0.0.17...v0.0.18) (2025-01-20)
+
+### Bug Fixes
+
+- **core:** enfore to esm if file extensions match ([#55](https://github.com/oxc-project/oxc-node/issues/55)) ([560ee7a](https://github.com/oxc-project/oxc-node/commit/560ee7a3e5c120a57b34fdba81e9e8f57b0826d1))
+
 ## [0.0.17](https://github.com/oxc-project/oxc-node/compare/v0.0.16...v0.0.17) (2025-01-13)
 
 ### Bug Fixes
