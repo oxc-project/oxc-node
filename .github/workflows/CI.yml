@@ -72,7 +72,7 @@ jobs:
       - name: Build
         run: pnpm --filter="@oxc-node/cli" build
       - name: Upload artifact
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
           name: cli
           path: ./packages/cli/dist
@@ -153,7 +153,7 @@ jobs:
           save-if: ${{ github.ref_name == 'main' }}
           shared-key: ${{ matrix.settings.target }}-${{ matrix.settings.host }}
       - name: Cache cross toolchain
-        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        uses: actions/cache@0c907a75c2c80ebcb7f088228285e798b750cf8f # v4.2.1
         with:
           path: ~/.napi-rs
           key: ${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}
@@ -162,7 +162,7 @@ jobs:
         with:
           version: 0.13.0
       - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@297054b27414ad8086f67963ce1033c02fe309c3 # v2.48.11
+        uses: taiki-e/install-action@ae97ff9daf1cd2e216671a047d80ff48461e30bb # v2.49.1
         if: ${{ contains(matrix.settings.target, 'musl') }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -185,7 +185,7 @@ jobs:
         run: ${{ matrix.settings.build }}
         shell: bash
       - name: Upload artifact
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
           name: bindings-${{ matrix.settings.target }}
           path: |
@@ -230,7 +230,7 @@ jobs:
             rm -rf node_modules
             rm -rf target
       - name: Upload artifact
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
           name: bindings-x86_64-unknown-freebsd
           path: ./packages/core/*.node
