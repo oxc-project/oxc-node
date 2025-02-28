@@ -217,6 +217,7 @@ jobs:
             ls -lah
             whoami
             env
+            sudo npm install -g corepack
             sudo corepack enable
             pnpm install
             pnpm --filter=@oxc-node/core build --target x86_64-unknown-freebsd
@@ -368,7 +369,7 @@ jobs:
         with:
           image: ${{ steps.docker.outputs.IMAGE }}
           options: -v ${{ steps.docker.outputs.PNPM_STORE_PATH }}:${{ steps.docker.outputs.PNPM_STORE_PATH }} -v ${{ github.workspace }}:${{ github.workspace }} -w ${{ github.workspace }} --platform ${{ steps.docker.outputs.PLATFORM }}
-          run: corepack enable && pnpm test
+          run: npm i -g corepack && corepack enable && pnpm test
   test-wasi:
     name: Test WASI target
     needs:
