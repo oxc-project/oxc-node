@@ -365,7 +365,7 @@ jobs:
         uses: docker/setup-qemu-action@4574d27a4764455b42196d70a065bc6853246a25 # v3.4.0
         with:
           platforms: all
-          image: tonistiigi/binfmt:latest
+          image: tonistiigi/binfmt:qemu-v7.0.0-28
       - run: docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
       - name: Test bindings
         uses: addnab/docker-run-action@v3
