@@ -122,7 +122,7 @@ pub fn init_tracing() {
 #[napi]
 pub fn init_tracing() {}
 
-#[cfg_attr(not(target_family = "wasm"), napi::module_init)]
+#[cfg_attr(not(target_family = "wasm"), napi_derive::module_init)]
 fn init() {
     use tracing_subscriber::filter::Targets;
     use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
@@ -566,7 +566,7 @@ fn transform_output(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
                     return Err(Error::new(
                         Status::InvalidArg,
                         format!("Unknown module format {}", output.format),
-                    ))
+                    ));
                 }
             };
             tracing::debug!(url = ?url, jsx = ?jsx, src_path = ?src_path, source_type = ?source_type, "running oxc transform");

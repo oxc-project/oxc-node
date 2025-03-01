@@ -1,6 +1,6 @@
 [package]
 authors = ["LongYinan <github@lyn.one>"]
-edition = "2021"
+edition = "2024"
 name    = "oxc-node"
 version = "0.0.0"
 
@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 [dependencies]
 napi               = { version = "3.0.0-alpha", default-features = false, features = ["serde-json", "napi3"] }
 napi-derive        = { version = "3.0.0-alpha", default-features = false, features = ["type-def"] }
-oxc                = { version = "0.50.0", features = ["codegen", "transformer", "semantic"] }
+oxc                = { version = "0.53.0", features = ["codegen", "transformer", "semantic"] }
 oxc_resolver       = "4"
 phf                = "0.11"
 serde              = { version = "1.0", features = ["derive"] }

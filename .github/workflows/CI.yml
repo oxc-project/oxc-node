@@ -33,10 +33,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: setup pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
-      - name: Install
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
       - name: Setup node
         uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
@@ -143,10 +139,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - name: Install
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.settings.target }}
+        run: rustup target add ${{ matrix.settings.target }}
       - name: Cache cargo
         uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
         with:
@@ -224,6 +217,7 @@ jobs:
             ls -lah
             whoami
             env
+            sudo npm install -g corepack
             sudo corepack enable
             pnpm install
             pnpm --filter=@oxc-node/core build --target x86_64-unknown-freebsd
@@ -314,7 +308,9 @@ jobs:
           # too slow
           - target: aarch64-unknown-linux-gnu
             node: '18'
-    runs-on: ubuntu-latest
+    # Node.js on qemu segfaults on s390x and arm64v8 when using 24.04
+    # See also https://github.com/actions/runner-images/issues/11471
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: setup pnpm
@@ -369,13 +365,14 @@ jobs:
         uses: docker/setup-qemu-action@4574d27a4764455b42196d70a065bc6853246a25 # v3.4.0
         with:
           platforms: all
+          image: tonistiigi/binfmt:qemu-v7.0.0-28
       - run: docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
       - name: Test bindings
         uses: addnab/docker-run-action@v3
         with:
           image: ${{ steps.docker.outputs.IMAGE }}
           options: -v ${{ steps.docker.outputs.PNPM_STORE_PATH }}:${{ steps.docker.outputs.PNPM_STORE_PATH }} -v ${{ github.workspace }}:${{ github.workspace }} -w ${{ github.workspace }} --platform ${{ steps.docker.outputs.PLATFORM }}
-          run: corepack enable && pnpm test
+          run: npm i -g corepack && corepack enable && pnpm test
   test-wasi:
     name: Test WASI target
     needs:
