@@ -16,7 +16,7 @@
     "build": "napi build --platform --release --manifest-path ../../Cargo.toml -o ."
   },
   "devDependencies": {
-    "@napi-rs/cli": "3.0.0-alpha.68"
+    "@napi-rs/cli": "3.0.0-alpha.72"
   },
   "exports": {
     ".": {
