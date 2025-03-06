@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 [dependencies]
 napi               = { version = "3.0.0-alpha", default-features = false, features = ["serde-json", "napi3"] }
 napi-derive        = { version = "3.0.0-alpha", default-features = false, features = ["type-def"] }
-oxc                = { version = "0.54.0", features = ["codegen", "transformer", "semantic"] }
+oxc                = { version = "0.58.1", features = ["codegen", "transformer", "semantic"] }
 oxc_resolver       = "5"
 phf                = "0.11"
 serde              = { version = "1.0", features = ["derive"] }
@@ -18,11 +18,11 @@ serde_json         = "1"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt"] }                  # Omit the `regex` feature
 
-[target.'cfg(all(not(target_os = "linux"), not(target_os = "freebsd"), not(target_family = "wasm")))'.dependencies]
-mimalloc = "0.1"
+[target.'cfg(all(not(target_os = "linux"), not(target_os = "freebsd"), not(target_arch = "arm"), not(target_family = "wasm")))'.dependencies]
+mimalloc-safe = { version = "0.1", features = ["skip_collect_on_exit"] }
 
 [target.'cfg(all(target_os = "linux", not(target_arch = "arm")))'.dependencies]
-mimalloc = { version = "0.1", features = ["local_dynamic_tls"] }
+mimalloc-safe = { version = "0.1", features = ["skip_collect_on_exit", "local_dynamic_tls"] }
 
 [build-dependencies]
 napi-build = "2"
