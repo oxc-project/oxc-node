@@ -28,7 +28,7 @@ use phf::Set;
     not(target_family = "wasm")
 ))]
 #[global_allocator]
-static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+static ALLOC: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
 
 const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
     "_http_agent",
@@ -217,17 +217,14 @@ fn oxc_transform<S: TryAsStr>(src_path: &Path, code: &S) -> Result<Output> {
             format!("Failed to parse {}: {}", src_path.display(), msg),
         ));
     }
-    let (symbols, scopes) = SemanticBuilder::new()
+    let scoping = SemanticBuilder::new()
         .build(&program)
         .semantic
-        .into_symbol_table_and_scope_tree();
+        .into_scoping();
 
-    let TransformerReturn { errors, .. } = Transformer::new(
-        &allocator,
-        src_path,
-        &Default::default(),
-    )
-    .build_with_symbols_and_scopes(symbols, scopes, &mut program);
+    let TransformerReturn { errors, .. } =
+        Transformer::new(&allocator, src_path, &Default::default())
+            .build_with_scoping(scoping, &mut program);
 
     if !errors.is_empty() {
         let msg = join_errors(errors, source_str);
