@@ -46,25 +46,13 @@ const {
     return importObject
   },
   beforeInit({ instance }) {
-    __napi_rs_initialize_modules(instance)
+    for (const name of Object.keys(instance.exports)) {
+      if (name.startsWith('__napi_register__')) {
+        instance.exports[name]()
+      }
+    }
   },
 })
-
-function __napi_rs_initialize_modules(__napiInstance) {
-  __napiInstance.exports['__napi_register__init_tracing_0']?.()
-  __napiInstance.exports['__napi_register__Output_struct_1']?.()
-  __napiInstance.exports['__napi_register__Output_impl_4']?.()
-  __napiInstance.exports['__napi_register__transform_5']?.()
-  __napiInstance.exports['__napi_register__TransformTask_impl_6']?.()
-  __napiInstance.exports['__napi_register__transform_async_7']?.()
-  __napiInstance.exports['__napi_register__ResolveContext_struct_8']?.()
-  __napiInstance.exports['__napi_register__ResolveFnOutput_struct_9']?.()
-  __napiInstance.exports['__napi_register__OxcResolveOptions_struct_10']?.()
-  __napiInstance.exports['__napi_register__create_resolve_11']?.()
-  __napiInstance.exports['__napi_register__LoadContext_struct_12']?.()
-  __napiInstance.exports['__napi_register__LoadFnOutput_struct_13']?.()
-  __napiInstance.exports['__napi_register__load_14']?.()
-}
 export const Output = __napiModule.exports.Output
 export const createResolve = __napiModule.exports.createResolve
 export const initTracing = __napiModule.exports.initTracing
