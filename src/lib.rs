@@ -28,7 +28,7 @@ use phf::Set;
     not(target_family = "wasm")
 ))]
 #[global_allocator]
-static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+static ALLOC: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
 
 const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
     "_http_agent",

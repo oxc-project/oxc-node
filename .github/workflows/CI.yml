@@ -121,9 +121,7 @@ jobs:
               pnpm --filter=@oxc-node/core build --target powerpc64le-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
             target: s390x-unknown-linux-gnu
-            build: |
-              export CC=clang
-              pnpm --filter=@oxc-node/core build --target s390x-unknown-linux-gnu --use-napi-cross
+            build: pnpm --filter=@oxc-node/core build --target s390x-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
             target: wasm32-wasip1-threads
             build: pnpm --filter=@oxc-node/core build --target wasm32-wasip1-threads
