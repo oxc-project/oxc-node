@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 napi               = { version = "3.0.0-alpha", default-features = false, features = ["serde-json", "napi3"] }
 napi-derive        = { version = "3.0.0-alpha", default-features = false, features = ["type-def"] }
 oxc                = { version = "0.54.0", features = ["codegen", "transformer", "semantic"] }
-oxc_resolver       = "4"
+oxc_resolver       = "5"
 phf                = "0.11"
 serde              = { version = "1.0", features = ["derive"] }
 serde_json         = "1"
