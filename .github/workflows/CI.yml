@@ -155,7 +155,7 @@ jobs:
         with:
           version: 0.13.0
       - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@1e1237f7a4f2d8bc638667e95fe2579653d6db09 # v2.49.17
+        uses: taiki-e/install-action@f87f9990b09867202953bff9aa0c80e23ee16bb7 # v2.49.18
         if: ${{ contains(matrix.settings.target, 'musl') }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
