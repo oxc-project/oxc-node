@@ -360,11 +360,13 @@ jobs:
         run: ls -R .
         shell: bash
       - name: Set up QEMU
+        if: ${{ !contains(matrix.target, 'aarch64') }}
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
         with:
           platforms: all
           image: tonistiigi/binfmt:qemu-v7.0.0-28
       - run: docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+        if: ${{ !contains(matrix.target, 'aarch64') }}
       - name: Test bindings
         uses: addnab/docker-run-action@v3
         # Node.js on qemu randomly segfaults on powerpc64le
