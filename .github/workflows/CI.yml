@@ -154,7 +154,7 @@ jobs:
       - uses: goto-bus-stop/setup-zig@abea47f85e598557f500fa1fd2ab7464fcb39406 # v2.2.1
         if: ${{ contains(matrix.settings.target, 'musl') }}
         with:
-          version: 0.13.0
+          version: 0.14.0
       - name: Install cargo-zigbuild
         uses: taiki-e/install-action@f87f9990b09867202953bff9aa0c80e23ee16bb7 # v2.49.18
         if: ${{ contains(matrix.settings.target, 'musl') }}
@@ -306,13 +306,9 @@ jobs:
           - '18'
           - '20'
           - '22'
-        exclude:
-          # too slow
-          - target: aarch64-unknown-linux-gnu
-            node: '18'
     # Node.js on qemu segfaults on s390x and arm64v8 when using 24.04
     # See also https://github.com/actions/runner-images/issues/11471
-    runs-on: ubuntu-22.04
+    runs-on: ${{ contains(matrix.target, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-22.04' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: setup pnpm
