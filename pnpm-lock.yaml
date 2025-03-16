@@ -103,7 +103,7 @@ importers:
         specifier: workspace:*
         version: link:../core
       ava:
-        specifier: ^6.1.3
+        specifier: ^6.2.0
         version: 6.2.0(encoding@0.1.13)
 
   packages/integrate-module:
