@@ -34,7 +34,7 @@ jobs:
       - name: setup pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
       - name: Setup node
-        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
         with:
           node-version: 22
           cache: pnpm
@@ -59,7 +59,7 @@ jobs:
       - name: setup pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
       - name: Setup node
-        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
         with:
           node-version: 22
           cache: pnpm
@@ -135,7 +135,7 @@ jobs:
       - name: setup pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
       - name: Setup node
-        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
         with:
           node-version: 22
           cache: pnpm
@@ -156,7 +156,7 @@ jobs:
         with:
           version: 0.14.0
       - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@f87f9990b09867202953bff9aa0c80e23ee16bb7 # v2.49.18
+        uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # v2.49.27
         if: ${{ contains(matrix.settings.target, 'musl') }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -169,7 +169,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install
       - name: Setup node x86
-        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
         if: matrix.settings.target == 'i686-pc-windows-msvc'
         with:
           node-version: 22
@@ -263,7 +263,7 @@ jobs:
       - name: setup pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
       - name: Setup node
-        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
@@ -314,7 +314,7 @@ jobs:
       - name: setup pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
       - name: Setup node
-        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
@@ -386,7 +386,7 @@ jobs:
       - name: setup pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
       - name: Setup node
-        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
         with:
           node-version: 22
           cache: pnpm
@@ -422,7 +422,7 @@ jobs:
       - name: setup pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
       - name: Setup node
-        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
         with:
           node-version: 22
           cache: pnpm
