@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
-    env, mem,
+    env, fs, mem,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -668,10 +668,12 @@ fn init_resolver(cwd: PathBuf) -> Resolver {
     };
     tracing::debug!(tsconfig_full_path = ?tsconfig_full_path);
     Resolver::new(ResolveOptions {
-        tsconfig: Some(TsconfigOptions {
-            config_file: tsconfig_full_path,
-            references: TsconfigReferences::Auto,
-        }),
+        tsconfig: fs::exists(&tsconfig_full_path)
+            .unwrap_or(false)
+            .then_some(TsconfigOptions {
+                config_file: tsconfig_full_path,
+                references: TsconfigReferences::Auto,
+            }),
         condition_names: vec![
             "node".to_owned(),
             "import".to_owned(),
