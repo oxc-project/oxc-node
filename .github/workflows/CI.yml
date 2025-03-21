@@ -7,9 +7,7 @@ env:
   MACOSX_DEPLOYMENT_TARGET: '10.13'
   CC: clang
 
-permissions:
-  contents: write
-  id-token: write
+permissions: {}
 
 on:
   push:
@@ -371,7 +369,7 @@ jobs:
       - run: docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
         if: ${{ !contains(matrix.target, 'aarch64') }}
       - name: Test bindings
-        uses: addnab/docker-run-action@v3
+        uses: addnab/docker-run-action@4f65fabd2431ebc8d299f8e5a018d79a769ae185 # v3
         # Node.js on qemu randomly segfaults on powerpc64le
         continue-on-error: ${{ matrix.target == 'powerpc64le-unknown-linux-gnu' }}
         with:
@@ -447,6 +445,12 @@ jobs:
           name: cli
           path: ./packages/cli/dist
       - name: Publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        permissions:
+          contents: write
+          id-token: write
         run: |
           echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
           npm config set provenance true
@@ -461,6 +465,3 @@ jobs:
           else
             echo "Not a release, skipping publish"
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
