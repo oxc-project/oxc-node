@@ -418,6 +418,9 @@ jobs:
       - test-linux-binding
       - build-freebsd
       - test-wasi
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
       - name: setup pnpm
@@ -448,9 +451,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        permissions:
-          contents: write
-          id-token: write
         run: |
           echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
           npm config set provenance true
