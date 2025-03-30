@@ -70,7 +70,7 @@ jobs:
       - name: Build
         run: pnpm --filter="@oxc-node/cli" build
       - name: Upload artifact
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli
           path: ./packages/cli/dist
@@ -148,7 +148,7 @@ jobs:
           cache-key: ${{ matrix.settings.target }}-${{ matrix.settings.host }}
           save-cache: ${{ github.ref_name == 'main' }}
       - name: Cache cross toolchain
-        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ~/.napi-rs
           key: ${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}
@@ -157,7 +157,7 @@ jobs:
         with:
           version: 0.14.0
       - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # v2.49.27
+        uses: taiki-e/install-action@6aca1cfa12ef3a6b98ee8c70e0171bfa067604f5 # v2.49.39
         if: ${{ contains(matrix.settings.target, 'musl') }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -180,7 +180,7 @@ jobs:
         run: ${{ matrix.settings.build }}
         shell: bash
       - name: Upload artifact
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bindings-${{ matrix.settings.target }}
           path: |
@@ -227,7 +227,7 @@ jobs:
             rm -rf node_modules
             rm -rf target
       - name: Upload artifact
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bindings-x86_64-unknown-freebsd
           path: ./packages/core/*.node
@@ -269,14 +269,14 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
           architecture: ${{ matrix.settings.architecture }}
-      - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
           name: cli
           path: ./packages/cli/dist
       - name: Install dependencies
         run: pnpm install
       - name: Download artifacts
-        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
           name: bindings-${{ matrix.settings.target }}
           path: ./packages/core
@@ -345,7 +345,7 @@ jobs:
             }
           " >> $GITHUB_OUTPUT
           echo "PNPM_STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
-      - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
           name: cli
           path: ./packages/cli/dist
@@ -353,7 +353,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --force
       - name: Download artifacts
-        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
           name: bindings-${{ matrix.target }}
           path: ./packages/core
@@ -391,14 +391,14 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
           name: cli
           path: ./packages/cli/dist
       - name: Install dependencies
         run: pnpm install --force
       - name: Download artifacts
-        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
           name: bindings-wasm32-wasip1-threads
           path: ./packages/core
@@ -433,7 +433,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install
       - name: Download all artifacts
-        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
           path: artifacts
       - name: create npm dirs
@@ -443,7 +443,7 @@ jobs:
       - name: List packages
         run: ls -R ./npm
         shell: bash
-      - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
           name: cli
           path: ./packages/cli/dist
