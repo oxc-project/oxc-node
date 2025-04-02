@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     env, fs, mem,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 
 use napi::bindgen_prelude::*;
@@ -15,10 +15,14 @@ use oxc::{
     parser::{Parser, ParserReturn},
     semantic::SemanticBuilder,
     span::SourceType,
-    transformer::{Transformer, TransformerReturn},
+    transformer::{
+        DecoratorOptions, JsxOptions, JsxRuntime, ProposalOptions, TransformOptions, Transformer,
+        TransformerReturn,
+    },
 };
 use oxc_resolver::{
-    EnforceExtension, PackageType, ResolveOptions, Resolver, TsconfigOptions, TsconfigReferences,
+    CompilerOptionsSerde, EnforceExtension, PackageType, ResolveOptions, Resolver, TsConfigSerde,
+    TsconfigOptions, TsconfigReferences,
 };
 use phf::Set;
 
@@ -98,7 +102,7 @@ const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
     "zlib",
 };
 
-static RESOLVER: OnceLock<Resolver> = OnceLock::new();
+static RESOLVER_AND_TSCONFIG: OnceLock<(Resolver, Option<Arc<TsConfigSerde>>)> = OnceLock::new();
 
 #[cfg(not(target_os = "windows"))]
 const NODE_MODULES_PATH: &str = "/node_modules/";
@@ -165,7 +169,7 @@ impl Output {
 #[napi]
 pub fn transform(path: String, source: Either<String, &[u8]>) -> Result<Output> {
     let src_path = Path::new(&path);
-    oxc_transform(src_path, &source)
+    oxc_transform(src_path, &source, None)
 }
 
 pub struct TransformTask {
@@ -180,7 +184,7 @@ impl Task for TransformTask {
 
     fn compute(&mut self) -> Result<Self::Output> {
         let src_path = Path::new(&self.path);
-        oxc_transform(src_path, &self.source)
+        oxc_transform(src_path, &self.source, None)
     }
 
     fn resolve(&mut self, _: Env, output: Self::Output) -> Result<Self::JsValue> {
@@ -201,7 +205,11 @@ pub fn transform_async(
     AsyncTask::new(TransformTask { path, source })
 }
 
-fn oxc_transform<S: TryAsStr>(src_path: &Path, code: &S) -> Result<Output> {
+fn oxc_transform<S: TryAsStr>(
+    src_path: &Path,
+    code: &S,
+    compiler_options: Option<&CompilerOptionsSerde>,
+) -> Result<Output> {
     let allocator = Allocator::default();
     let source_type = SourceType::from_path(src_path).unwrap_or_default();
     let source_str = code.try_as_str()?;
@@ -218,13 +226,42 @@ fn oxc_transform<S: TryAsStr>(src_path: &Path, code: &S) -> Result<Output> {
         ));
     }
     let scoping = SemanticBuilder::new()
+        // Turn off in the future
+        .with_scope_tree_child_ids(true)
         .build(&program)
         .semantic
         .into_scoping();
 
-    let TransformerReturn { errors, .. } =
-        Transformer::new(&allocator, src_path, &Default::default())
-            .build_with_scoping(scoping, &mut program);
+    let TransformerReturn { errors, .. } = Transformer::new(
+        &allocator,
+        src_path,
+        &TransformOptions {
+            decorator: DecoratorOptions {
+                legacy: compiler_options
+                    .and_then(|c| c.experimental_decorators)
+                    .unwrap_or(false),
+                emit_decorator_metadata: compiler_options
+                    .and_then(|c| c.emit_decorator_metadata)
+                    .unwrap_or(false),
+            },
+            jsx: JsxOptions {
+                runtime: compiler_options
+                    .and_then(|c| c.jsx.as_ref())
+                    .map(|s| match s.as_str() {
+                        "automatic" => JsxRuntime::Automatic,
+                        "classic" => JsxRuntime::Classic,
+                        _ => JsxRuntime::default(),
+                    })
+                    .unwrap_or_default(),
+                ..Default::default()
+            },
+            proposals: ProposalOptions {
+                explicit_resource_management: true,
+            },
+            ..Default::default()
+        },
+    )
+    .build_with_scoping(scoping, &mut program);
 
     if !errors.is_empty() {
         let msg = join_errors(errors, source_str);
@@ -330,7 +367,7 @@ pub fn create_resolve<'env>(
     #[cfg(not(target_family = "wasm"))]
     let cwd = env::current_dir()?;
 
-    let resolver = RESOLVER.get_or_init(|| init_resolver(cwd.clone()));
+    let (resolver, _) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone()));
 
     let is_absolute_path = specifier.starts_with(PATH_PREFIX);
 
@@ -487,15 +524,31 @@ pub fn load<'env>(
     }
 
     let loaded = next_load.call((url.clone(), Some(context)).into())?;
+    let (_, tsconfig) = RESOLVER_AND_TSCONFIG.get().ok_or_else(|| {
+        Error::new(
+            Status::GenericFailure,
+            "Failed to get resolver and tsconfig",
+        )
+    })?;
+
+    let resolved_compiler_options = tsconfig.as_ref().map(|tsconfig| &tsconfig.compiler_options);
     match loaded {
-        Either::A(output) => Ok(Either::A(transform_output(url, output)?)),
+        Either::A(output) => Ok(Either::A(transform_output(
+            url,
+            output,
+            resolved_compiler_options,
+        )?)),
         Either::B(promise) => promise
-            .then(move |ctx| transform_output(url, ctx.value))
+            .then(move |ctx| transform_output(url, ctx.value, resolved_compiler_options))
             .map(Either::B),
     }
 }
 
-fn transform_output(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
+fn transform_output(
+    url: String,
+    output: LoadFnOutput,
+    resolved_compiler_options: Option<&CompilerOptionsSerde>,
+) -> Result<LoadFnOutput> {
     match &output.source {
         Some(Either4::D(_)) | None => {
             tracing::debug!("No source code to transform {}", url);
@@ -517,10 +570,7 @@ fn transform_output(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
                 return Ok(output);
             }
             let ext = src_path.extension().and_then(|ext| ext.to_str());
-            let jsx = ext
-                .map(|ext| ext == "tsx" || ext == "jsx")
-                .unwrap_or_default();
-            let ts = ext.map(|ext| ext.contains("ts")).unwrap_or(false);
+
             if ext.map(|ext| ext == "json").unwrap_or(false) {
                 let source_str = output.source.as_ref().unwrap().try_as_str()?;
                 let json: serde_json::Value = serde_json::from_str(source_str)?;
@@ -550,24 +600,12 @@ fn transform_output(url: String, output: LoadFnOutput) -> Result<LoadFnOutput> {
                     response_url: Some(url),
                 });
             }
-            let source_type = match output.format.as_str() {
-                "commonjs" => SourceType::default()
-                    .with_script(true)
-                    .with_typescript(ts)
-                    .with_jsx(jsx),
-                "module" => SourceType::default()
-                    .with_module(true)
-                    .with_typescript(ts)
-                    .with_jsx(jsx),
-                _ => {
-                    return Err(Error::new(
-                        Status::InvalidArg,
-                        format!("Unknown module format {}", output.format),
-                    ));
-                }
-            };
-            tracing::debug!(url = ?url, jsx = ?jsx, src_path = ?src_path, source_type = ?source_type, "running oxc transform");
-            let transform_output = oxc_transform(src_path, output.source.as_ref().unwrap())?;
+
+            let transform_output = oxc_transform(
+                src_path,
+                output.source.as_ref().unwrap(),
+                resolved_compiler_options,
+            )?;
             let output_code = transform_output
                 .0
                 .map
@@ -655,7 +693,7 @@ impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
     }
 }
 
-fn init_resolver(cwd: PathBuf) -> Resolver {
+fn init_resolver(cwd: PathBuf) -> (Resolver, Option<Arc<TsConfigSerde>>) {
     let tsconfig = env::var("TS_NODE_PROJECT")
         .or_else(|_| env::var("OXC_TSCONFIG_PATH"))
         .map(Cow::Owned)
@@ -667,13 +705,14 @@ fn init_resolver(cwd: PathBuf) -> Resolver {
         PathBuf::from(&*tsconfig)
     };
     tracing::debug!(tsconfig_full_path = ?tsconfig_full_path);
-    Resolver::new(ResolveOptions {
-        tsconfig: fs::exists(&tsconfig_full_path)
-            .unwrap_or(false)
-            .then_some(TsconfigOptions {
-                config_file: tsconfig_full_path,
-                references: TsconfigReferences::Auto,
-            }),
+    let tsconfig = fs::exists(&tsconfig_full_path)
+        .unwrap_or(false)
+        .then_some(TsconfigOptions {
+            config_file: tsconfig_full_path.clone(),
+            references: TsconfigReferences::Auto,
+        });
+    let resolver = Resolver::new(ResolveOptions {
+        tsconfig,
         condition_names: vec![
             "node".to_owned(),
             "import".to_owned(),
@@ -707,7 +746,11 @@ fn init_resolver(cwd: PathBuf) -> Resolver {
             ".node".to_owned(),
         ],
         ..Default::default()
-    })
+    });
+
+    let tsconfig = resolver.resolve_tsconfig(tsconfig_full_path).ok();
+
+    (resolver, tsconfig)
 }
 
 fn join_errors(errors: Vec<OxcDiagnostic>, source_str: &str) -> String {

@@ -16,6 +16,9 @@ import { Component } from './component'
 import './js-module'
 import babelGeneratedDoubleDefault from './babel-generated-double-default'
 import { exportFromMts } from './enforce-mts/index.mjs'
+import { bootstrap } from './nestjs/index'
+import { AppService } from './nestjs/app.service'
+
 const { foo: fooWithQuery } = await import(`./foo.js?q=${Date.now()}`)
 
 await test('file-type should work', () => {
@@ -69,4 +72,11 @@ await test('resolve cjs in type module package', () => {
 
 await test('resolve mts in type commonjs package', () => {
   assert.equal(exportFromMts, 'exportFromMts')
+})
+
+await test('resolve nestjs', async () => {
+  const app = await bootstrap()
+  const service = app.get(AppService)
+  assert.equal(service.getHello(), 'Hello World!')
+  await app.close()
 })

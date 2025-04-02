@@ -8,6 +8,7 @@
     "@napi-rs/wasm-runtime": "^0.2.6",
     "@oxc-node/cli": "workspace:*",
     "@oxc-node/core": "workspace:*",
+    "@oxc-project/runtime": "^0.62.0",
     "@taplo/cli": "^0.7.0",
     "@types/node": "^22.10.7",
     "ava": "^6.2.0",

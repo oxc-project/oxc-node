@@ -15,14 +15,14 @@
     "@napi-rs/wasm-runtime": "^0.2.4",
     "@oxc-node/cli": "workspace:*",
     "@types/node": "^22.0.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
+    "@types/react": "^19.0.13",
+    "@types/react-dom": "^19.0.5",
     "canvaskit-wasm": "^0.39.1",
     "ipaddr.js": "^2.2.0",
     "postgres": "^3.4.4",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "simple-git": "^3.25.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "simple-git": "^3.27.0",
     "ts-node": "^10.9.2"
   }
 }
