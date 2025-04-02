@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.0.22](https://github.com/oxc-project/oxc-node/compare/v0.0.21...v0.0.22) (2025-04-02)
+
+### Bug Fixes
+
+- **core:** pass tsconfig: None to Resolver if tsconfig not exists ([#84](https://github.com/oxc-project/oxc-node/issues/84)) ([9b46f48](https://github.com/oxc-project/oxc-node/commit/9b46f487e2d5775cb7b124ca1308733f720536f3))
+
+### Features
+
+- **core:** pass tsconfig options to oxc ([#92](https://github.com/oxc-project/oxc-node/issues/92)) ([2771453](https://github.com/oxc-project/oxc-node/commit/2771453654414ad1960f28ab89b5a90cbaf6b988))
+- resolve cjs files ([#93](https://github.com/oxc-project/oxc-node/issues/93)) ([9ef439e](https://github.com/oxc-project/oxc-node/commit/9ef439e78ed11069f93629d756316ae377618e20))
+
 ## [0.0.21](https://github.com/oxc-project/oxc-node/compare/v0.0.20...v0.0.21) (2025-03-16)
 
 **Note:** Version bump only for package oxc-node

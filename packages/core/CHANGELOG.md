@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.0.22](https://github.com/oxc-project/oxc-node/compare/v0.0.21...v0.0.22) (2025-04-02)
+
+### Features
+
+- resolve cjs files ([#93](https://github.com/oxc-project/oxc-node/issues/93)) ([9ef439e](https://github.com/oxc-project/oxc-node/commit/9ef439e78ed11069f93629d756316ae377618e20))
+
 ## [0.0.21](https://github.com/oxc-project/oxc-node/compare/v0.0.20...v0.0.21) (2025-03-16)
 
 **Note:** Version bump only for package @oxc-node/core
