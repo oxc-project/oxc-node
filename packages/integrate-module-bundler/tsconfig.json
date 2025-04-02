@@ -8,6 +8,8 @@
     "composite": true,
     "jsx": "react-jsx",
     "outDir": "dist",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
     "baseUrl": "./",
     "paths": {
       "@subdirectory/*": ["./src/subdirectory/*"]
