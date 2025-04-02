@@ -371,8 +371,7 @@ if (!nativeBinding) {
 }
 
 module.exports.Output = nativeBinding.Output
+module.exports.OxcTransformer = nativeBinding.OxcTransformer
 module.exports.createResolve = nativeBinding.createResolve
 module.exports.initTracing = nativeBinding.initTracing
 module.exports.load = nativeBinding.load
-module.exports.transform = nativeBinding.transform
-module.exports.transformAsync = nativeBinding.transformAsync

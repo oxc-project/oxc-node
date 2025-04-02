@@ -18,6 +18,10 @@
   "devDependencies": {
     "@napi-rs/cli": "3.0.0-alpha.76"
   },
+  "dependencies": {
+    "@oxc-project/runtime": "^0.62.0",
+    "pirates": "^4.0.7"
+  },
   "exports": {
     ".": {
       "import": "./index.js",

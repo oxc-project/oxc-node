@@ -2,7 +2,7 @@ import assert from 'node:assert'
 import test from 'node:test'
 
 import { EntryType } from '@napi-rs/tar'
-import { transform } from '@oxc-node/core'
+import { OxcTransformer } from '@oxc-node/core'
 import { bar as subBar } from '@subdirectory/bar.mjs'
 import { supportedExtensions } from 'file-type'
 import { renderToString } from 'react-dom/server'
@@ -91,6 +91,7 @@ await test('resolve canvaskit-wasm', async () => {
 })
 
 await test('should resolve native addon', async () => {
-  const result = await transform('index.ts', 'const a: number = 1')
-  assert.equal(result.source(), 'const a = 1;\n')
+  const transformer = new OxcTransformer(process.cwd())
+  const result = await transformer.transformAsync('index.ts', 'const a: number = 1')
+  assert.equal(result.source(), '"use strict";\nconst a = 1;\n')
 })

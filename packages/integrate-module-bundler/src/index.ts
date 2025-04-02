@@ -1,5 +1,6 @@
 import assert from 'node:assert'
 import test from 'node:test'
+import { createRequire } from 'node:module'
 
 import { EntryType } from '@napi-rs/tar'
 import { bar as subBar } from '@subdirectory/bar'
@@ -80,3 +81,11 @@ await test('resolve nestjs', async () => {
   assert.equal(service.getHello(), 'Hello World!')
   await app.close()
 })
+
+if (!process.versions.node.startsWith('18')) {
+  await test('resolve typescript cjs', () => {
+    const require = createRequire(import.meta.url)
+    const fooCjs = require('./typescript-cjs').foo
+    assert.equal(fooCjs, 'foo')
+  })
+}

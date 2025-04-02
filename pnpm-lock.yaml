@@ -95,6 +95,13 @@ importers:
         version: 1.0.0-beta.7(@oxc-project/runtime@0.62.0)(typescript@5.8.2)
 
   packages/core:
+    dependencies:
+      '@oxc-project/runtime':
+        specifier: ^0.62.0
+        version: 0.62.0
+      pirates:
+        specifier: ^4.0.7
+        version: 4.0.7
     devDependencies:
       '@napi-rs/cli':
         specifier: 3.0.0-alpha.76
@@ -3443,6 +3450,10 @@ packages:
   pify@5.0.0:
     resolution: {integrity: sha512-eW/gHNMlxdSP6dmG6uJip6FXN0EQBwm2clYYd8Wul42Cwu/DK8HEftzsapcNdYe2MfLiIwZqsDk2RDEsTE79hA==}
     engines: {node: '>=10'}
+
+  pirates@4.0.7:
+    resolution: {integrity: sha512-TfySrs/5nm8fQJDcBDuUng3VOUKsd7S+zqvbOTiGXHfxX4wK31ard+hoNuvkicM/2YFzlpDgABOevKSsB4G/FA==}
+    engines: {node: '>= 6'}
 
   pkg-dir@4.2.0:
     resolution: {integrity: sha512-HRDzbaKjC+AOWVXxAU/x54COGeIv9eb+6CkDSQoNTt4XyWoIJvuPsXizxu/Fr23EiekbtZwmh1IcIG/l/a10GQ==}
@@ -7606,6 +7617,8 @@ snapshots:
   pify@4.0.1: {}
 
   pify@5.0.0: {}
+
+  pirates@4.0.7: {}
 
   pkg-dir@4.2.0:
     dependencies:
