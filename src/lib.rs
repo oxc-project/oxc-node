@@ -16,8 +16,8 @@ use oxc::{
     semantic::SemanticBuilder,
     span::SourceType,
     transformer::{
-        DecoratorOptions, JsxOptions, JsxRuntime, ProposalOptions, TransformOptions, Transformer,
-        TransformerReturn,
+        DecoratorOptions, EnvOptions, JsxOptions, JsxRuntime, Module, ProposalOptions,
+        TransformOptions, Transformer, TransformerReturn, TypeScriptOptions,
     },
 };
 use oxc_resolver::{
@@ -166,13 +166,8 @@ impl Output {
     }
 }
 
-#[napi]
-pub fn transform(path: String, source: Either<String, &[u8]>) -> Result<Output> {
-    let src_path = Path::new(&path);
-    oxc_transform(src_path, &source, None)
-}
-
 pub struct TransformTask {
+    cwd: String,
     path: String,
     source: Either3<String, Uint8Array, Buffer>,
 }
@@ -184,7 +179,14 @@ impl Task for TransformTask {
 
     fn compute(&mut self) -> Result<Self::Output> {
         let src_path = Path::new(&self.path);
-        oxc_transform(src_path, &self.source, None)
+        let cwd = PathBuf::from(&self.cwd);
+        let (_, resolved_tsconfig) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd));
+        oxc_transform(
+            src_path,
+            &self.source,
+            resolved_tsconfig.as_ref().map(|t| &t.compiler_options),
+            Some(Module::CommonJS),
+        )
     }
 
     fn resolve(&mut self, _: Env, output: Self::Output) -> Result<Self::JsValue> {
@@ -198,17 +200,48 @@ impl Task for TransformTask {
 }
 
 #[napi]
-pub fn transform_async(
-    path: String,
-    source: Either3<String, Uint8Array, Buffer>,
-) -> AsyncTask<TransformTask> {
-    AsyncTask::new(TransformTask { path, source })
+pub struct OxcTransformer {
+    cwd: String,
+}
+
+#[napi]
+impl OxcTransformer {
+    #[napi(constructor)]
+    pub fn new(cwd: String) -> Self {
+        Self { cwd }
+    }
+
+    #[napi]
+    pub fn transform(&self, path: String, source: Either<String, &[u8]>) -> Result<Output> {
+        let cwd = PathBuf::from(&self.cwd);
+        let (_, resolved_tsconfig) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd));
+        oxc_transform(
+            Path::new(&path),
+            &source,
+            resolved_tsconfig.as_ref().map(|t| &t.compiler_options),
+            Some(Module::CommonJS),
+        )
+    }
+
+    #[napi]
+    pub fn transform_async(
+        &self,
+        path: String,
+        source: Either3<String, Uint8Array, Buffer>,
+    ) -> AsyncTask<TransformTask> {
+        AsyncTask::new(TransformTask {
+            path,
+            source,
+            cwd: self.cwd.clone(),
+        })
+    }
 }
 
 fn oxc_transform<S: TryAsStr>(
     src_path: &Path,
     code: &S,
-    compiler_options: Option<&CompilerOptionsSerde>,
+    compiler_options: Option<&'static CompilerOptionsSerde>,
+    module_target: Option<Module>,
 ) -> Result<Output> {
     let allocator = Allocator::default();
     let source_type = SourceType::from_path(src_path).unwrap_or_default();
@@ -253,6 +286,21 @@ fn oxc_transform<S: TryAsStr>(
                         _ => JsxRuntime::default(),
                     })
                     .unwrap_or_default(),
+                ..Default::default()
+            },
+            typescript: TypeScriptOptions {
+                jsx_pragma: compiler_options
+                    .and_then(|c| c.jsx_factory.as_deref())
+                    .map(Cow::Borrowed)
+                    .unwrap_or_default(),
+                jsx_pragma_frag: compiler_options
+                    .and_then(|c| c.jsx_fragment_factory.as_ref())
+                    .map(|c| Cow::Borrowed(c.as_str()))
+                    .unwrap_or_default(),
+                ..Default::default()
+            },
+            env: EnvOptions {
+                module: module_target.unwrap_or_default(),
                 ..Default::default()
             },
             proposals: ProposalOptions {
@@ -547,7 +595,7 @@ pub fn load<'env>(
 fn transform_output(
     url: String,
     output: LoadFnOutput,
-    resolved_compiler_options: Option<&CompilerOptionsSerde>,
+    resolved_compiler_options: Option<&'static CompilerOptionsSerde>,
 ) -> Result<LoadFnOutput> {
     match &output.source {
         Some(Either4::D(_)) | None => {
@@ -605,6 +653,7 @@ fn transform_output(
                 src_path,
                 output.source.as_ref().unwrap(),
                 resolved_compiler_options,
+                None,
             )?;
             let output_code = transform_output
                 .0

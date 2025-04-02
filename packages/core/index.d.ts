@@ -13,6 +13,12 @@ export declare class Output {
   sourceMap(): string | null
 }
 
+export declare class OxcTransformer {
+  constructor(cwd: string)
+  transform(path: string, source: string | Uint8Array): Output
+  transformAsync(path: string, source: string | Uint8Array | Buffer): Promise<Output>
+}
+
 export declare function createResolve(options: OxcResolveOptions, specifier: string, context: ResolveContext, nextResolve: (arg0: string, arg1?: ResolveContext | undefined | null) => ResolveFnOutput | Promise<ResolveFnOutput>): ResolveFnOutput | Promise<ResolveFnOutput>
 
 export declare function initTracing(): void
@@ -52,7 +58,3 @@ export interface ResolveFnOutput {
   url: string
   importAttributes?: Record<string, string> | null
 }
-
-export declare function transform(path: string, source: string | Uint8Array): Output
-
-export declare function transformAsync(path: string, source: string | Uint8Array | Buffer): Promise<Output>

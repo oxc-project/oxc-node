@@ -86,8 +86,7 @@ const { instance: __napiInstance, module: __wasiModule, napiModule: __napiModule
 })
 
 module.exports.Output = __napiModule.exports.Output
+module.exports.OxcTransformer = __napiModule.exports.OxcTransformer
 module.exports.createResolve = __napiModule.exports.createResolve
 module.exports.initTracing = __napiModule.exports.initTracing
 module.exports.load = __napiModule.exports.load
-module.exports.transform = __napiModule.exports.transform
-module.exports.transformAsync = __napiModule.exports.transformAsync
