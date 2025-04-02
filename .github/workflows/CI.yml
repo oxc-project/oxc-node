@@ -268,6 +268,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
+          check-latest: true
           architecture: ${{ matrix.settings.architecture }}
       - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
