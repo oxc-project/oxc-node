@@ -1,3 +1,6 @@
+import 'core-js/modules/esnext.symbol.async-dispose'
+import 'core-js/modules/esnext.symbol.dispose'
+
 import assert from 'node:assert'
 import test from 'node:test'
 import { createRequire } from 'node:module'
@@ -76,10 +79,16 @@ await test('resolve mts in type commonjs package', () => {
 })
 
 await test('resolve nestjs', async () => {
-  const app = await bootstrap()
+  const { app } = await bootstrap()
   const service = app.get(AppService)
   assert.equal(service.getHello(), 'Hello World!')
   await app.close()
+})
+
+await test('using syntax', async () => {
+  await using nest = await bootstrap()
+  const service = nest.app.get(AppService)
+  assert.equal(service.getHello(), 'Hello World!')
 })
 
 if (!process.versions.node.startsWith('18')) {

@@ -23,6 +23,7 @@
     "@types/react": "^19.0.13",
     "@types/react-dom": "^19.0.5",
     "express": "^5.1.0",
+    "core-js": "^3.41.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "simple-git": "^3.27.0",
