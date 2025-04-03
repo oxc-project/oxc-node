@@ -53,7 +53,7 @@ export interface ResolveContext {
 }
 
 export interface ResolveFnOutput {
-  format: string | undefined | null
+  format?: string | null
   shortCircuit?: boolean
   url: string
   importAttributes?: Record<string, string> | null

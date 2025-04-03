@@ -336,7 +336,7 @@ pub struct ResolveContext {
 
 #[napi(object)]
 pub struct ResolveFnOutput {
-    pub format: Either3<String, Undefined, Null>,
+    pub format: Option<Either<String, Null>>,
     pub short_circuit: Option<bool>,
     pub url: String,
     pub import_attributes: Option<Either<HashMap<String, String>, Null>>,
@@ -377,30 +377,15 @@ pub fn create_resolve<'env>(
     tracing::debug!(specifier = ?specifier, context = ?context);
     if specifier.starts_with("node:") || specifier.starts_with("nodejs:") {
         tracing::debug!("short-circuiting builtin protocol resolve: {}", specifier);
-        return Ok(Either::A(ResolveFnOutput {
-            short_circuit: Some(true),
-            format: Either3::A("builtin".to_string()),
-            url: specifier,
-            import_attributes: None,
-        }));
+        return add_short_circuit(specifier, Some("builtin"), context, next_resolve);
     }
     if BUILTIN_MODULES.contains(specifier.as_str()) {
         tracing::debug!("short-circuiting builtin resolve: {}", specifier);
-        return Ok(Either::A(ResolveFnOutput {
-            short_circuit: Some(true),
-            format: Either3::A("builtin".to_string()),
-            url: format!("node:{specifier}"),
-            import_attributes: None,
-        }));
+        return add_short_circuit(specifier, Some("builtin"), context, next_resolve);
     }
     if specifier.starts_with("data:") {
         tracing::debug!("short-circuiting data URL resolve: {}", specifier);
-        return Ok(Either::A(ResolveFnOutput {
-            short_circuit: Some(true),
-            format: Either3::C(Null),
-            url: specifier,
-            import_attributes: None,
-        }));
+        return add_short_circuit(specifier, Some("builtin"), context, next_resolve);
     }
 
     #[cfg(target_family = "wasm")]
@@ -458,7 +443,7 @@ pub fn create_resolve<'env>(
             specifier,
             context.import_attributes
         );
-        return add_short_circuit(specifier, context, next_resolve);
+        return next_resolve.call((specifier, Some(context)).into());
     };
 
     if let Ok(resolution) = resolution {
@@ -470,40 +455,36 @@ pub fn create_resolve<'env>(
             .map(|p| p.contains(NODE_MODULES_PATH))
             .unwrap_or(false)
         {
-            return Ok(Either::A(ResolveFnOutput {
-                short_circuit: Some(true),
-                format: {
-                    let ext = p.extension().and_then(|ext| ext.to_str());
+            let format = {
+                let ext = p.extension().and_then(|ext| ext.to_str());
 
-                    let format = ext
-                        .and_then(|ext| match ext {
-                            "cjs" | "cts" | "node" => None,
-                            "mts" | "mjs" => Some("module".to_owned()),
-                            _ => resolution.package_json().and_then(|p| p.r#type).and_then(
-                                |package_type| {
-                                    if package_type == PackageType::Module {
-                                        Some("module".to_owned())
-                                    } else {
-                                        None
-                                    }
-                                },
-                            ),
-                        })
-                        .unwrap_or_else(|| "commonjs".to_owned());
-                    tracing::debug!(path = ?p, format = ?format);
-                    Either3::A(format)
-                },
-                url,
-                import_attributes: Some(Either::A(context.import_attributes.clone())),
-            }));
+                let format = ext
+                    .and_then(|ext| match ext {
+                        "cjs" | "cts" | "node" => None,
+                        "mts" | "mjs" => Some("module"),
+                        _ => resolution.package_json().and_then(|p| p.r#type).and_then(
+                            |package_type| {
+                                if package_type == PackageType::Module {
+                                    Some("module")
+                                } else {
+                                    None
+                                }
+                            },
+                        ),
+                    })
+                    .unwrap_or("commonjs");
+                tracing::debug!(path = ?p, format = ?format);
+                format
+            };
+            return add_short_circuit(url, Some(format), context, next_resolve);
         } else {
-            return add_short_circuit(url, context, next_resolve);
+            return add_short_circuit(url, None, context, next_resolve);
         }
     }
 
     tracing::debug!("default resolve: {}", specifier);
 
-    add_short_circuit(specifier, context, next_resolve)
+    add_short_circuit(specifier, None, context, next_resolve)
 }
 
 #[napi(object)]
@@ -645,7 +626,6 @@ fn transform_output(
                     output_code
                 })
                 .unwrap_or_else(|| transform_output.0.code);
-
             tracing::debug!("loaded {} format: {}", url, output.format);
             Ok(LoadFnOutput {
                 format: output.format,
@@ -789,6 +769,7 @@ fn join_errors(errors: Vec<OxcDiagnostic>, source_str: &str) -> String {
 #[allow(clippy::type_complexity)]
 fn add_short_circuit<'env>(
     specifier: String,
+    format: Option<&'static str>,
     context: ResolveContext,
     next_resolve: Function<
         'env,
@@ -801,11 +782,17 @@ fn add_short_circuit<'env>(
     match builtin_resolved {
         Either::A(mut output) => {
             output.short_circuit = Some(true);
+            if let Some(format) = format {
+                output.format = Some(Either::A(format.to_owned()));
+            }
             Ok(Either::A(output))
         }
         Either::B(promise) => promise
-            .then(|mut ctx| {
+            .then(move |mut ctx| {
                 ctx.value.short_circuit = Some(true);
+                if let Some(format) = format {
+                    ctx.value.format = Some(Either::A(format.to_owned()));
+                }
                 Ok(ctx.value)
             })
             .map(Either::B),
