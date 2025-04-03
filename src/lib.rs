@@ -21,8 +21,8 @@ use oxc::{
     },
 };
 use oxc_resolver::{
-    CompilerOptionsSerde, EnforceExtension, PackageType, ResolveOptions, Resolver, TsConfigSerde,
-    TsconfigOptions, TsconfigReferences,
+    Cache, CompilerOptionsSerde, EnforceExtension, PackageType, Resolution, ResolveOptions,
+    Resolver, TsConfigSerde, TsconfigOptions, TsconfigReferences,
 };
 use phf::Set;
 
@@ -451,23 +451,6 @@ pub fn create_resolve<'env>(
         },
     );
 
-    let add_short_circuit = |context: ResolveContext| {
-        let builtin_resolved = next_resolve.call((specifier.clone(), Some(context)).into())?;
-
-        match builtin_resolved {
-            Either::A(mut output) => {
-                output.short_circuit = Some(true);
-                Ok(Either::A(output))
-            }
-            Either::B(promise) => promise
-                .then(|mut ctx| {
-                    ctx.value.short_circuit = Some(true);
-                    Ok(ctx.value)
-                })
-                .map(Either::B),
-        }
-    };
-
     // import attributes
     if !context.import_attributes.is_empty() {
         tracing::debug!(
@@ -475,27 +458,18 @@ pub fn create_resolve<'env>(
             specifier,
             context.import_attributes
         );
-        return add_short_circuit(context);
+        return add_short_circuit(specifier, context, next_resolve);
     };
 
     if let Ok(resolution) = resolution {
         tracing::debug!(resolution = ?resolution, "resolved");
         let p = resolution.path();
+        let url = oxc_resolved_path_to_url(&resolution);
         if !p
             .to_str()
             .map(|p| p.contains(NODE_MODULES_PATH))
             .unwrap_or(false)
         {
-            #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
-            let mut url = if resolution.query().is_some() || resolution.fragment().is_some() {
-                format!("{PATH_PREFIX}{}", resolution.full_path().to_string_lossy())
-            } else {
-                format!("{PATH_PREFIX}{}", resolution.path().to_string_lossy())
-            };
-            #[cfg(target_os = "windows")]
-            {
-                url = url.replace("\\", "/");
-            }
             return Ok(Either::A(ResolveFnOutput {
                 short_circuit: Some(true),
                 format: {
@@ -522,12 +496,14 @@ pub fn create_resolve<'env>(
                 url,
                 import_attributes: Some(Either::A(context.import_attributes.clone())),
             }));
+        } else {
+            return add_short_circuit(url, context, next_resolve);
         }
     }
 
     tracing::debug!("default resolve: {}", specifier);
 
-    add_short_circuit(context)
+    add_short_circuit(specifier, context, next_resolve)
 }
 
 #[napi(object)]
@@ -808,4 +784,44 @@ fn join_errors(errors: Vec<OxcDiagnostic>, source_str: &str) -> String {
         .map(|err| err.with_source_code(source_str.to_owned()).to_string())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[allow(clippy::type_complexity)]
+fn add_short_circuit<'env>(
+    specifier: String,
+    context: ResolveContext,
+    next_resolve: Function<
+        'env,
+        FnArgs<(String, Option<ResolveContext>)>,
+        Either<ResolveFnOutput, PromiseRaw<'env, ResolveFnOutput>>,
+    >,
+) -> Result<Either<ResolveFnOutput, PromiseRaw<'env, ResolveFnOutput>>> {
+    let builtin_resolved = next_resolve.call((specifier, Some(context)).into())?;
+
+    match builtin_resolved {
+        Either::A(mut output) => {
+            output.short_circuit = Some(true);
+            Ok(Either::A(output))
+        }
+        Either::B(promise) => promise
+            .then(|mut ctx| {
+                ctx.value.short_circuit = Some(true);
+                Ok(ctx.value)
+            })
+            .map(Either::B),
+    }
+}
+
+fn oxc_resolved_path_to_url<C: Cache>(resolution: &Resolution<C>) -> String {
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+    let mut url = if resolution.query().is_some() || resolution.fragment().is_some() {
+        format!("{PATH_PREFIX}{}", resolution.full_path().to_string_lossy())
+    } else {
+        format!("{PATH_PREFIX}{}", resolution.path().to_string_lossy())
+    };
+    #[cfg(target_os = "windows")]
+    {
+        url = url.replace("\\", "/");
+    }
+    url
 }
