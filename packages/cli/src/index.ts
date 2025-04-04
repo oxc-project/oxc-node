@@ -1,7 +1,7 @@
-import process from 'node:process'
 import { exec, execSync } from 'node:child_process'
+import process from 'node:process'
 
-import { Command, Option, Cli, Usage, Builtins } from 'clipanion'
+import { Builtins, Cli, Command, Option, Usage } from 'clipanion'
 
 import pkgJson from '../package.json' with { type: 'json' }
 

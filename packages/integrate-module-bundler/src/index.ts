@@ -2,8 +2,8 @@ import 'core-js/modules/esnext.symbol.async-dispose'
 import 'core-js/modules/esnext.symbol.dispose'
 
 import assert from 'node:assert'
-import test from 'node:test'
 import { createRequire } from 'node:module'
+import test from 'node:test'
 
 import { EntryType } from '@napi-rs/tar'
 import { bar as subBar } from '@subdirectory/bar'
@@ -11,17 +11,17 @@ import { supportedExtensions } from 'file-type'
 import { renderToString } from 'react-dom/server'
 import { simpleGit } from 'simple-git'
 
-import { CompiledClass } from './compiled'
 import { common } from './common.cjs'
+import { CompiledClass } from './compiled'
+import { Component } from './component'
 import { foo } from './foo'
 import { bar } from './subdirectory/bar'
 import { baz } from './subdirectory/index'
-import { Component } from './component'
 import './js-module'
 import babelGeneratedDoubleDefault from './babel-generated-double-default'
 import { exportFromMts } from './enforce-mts/index.mjs'
-import { bootstrap } from './nestjs/index'
 import { AppService } from './nestjs/app.service'
+import { bootstrap } from './nestjs/index'
 
 const { foo: fooWithQuery } = await import(`./foo.js?q=${Date.now()}`)
 
