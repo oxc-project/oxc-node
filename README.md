@@ -3,7 +3,7 @@
 [![Build Status][ci-badge]][ci-url]
 [![npmjs.com][npm-badge]][npm-url]
 
-Fast and friendly Node.js devtools based on [OXC](https://github.com/oxc-project/oxc)
+Fast and friendly Node.js dev tool based on [Oxc](https://github.com/oxc-project/oxc).
 
 ## `@oxc-node/core`
 
@@ -14,6 +14,14 @@ Transformer and register for Node.js projects.
 ```bash
 node --import @oxc-node/core/register ./path/to/entry.ts
 ```
+
+## [Sponsored By](https://github.com/sponsors/Boshen)
+
+<p align="center">
+  <a href="https://github.com/sponsors/Boshen">
+    <img src="https://raw.githubusercontent.com/Boshen/sponsors/main/sponsors.svg" alt="My sponsors" />
+  </a>
+</p>
 
 [ci-badge]: https://github.com/oxc-project/oxc-node/actions/workflows/CI.yml/badge.svg?branch=main
 [ci-url]: https://github.com/oxc-project/oxc-node/actions/workflows/CI.yml
