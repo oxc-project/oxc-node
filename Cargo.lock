@@ -494,7 +494,6 @@ dependencies = [
  "oxc",
  "oxc_resolver",
  "phf",
- "serde",
  "serde_json",
  "tracing",
  "tracing-subscriber",
