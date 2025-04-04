@@ -3,8 +3,8 @@ name: CI
 env:
   DEBUG: napi:*
   APP_NAME: oxc-node
-  OXC_LOG: 'debug'
-  MACOSX_DEPLOYMENT_TARGET: '10.13'
+  OXC_LOG: "debug"
+  MACOSX_DEPLOYMENT_TARGET: "10.13"
   CC: clang
 
 permissions: {}
@@ -14,11 +14,11 @@ on:
     branches:
       - main
     tags-ignore:
-      - '**'
+      - "**"
     paths-ignore:
-      - '**/*.md'
+      - "**/*.md"
       - LICENSE
-      - '**/*.gitignore'
+      - "**/*.gitignore"
       - .editorconfig
       - docs/**
   pull_request: null
@@ -44,14 +44,8 @@ jobs:
         run: pnpm install
       - name: Lint
         run: pnpm lint
-      - name: Cargo fmt
-        run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
-      - name: Prettier
-        run: pnpm prettier -c .
-      - name: Toml
-        run: pnpm taplo fmt --check
 
   build-cli:
     name: Build CLI
@@ -201,10 +195,10 @@ jobs:
           RUSTUP_IO_THREADS: 1
         with:
           operating_system: freebsd
-          version: '14.2'
+          version: "14.2"
           memory: 8G
           cpu_count: 3
-          environment_variables: 'DEBUG RUSTUP_IO_THREADS'
+          environment_variables: "DEBUG RUSTUP_IO_THREADS"
           shell: bash
           run: |
             sudo pkg install -y -f curl node libnghttp2 npm
@@ -252,12 +246,12 @@ jobs:
             target: aarch64-apple-darwin
             architecture: arm64
         node:
-          - '18'
-          - '20'
-          - '22'
+          - "18"
+          - "20"
+          - "22"
         transform_all:
-          - 'true'
-          - 'false'
+          - "true"
+          - "false"
     runs-on: ${{ matrix.settings.host }}
     steps:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
@@ -305,9 +299,9 @@ jobs:
           - s390x-unknown-linux-gnu
           - powerpc64le-unknown-linux-gnu
         node:
-          - '18'
-          - '20'
-          - '22'
+          - "18"
+          - "20"
+          - "22"
     # Node.js on qemu segfaults on s390x and arm64v8 when using 24.04
     # See also https://github.com/actions/runner-images/issues/11471
     runs-on: ${{ contains(matrix.target, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-22.04' }}

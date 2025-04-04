@@ -4,10 +4,10 @@ import test from 'node:test'
 
 import { supportedExtensions } from 'file-type'
 
+import { bar as subBar } from '@subdirectory/bar.mts'
 import { foo } from './foo.mts'
 import { bar } from './subdirectory/bar.mts'
 import { baz } from './subdirectory/index.mts'
-import { bar as subBar } from '@subdirectory/bar.mts'
 
 await test('js:file-type should work', () => {
   assert.ok(supportedExtensions.has('jpg'))
