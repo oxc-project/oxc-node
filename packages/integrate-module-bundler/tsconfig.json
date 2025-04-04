@@ -10,6 +10,7 @@
     "outDir": "dist",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
+    "useDefineForClassFields": false,
     "baseUrl": "./",
     "paths": {
       "@subdirectory/*": ["./src/subdirectory/*"]

@@ -286,6 +286,9 @@ fn oxc_transform<S: TryAsStr>(
                         _ => JsxRuntime::default(),
                     })
                     .unwrap_or_default(),
+                import_source: compiler_options.and_then(|c| c.jsx_import_source.clone()),
+                pragma: compiler_options.and_then(|c| c.jsx_factory.clone()),
+                pragma_frag: compiler_options.and_then(|c| c.jsx_fragment_factory.clone()),
                 ..Default::default()
             },
             typescript: TypeScriptOptions {
