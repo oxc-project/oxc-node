@@ -16,8 +16,9 @@ use oxc::{
     semantic::SemanticBuilder,
     span::SourceType,
     transformer::{
-        DecoratorOptions, EnvOptions, JsxOptions, JsxRuntime, Module, ProposalOptions,
-        TransformOptions, Transformer, TransformerReturn, TypeScriptOptions,
+        ClassPropertiesOptions, CompilerAssumptions, DecoratorOptions, ES2022Options, EnvOptions,
+        JsxOptions, JsxRuntime, Module, ProposalOptions, RewriteExtensionsMode, TransformOptions,
+        Transformer, TransformerReturn, TypeScriptOptions,
     },
 };
 use oxc_resolver::{
@@ -265,10 +266,17 @@ fn oxc_transform<S: TryAsStr>(
         .semantic
         .into_scoping();
 
+    let use_define_for_class_fields = compiler_options
+        .and_then(|c| c.use_define_for_class_fields)
+        .unwrap_or_default();
     let TransformerReturn { errors, .. } = Transformer::new(
         &allocator,
         src_path,
         &TransformOptions {
+            assumptions: CompilerAssumptions {
+                set_public_class_fields: use_define_for_class_fields,
+                ..Default::default()
+            },
             decorator: DecoratorOptions {
                 legacy: compiler_options
                     .and_then(|c| c.experimental_decorators)
@@ -300,10 +308,21 @@ fn oxc_transform<S: TryAsStr>(
                     .and_then(|c| c.jsx_fragment_factory.as_ref())
                     .map(|c| Cow::Borrowed(c.as_str()))
                     .unwrap_or_default(),
+                rewrite_import_extensions: compiler_options
+                    .and_then(|c| c.rewrite_relative_import_extensions)
+                    .unwrap_or_default()
+                    .then_some(RewriteExtensionsMode::Rewrite),
+                only_remove_type_imports: false,
                 ..Default::default()
             },
             env: EnvOptions {
                 module: module_target.unwrap_or_default(),
+                es2022: ES2022Options {
+                    class_static_block: true,
+                    class_properties: Some(ClassPropertiesOptions {
+                        loose: use_define_for_class_fields,
+                    }),
+                },
                 ..Default::default()
             },
             proposals: ProposalOptions {
