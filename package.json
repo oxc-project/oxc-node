@@ -29,7 +29,7 @@
     "prepare": "husky"
   },
   "lint-staged": {
-    "*.@(js|ts|tsx|yml|yaml|md|json|html,toml)": [
+    "*.@(js|ts|tsx|yml|yaml|md|json|html|toml)": [
       "dprint fmt"
     ],
     "*.@(js|ts|tsx)": [
