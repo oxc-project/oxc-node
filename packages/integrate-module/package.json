@@ -17,7 +17,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.13",
     "@types/react-dom": "^19.0.5",
-    "canvaskit-wasm": "^0.39.1",
+    "canvaskit-wasm": "^0.40.0",
     "ipaddr.js": "^2.2.0",
     "postgres": "^3.4.4",
     "react": "^19.1.0",
