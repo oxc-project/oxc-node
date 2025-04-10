@@ -42,14 +42,14 @@ class MainCommand extends Command {
     }
     const args = this.args.length ? ` ${this.args.join(' ')}` : ''
     if (!args.length) {
-      execSync(`node --import @oxc-node/core/register`, {
+      execSync(`node --enable-source-maps --import @oxc-node/core/register`, {
         env: process.env,
         cwd: process.cwd(),
         stdio: `inherit`,
       })
       return
     }
-    const cp = exec(`node --import @oxc-node/core/register ${args}`, {
+    const cp = exec(`node --enable-source-maps --import @oxc-node/core/register ${args}`, {
       env: process.env,
       cwd: process.cwd(),
     })
