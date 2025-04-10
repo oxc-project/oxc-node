@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.0.23](https://github.com/oxc-project/oxc-node/compare/v0.0.22...v0.0.23) (2025-04-10)
+
+### Bug Fixes
+
+- **core:** pass resolved sources to nextResolve ([#96](https://github.com/oxc-project/oxc-node/issues/96)) ([3dd8faa](https://github.com/oxc-project/oxc-node/commit/3dd8faa8593968cf8585ec99d2f933db70419f97))
+- **core:** resolve path in node_modules ([#94](https://github.com/oxc-project/oxc-node/issues/94)) ([f211208](https://github.com/oxc-project/oxc-node/commit/f2112082a18c6b07755f7f568967247ac0d57eb6))
+
+### Features
+
+- allow read useDefineForClassFields compiler option in tsconfig.json ([#97](https://github.com/oxc-project/oxc-node/issues/97)) ([55830b3](https://github.com/oxc-project/oxc-node/commit/55830b32bf8a9bb557ec7f0a32017c9f9a9ab1da))
+
 ## [0.0.22](https://github.com/oxc-project/oxc-node/compare/v0.0.21...v0.0.22) (2025-04-02)
 
 ### Bug Fixes
