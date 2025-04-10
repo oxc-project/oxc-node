@@ -10,7 +10,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use oxc::{
     allocator::Allocator,
-    codegen::{CodeGenerator, CodegenReturn},
+    codegen::{CodeGenerator, CodegenOptions, CodegenReturn},
     diagnostics::OxcDiagnostic,
     parser::{Parser, ParserReturn},
     semantic::SemanticBuilder,
@@ -339,7 +339,14 @@ fn oxc_transform<S: TryAsStr>(
         ));
     }
 
-    Ok(Output(CodeGenerator::new().build(&program)))
+    Ok(Output(
+        CodeGenerator::new()
+            .with_options(CodegenOptions {
+                source_map_path: Some(src_path.to_path_buf()),
+                ..Default::default()
+            })
+            .build(&program),
+    ))
 }
 
 #[napi(object)]
