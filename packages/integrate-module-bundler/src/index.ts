@@ -82,6 +82,7 @@ await test('resolve nestjs', async () => {
   const { app } = await bootstrap()
   const service = app.get(AppService)
   assert.equal(service.getHello(), 'Hello World!')
+  assert.equal(service.websocket.port, 3001)
   await app.close()
 })
 
