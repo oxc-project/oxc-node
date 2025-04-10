@@ -260,8 +260,6 @@ fn oxc_transform<S: TryAsStr>(
         ));
     }
     let scoping = SemanticBuilder::new()
-        // Turn off in the future
-        .with_scope_tree_child_ids(true)
         .build(&program)
         .semantic
         .into_scoping();
