@@ -19,7 +19,7 @@
     "@napi-rs/cli": "3.0.0-alpha.77"
   },
   "dependencies": {
-    "@oxc-project/runtime": "^0.62.0",
+    "@oxc-project/runtime": "^0.63.0",
     "pirates": "^4.0.7"
   },
   "exports": {
