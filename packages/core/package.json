@@ -16,10 +16,10 @@
     "build": "napi build --platform --release --manifest-path ../../Cargo.toml -o ."
   },
   "devDependencies": {
-    "@napi-rs/cli": "3.0.0-alpha.77"
+    "@napi-rs/cli": "3.0.0-alpha.78"
   },
   "dependencies": {
-    "@oxc-project/runtime": "^0.63.0",
+    "@oxc-project/runtime": "^0.65.0",
     "pirates": "^4.0.7"
   },
   "exports": {
