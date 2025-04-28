@@ -17,8 +17,8 @@ use oxc::{
     span::SourceType,
     transformer::{
         ClassPropertiesOptions, CompilerAssumptions, DecoratorOptions, ES2022Options, EnvOptions,
-        JsxOptions, JsxRuntime, Module, ProposalOptions, RewriteExtensionsMode, TransformOptions,
-        Transformer, TransformerReturn, TypeScriptOptions,
+        HelperLoaderOptions, JsxOptions, JsxRuntime, Module, ProposalOptions,
+        RewriteExtensionsMode, TransformOptions, Transformer, TransformerReturn, TypeScriptOptions,
     },
 };
 use oxc_resolver::{
@@ -325,6 +325,10 @@ fn oxc_transform<S: TryAsStr>(
             },
             proposals: ProposalOptions {
                 explicit_resource_management: true,
+            },
+            helper_loader: HelperLoaderOptions {
+                module_name: Cow::Borrowed("@oxc-node/core"),
+                ..Default::default()
             },
             ..Default::default()
         },
