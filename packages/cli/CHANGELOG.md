@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.0.24](https://github.com/oxc-project/oxc-node/compare/v0.0.23...v0.0.24) (2025-04-28)
+
+### Bug Fixes
+
+- sourcemap generation ([#105](https://github.com/oxc-project/oxc-node/issues/105)) ([b583e28](https://github.com/oxc-project/oxc-node/commit/b583e28af61901b8a4314644b4c0dbe217f83a6d))
+
 ## [0.0.23](https://github.com/oxc-project/oxc-node/compare/v0.0.22...v0.0.23) (2025-04-10)
 
 **Note:** Version bump only for package @oxc-node/cli

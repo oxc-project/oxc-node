@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.0.24](https://github.com/oxc-project/oxc-node/compare/v0.0.23...v0.0.24) (2025-04-28)
+
+### Bug Fixes
+
+- sourcemap generation ([#105](https://github.com/oxc-project/oxc-node/issues/105)) ([b583e28](https://github.com/oxc-project/oxc-node/commit/b583e28af61901b8a4314644b4c0dbe217f83a6d))
+
+### Performance Improvements
+
+- remove with_scope_tree_child_ids workaround ([#104](https://github.com/oxc-project/oxc-node/issues/104)) ([d7df81e](https://github.com/oxc-project/oxc-node/commit/d7df81e7997bebd98f0d077f88a91390e65d1378))
+
 ## [0.0.23](https://github.com/oxc-project/oxc-node/compare/v0.0.22...v0.0.23) (2025-04-10)
 
 ### Bug Fixes
