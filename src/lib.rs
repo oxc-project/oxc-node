@@ -103,7 +103,12 @@ const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
     "zlib",
 };
 
-static RESOLVER_AND_TSCONFIG: OnceLock<(Resolver, Option<Arc<TsConfigSerde>>)> = OnceLock::new();
+#[allow(clippy::type_complexity)]
+static RESOLVER_AND_TSCONFIG: OnceLock<(
+    Resolver,
+    Option<Arc<TsConfigSerde>>,
+    Option<&'static str>,
+)> = OnceLock::new();
 
 #[cfg(not(target_os = "windows"))]
 const NODE_MODULES_PATH: &str = "/node_modules/";
@@ -181,7 +186,7 @@ impl Task for TransformTask {
     fn compute(&mut self) -> Result<Self::Output> {
         let src_path = Path::new(&self.path);
         let cwd = PathBuf::from(&self.cwd);
-        let (_, resolved_tsconfig) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd));
+        let (_, resolved_tsconfig, _) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd));
         oxc_transform(
             src_path,
             &self.source,
@@ -215,7 +220,7 @@ impl OxcTransformer {
     #[napi]
     pub fn transform(&self, path: String, source: Either<String, &[u8]>) -> Result<Output> {
         let cwd = PathBuf::from(&self.cwd);
-        let (_, resolved_tsconfig) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd));
+        let (_, resolved_tsconfig, _) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd));
         oxc_transform(
             Path::new(&path),
             &source,
@@ -418,6 +423,13 @@ pub fn create_resolve<'env>(
         tracing::debug!("short-circuiting data URL resolve: {}", specifier);
         return add_short_circuit(specifier, Some("builtin"), context, next_resolve);
     }
+    if specifier.ends_with(".json") {
+        tracing::debug!("short-circuiting JSON resolve: {}", specifier);
+        if context.import_attributes.contains_key("type") {
+            return add_short_circuit(specifier, Some("json"), context, next_resolve);
+        }
+        return add_short_circuit(specifier, Some("module"), context, next_resolve);
+    }
 
     #[cfg(target_family = "wasm")]
     let cwd = {
@@ -431,7 +443,8 @@ pub fn create_resolve<'env>(
     #[cfg(not(target_family = "wasm"))]
     let cwd = env::current_dir()?;
 
-    let (resolver, _) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone()));
+    let (resolver, tsconfig, default_module_resolved_from_tsconfig) =
+        RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone()));
 
     let is_absolute_path = specifier.starts_with(PATH_PREFIX);
 
@@ -493,15 +506,24 @@ pub fn create_resolve<'env>(
                     .and_then(|ext| match ext {
                         "cjs" | "cts" | "node" => None,
                         "mts" | "mjs" => Some("module"),
-                        _ => resolution.package_json().and_then(|p| p.r#type).and_then(
-                            |package_type| {
-                                if package_type == PackageType::Module {
-                                    Some("module")
-                                } else {
-                                    None
+                        _ => {
+                            if ext == "ts" || ext == "tsx" {
+                                if let Some(default_module_resolved_from_tsconfig) =
+                                    default_module_resolved_from_tsconfig
+                                {
+                                    return Some(default_module_resolved_from_tsconfig);
                                 }
-                            },
-                        ),
+                            }
+                            resolution.package_json().and_then(|p| p.r#type).and_then(
+                                |package_type| {
+                                    if package_type == PackageType::Module {
+                                        Some("module")
+                                    } else {
+                                        None
+                                    }
+                                },
+                            )
+                        }
                     })
                     .unwrap_or("commonjs");
                 tracing::debug!(path = ?p, format = ?format);
@@ -560,7 +582,7 @@ pub fn load<'env>(
     }
 
     let loaded = next_load.call((url.clone(), Some(context)).into())?;
-    let (_, tsconfig) = RESOLVER_AND_TSCONFIG.get().ok_or_else(|| {
+    let (_, tsconfig, _) = RESOLVER_AND_TSCONFIG.get().ok_or_else(|| {
         Error::new(
             Status::GenericFailure,
             "Failed to get resolver and tsconfig",
@@ -624,6 +646,7 @@ fn transform_output(
                             source.push_str(&format!("export const {key} = json.{key};\n"));
                         }
                     }
+                    tracing::debug!("loaded {} format: module", url);
                     return Ok(LoadFnOutput {
                         format: "module".to_owned(),
                         source: Some(Either4::A(source)),
@@ -729,7 +752,7 @@ impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
     }
 }
 
-fn init_resolver(cwd: PathBuf) -> (Resolver, Option<Arc<TsConfigSerde>>) {
+fn init_resolver(cwd: PathBuf) -> (Resolver, Option<Arc<TsConfigSerde>>, Option<&'static str>) {
     let tsconfig = env::var("TS_NODE_PROJECT")
         .or_else(|_| env::var("OXC_TSCONFIG_PATH"))
         .map(Cow::Owned)
@@ -786,7 +809,32 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, Option<Arc<TsConfigSerde>>) {
 
     let tsconfig = resolver.resolve_tsconfig(tsconfig_full_path).ok();
 
-    (resolver, tsconfig)
+    let default_module_resolved_from_tsconfig = if let Some(tsconfig) = tsconfig.as_ref() {
+        if matches!(
+            tsconfig
+                .compiler_options
+                .module
+                .as_deref()
+                .map(|m| m.to_ascii_lowercase())
+                .as_deref(),
+            Some("nodenext")
+                | Some("node16")
+                | Some("node18")
+                | Some("es6")
+                | Some("es2015")
+                | Some("es2020")
+                | Some("es2022")
+                | Some("esnext")
+        ) {
+            Some("module")
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    (resolver, tsconfig, default_module_resolved_from_tsconfig)
 }
 
 fn join_errors(errors: Vec<OxcDiagnostic>, source_str: &str) -> String {

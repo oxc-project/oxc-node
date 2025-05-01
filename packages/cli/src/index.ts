@@ -30,7 +30,7 @@ class MainCommand extends Command {
     description: `Show Node.js help`,
   })
 
-  args = Option.Rest()
+  args = Option.Proxy()
 
   async execute() {
     if (this.help) {
