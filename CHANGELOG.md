@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.0.25](https://github.com/oxc-project/oxc-node/compare/v0.0.24...v0.0.25) (2025-05-02)
+
+### Bug Fixes
+
+- respect module option in tsconfig.json ([#116](https://github.com/oxc-project/oxc-node/issues/116)) ([4acd6a9](https://github.com/oxc-project/oxc-node/commit/4acd6a9577f1108c0dc7c371f3e3ac2b16f6b3d6))
+
 ## [0.0.24](https://github.com/oxc-project/oxc-node/compare/v0.0.23...v0.0.24) (2025-04-28)
 
 ### Bug Fixes
