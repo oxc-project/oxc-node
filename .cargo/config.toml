@@ -1,2 +1,8 @@
 [target.'cfg(target_env = "gnu")']
 rustflags = ["-C", "link-args=-Wl,-z,nodelete"]
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
