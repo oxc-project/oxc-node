@@ -28,8 +28,8 @@ use oxc_resolver::{
 use phf::Set;
 
 #[cfg(all(
+    not(target_arch = "x86"),
     not(target_arch = "arm"),
-    not(target_os = "freebsd"),
     not(target_family = "wasm")
 ))]
 #[global_allocator]

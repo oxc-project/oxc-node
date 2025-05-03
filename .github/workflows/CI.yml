@@ -201,7 +201,7 @@ jobs:
           environment_variables: "DEBUG RUSTUP_IO_THREADS"
           shell: bash
           run: |
-            sudo pkg install -y -f curl node libnghttp2 npm
+            sudo pkg install -y -f curl node libnghttp2 npm cmake
             curl https://sh.rustup.rs -sSf --output rustup.sh
             sh rustup.sh -y --profile minimal --default-toolchain stable
             source "$HOME/.cargo/env"
@@ -219,6 +219,9 @@ jobs:
             pnpm install
             pnpm --filter=@oxc-node/core build --target x86_64-unknown-freebsd
             pnpm --filter=@oxc-node/core export-oxc-runtime
+            pnpm --filter @oxc-node/cli build
+            pnpm rebuild
+            pnpm test
             rm -rf node_modules
             rm -rf target
       - name: Upload artifact
