@@ -11,7 +11,7 @@
     "test": "oxnode ./src/index.ts"
   },
   "devDependencies": {
-    "@napi-rs/tar": "^0.1.4",
+    "@napi-rs/tar": "^0.1.5",
     "@napi-rs/wasm-runtime": "^0.2.4",
     "@nestjs/common": "^11.0.12",
     "@nestjs/core": "^11.0.12",
