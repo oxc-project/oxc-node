@@ -240,6 +240,9 @@ jobs:
           - host: windows-latest
             target: x86_64-pc-windows-msvc
             architecture: x64
+          - host: windows-latest
+            target: i686-pc-windows-msvc
+            architecture: x86
           - host: windows-11-arm
             target: aarch64-pc-windows-msvc
             architecture: arm64
@@ -255,6 +258,10 @@ jobs:
         transform_all:
           - "true"
           - "false"
+        exclude:
+          - settings:
+              target: i686-pc-windows-msvc
+            node: "20"
     runs-on: ${{ matrix.settings.host }}
     steps:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
