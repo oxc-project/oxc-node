@@ -1098,6 +1098,12 @@
   },
   "napi": {
     "binaryName": "oxc-node",
+    "wasm": {
+      "initialMemory": 16384,
+      "browser": {
+        "fs": false
+      }
+    },
     "targets": [
       "x86_64-apple-darwin",
       "aarch64-apple-darwin",
