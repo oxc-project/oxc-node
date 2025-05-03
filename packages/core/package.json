@@ -1,6 +1,6 @@
 {
   "name": "@oxc-node/core",
-  "version": "0.0.25",
+  "version": "0.0.26",
   "main": "./index.js",
   "browser": "./browser.js",
   "types": "./index.d.ts",
