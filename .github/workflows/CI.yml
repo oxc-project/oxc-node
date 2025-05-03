@@ -240,6 +240,9 @@ jobs:
           - host: windows-latest
             target: x86_64-pc-windows-msvc
             architecture: x64
+          - host: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            architecture: arm64
           - host: macos-latest
             target: x86_64-apple-darwin
             architecture: x64
@@ -247,7 +250,6 @@ jobs:
             target: aarch64-apple-darwin
             architecture: arm64
         node:
-          - "18"
           - "20"
           - "22"
         transform_all:
@@ -302,7 +304,6 @@ jobs:
           - s390x-unknown-linux-gnu
           - powerpc64le-unknown-linux-gnu
         node:
-          - "18"
           - "20"
           - "22"
     # Node.js on qemu segfaults on s390x and arm64v8 when using 24.04
