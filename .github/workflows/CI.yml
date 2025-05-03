@@ -201,7 +201,7 @@ jobs:
           environment_variables: "DEBUG RUSTUP_IO_THREADS"
           shell: bash
           run: |
-            sudo pkg install -y -f curl node libnghttp2 npm
+            sudo pkg install -y -f curl node libnghttp2 npm cmake
             curl https://sh.rustup.rs -sSf --output rustup.sh
             sh rustup.sh -y --profile minimal --default-toolchain stable
             source "$HOME/.cargo/env"
@@ -219,6 +219,9 @@ jobs:
             pnpm install
             pnpm --filter=@oxc-node/core build --target x86_64-unknown-freebsd
             pnpm --filter=@oxc-node/core export-oxc-runtime
+            pnpm --filter @oxc-node/cli build
+            pnpm rebuild
+            pnpm test
             rm -rf node_modules
             rm -rf target
       - name: Upload artifact
@@ -240,6 +243,9 @@ jobs:
           - host: windows-latest
             target: x86_64-pc-windows-msvc
             architecture: x64
+          - host: windows-latest
+            target: i686-pc-windows-msvc
+            architecture: x86
           - host: windows-11-arm
             target: aarch64-pc-windows-msvc
             architecture: arm64
@@ -255,6 +261,10 @@ jobs:
         transform_all:
           - "true"
           - "false"
+        exclude:
+          - settings:
+              target: i686-pc-windows-msvc
+            node: "20"
     runs-on: ${{ matrix.settings.host }}
     steps:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
