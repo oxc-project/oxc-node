@@ -1,4 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>Boshen/renovate", "helpers:pinGitHubActionDigestsToSemver"]
+  "extends": ["github>Boshen/renovate", "helpers:pinGitHubActionDigestsToSemver"],
+  "packageRules": [
+    {
+      "matchManagers": ["cargo", "npm"],
+      "matchDepNames": ["oxc", "oxc_resolver", "@oxc-project/runtime"],
+      "groupName": "oxc",
+      "schedule": ["at any time"]
+    }
+  ]
 }
