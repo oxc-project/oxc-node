@@ -14,7 +14,8 @@
     "pnpm-lock.yaml",
     "packages/*/*.wasi.cjs",
     "packages/*/index.js",
-    "packages/*/browser.js",
+    "packages/*/oxc-node.wasi-browser.js",
+    "packages/*/oxc-node.wasi.cjs",
     "packages/*/wasi-worker*",
     "packages/*/index.d.ts"
   ],

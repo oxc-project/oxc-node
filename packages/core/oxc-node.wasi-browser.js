@@ -1,8 +1,8 @@
 import {
-  createOnMessage as __wasmCreateOnMessageForFsProxy,
-  getDefaultContext as __emnapiGetDefaultContext,
   instantiateNapiModuleSync as __emnapiInstantiateNapiModuleSync,
+  getDefaultContext as __emnapiGetDefaultContext,
   WASI as __WASI,
+  createOnMessage as __wasmCreateOnMessageForFsProxy,
 } from '@napi-rs/wasm-runtime'
 
 import __wasmUrl from './oxc-node.wasm32-wasi.wasm?url'
@@ -14,7 +14,7 @@ const __wasi = new __WASI({
 const __emnapiContext = __emnapiGetDefaultContext()
 
 const __sharedMemory = new WebAssembly.Memory({
-  initial: 4000,
+  initial: 16384,
   maximum: 65536,
   shared: true,
 })
