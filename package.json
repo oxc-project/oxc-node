@@ -8,7 +8,7 @@
     "@napi-rs/wasm-runtime": "^0.2.6",
     "@oxc-node/cli": "workspace:*",
     "@oxc-node/core": "workspace:*",
-    "@oxc-project/runtime": "^0.68.0",
+    "@oxc-project/runtime": "^0.69.0",
     "@types/node": "^22.10.7",
     "ava": "^6.2.0",
     "cross-env": "^7.0.3",
