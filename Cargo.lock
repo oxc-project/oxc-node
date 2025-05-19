@@ -438,8 +438,7 @@ checksum = "1036865bb9422d3300cf723f657c2851d0e9ab12567854b1f4eba3d77decf564"
 [[package]]
 name = "oxc"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36e161476bfc4a98f1b451c11e29ba8bded86013387f619a635c9d201cb07664"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "oxc_allocator",
  "oxc_ast",
@@ -512,8 +511,7 @@ dependencies = [
 [[package]]
 name = "oxc_allocator"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ffa6f20cba9bfb3486abc83c438f6a9278e4e030b6e9a16d2b5880132f96a1c"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "allocator-api2",
  "bumpalo",
@@ -526,8 +524,7 @@ dependencies = [
 [[package]]
 name = "oxc_ast"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "406a3454475f817e71a4b8fc0a92f04e149730bc4c07d0d1803d5fc9ef75c357"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "bitflags",
  "cow-utils",
@@ -543,9 +540,9 @@ dependencies = [
 [[package]]
 name = "oxc_ast_macros"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d894148693dad702ad668945908f8712fe260c23aaf69bbf9d63a8213a350cdd"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
+ "phf",
  "proc-macro2",
  "quote",
  "syn",
@@ -554,8 +551,7 @@ dependencies = [
 [[package]]
 name = "oxc_ast_visit"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dba3ad9293c9eed98116a01ef008229895d9640d8a1abca12aa54fdc588a62f3"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "oxc_allocator",
  "oxc_ast",
@@ -566,8 +562,7 @@ dependencies = [
 [[package]]
 name = "oxc_cfg"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cf77762b883cd93185b9b132c9bb4ad35084bbf3bc75cb8bcb6242c1eb6363c"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "bitflags",
  "itertools",
@@ -581,8 +576,7 @@ dependencies = [
 [[package]]
 name = "oxc_codegen"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3add299d3a1b4148e4ab85e59bb5c855fbfb2405a4719aad2a199a802495ba0"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "bitflags",
  "cow-utils",
@@ -602,17 +596,16 @@ dependencies = [
 [[package]]
 name = "oxc_data_structures"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fc6d1eb979f77be6685a7a67ee5d5124c66ef611c601a84327e7d339db69c41"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "ropey",
+ "rustversion",
 ]
 
 [[package]]
 name = "oxc_diagnostics"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33ba161cb61925de34f40b11c1d0d2f20e1894d5333d12f7c455a66244453512"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "cow-utils",
  "oxc-miette",
@@ -621,8 +614,7 @@ dependencies = [
 [[package]]
 name = "oxc_ecmascript"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92c1827f0741fae82618b6129c7a3248e8334336879f4968cfce231dd65a9ebf"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "cow-utils",
  "num-bigint",
@@ -635,8 +627,7 @@ dependencies = [
 [[package]]
 name = "oxc_estree"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c671fd76e9990c90762b7f7f7dd5c3038bf72e3295989b2a71ba11870a193b07"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 
 [[package]]
 name = "oxc_index"
@@ -647,8 +638,7 @@ checksum = "2fa07b0cfa997730afed43705766ef27792873fdf5215b1391949fec678d2392"
 [[package]]
 name = "oxc_parser"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "959f68446d66542753f2fe081189b729ed89f8ed5302de1a522640ff42eba31e"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "bitflags",
  "cow-utils",
@@ -670,9 +660,9 @@ dependencies = [
 [[package]]
 name = "oxc_regular_expression"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db7f5710da3fea0f40aaba14d547c61ac30c2840fb5d6a1ea9887766b72310c9"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
+ "bitflags",
  "oxc_allocator",
  "oxc_ast_macros",
  "oxc_diagnostics",
@@ -704,8 +694,7 @@ dependencies = [
 [[package]]
 name = "oxc_semantic"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "425bec6c2ac20ff88573b8fbd87fc67aa97e49de9539979a98bcf79c37011077"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "itertools",
  "oxc_allocator",
@@ -740,8 +729,7 @@ dependencies = [
 [[package]]
 name = "oxc_span"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbc66dc0868f4492562d37733754ef147073410004a44551acb102cf2562f66b"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "compact_str",
  "oxc-miette",
@@ -753,8 +741,7 @@ dependencies = [
 [[package]]
 name = "oxc_syntax"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68bfa728cbbf2161b9afc3325addde64feeb39e8167a0ef1472ad1f0efbc9c48"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "bitflags",
  "cow-utils",
@@ -774,8 +761,7 @@ dependencies = [
 [[package]]
 name = "oxc_transformer"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69f2919de753ca5ed167d47d12f80173b4c71af607dc6bc6c75769461a505ea4"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "base64",
  "compact_str",
@@ -805,8 +791,7 @@ dependencies = [
 [[package]]
 name = "oxc_transformer_plugins"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aeb7c84df7131f44fe7851d7061036bbb091f92a3348f9a6518ba9694e96a87d"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "cow-utils",
  "itoa",
@@ -827,8 +812,7 @@ dependencies = [
 [[package]]
 name = "oxc_traverse"
 version = "0.70.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "528815f5909c4d1237f634f8482600dd08ac9293b3cc7839099f0f7abf327402"
+source = "git+https://github.com/oxc-project/oxc.git?branch=05-19-fix_parser_fix_reading_token_flags_on_big-endian_systems#4b28dbc1731d1d78517149d308d19d5e96daa1dd"
 dependencies = [
  "itoa",
  "oxc_allocator",
