@@ -21,8 +21,8 @@ importers:
         specifier: workspace:*
         version: link:packages/core
       '@oxc-project/runtime':
-        specifier: ^0.71.0
-        version: 0.71.0
+        specifier: ^0.72.0
+        version: 0.72.0
       '@types/node':
         specifier: ^22.10.7
         version: 22.15.19
@@ -89,7 +89,7 @@ importers:
         version: 4.0.0-rc.4(typanion@3.14.0)
       rolldown:
         specifier: ^1.0.0-beta.8
-        version: 1.0.0-beta.8(@oxc-project/runtime@0.71.0)(typescript@5.8.3)
+        version: 1.0.0-beta.8(@oxc-project/runtime@0.72.0)(typescript@5.8.3)
 
   packages/core:
     dependencies:
@@ -101,8 +101,8 @@ importers:
         specifier: 3.0.0-alpha.79
         version: 3.0.0-alpha.79(@emnapi/runtime@1.4.3)(@types/node@22.15.19)(emnapi@1.4.3)
       '@oxc-project/runtime':
-        specifier: ^0.71.0
-        version: 0.71.0
+        specifier: ^0.72.0
+        version: 0.72.0
 
   packages/integrate-ava:
     devDependencies:
@@ -190,8 +190,8 @@ importers:
         specifier: workspace:*
         version: link:../cli
       '@oxc-project/runtime':
-        specifier: ^0.71.0
-        version: 0.71.0
+        specifier: ^0.72.0
+        version: 0.72.0
       '@types/express':
         specifier: ^5.0.1
         version: 5.0.2
@@ -1224,8 +1224,8 @@ packages:
   '@octokit/types@14.0.0':
     resolution: {integrity: sha512-VVmZP0lEhbo2O1pdq63gZFiGCKkm8PPp8AUOijlwPO6hojEVjspA0MWKP7E4hbvGxzFKNqKr6p0IYtOH/Wf/zA==}
 
-  '@oxc-project/runtime@0.71.0':
-    resolution: {integrity: sha512-QwoF5WUXIGFQ+hSxWEib4U/aeLoiDN9JlP18MnBgx9LLPRDfn1iICtcow7Jgey6HLH4XFceWXQD5WBJ39dyJcw==}
+  '@oxc-project/runtime@0.72.0':
+    resolution: {integrity: sha512-HSL4xYOb6/ntJqBFPmtTABdtk4tBbyTDuPi/I9VSmJcp9HVZSOdCDZxxeVXu0QeikjZyFbuNRUVugvoGfC3qFw==}
     engines: {node: '>=6.9.0'}
 
   '@oxc-project/types@0.65.0':
@@ -3089,6 +3089,7 @@ packages:
   multer@1.4.5-lts.2:
     resolution: {integrity: sha512-VzGiVigcG9zUAoCNU+xShztrlr1auZOlurXynNvO9GiWD1/mTBbUljOKY+qMeazBqXgRnjzeEgJI/wyjJUHg9A==}
     engines: {node: '>= 6.0.0'}
+    deprecated: Multer 1.x is impacted by a number of vulnerabilities, which have been patched in 2.x. You should upgrade to the latest 2.x version.
 
   multimatch@5.0.0:
     resolution: {integrity: sha512-ypMKuglUrZUD99Tk2bUQ+xNQj43lPEfAeX2o9cTteAmShXy2VHDJpuwu1o0xqoKCt9jLVAvwyFKdLTPXKAfJyA==}
@@ -5222,7 +5223,7 @@ snapshots:
     dependencies:
       '@octokit/openapi-types': 25.0.0
 
-  '@oxc-project/runtime@0.71.0': {}
+  '@oxc-project/runtime@0.72.0': {}
 
   '@oxc-project/types@0.65.0': {}
 
@@ -7742,14 +7743,14 @@ snapshots:
     dependencies:
       glob: 9.3.5
 
-  rolldown@1.0.0-beta.8(@oxc-project/runtime@0.71.0)(typescript@5.8.3):
+  rolldown@1.0.0-beta.8(@oxc-project/runtime@0.72.0)(typescript@5.8.3):
     dependencies:
       '@oxc-project/types': 0.65.0
       '@valibot/to-json-schema': 1.0.0(valibot@1.0.0(typescript@5.8.3))
       ansis: 3.17.0
       valibot: 1.0.0(typescript@5.8.3)
     optionalDependencies:
-      '@oxc-project/runtime': 0.71.0
+      '@oxc-project/runtime': 0.72.0
       '@rolldown/binding-darwin-arm64': 1.0.0-beta.8
       '@rolldown/binding-darwin-x64': 1.0.0-beta.8
       '@rolldown/binding-freebsd-x64': 1.0.0-beta.8
