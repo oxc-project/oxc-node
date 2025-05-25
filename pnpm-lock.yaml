@@ -116,8 +116,8 @@ importers:
   packages/integrate-module:
     dependencies:
       file-type:
-        specifier: ^20.0.0
-        version: 20.5.0
+        specifier: ^21.0.0
+        version: 21.0.0
       p-timeout:
         specifier: ^6.1.2
         version: 6.1.4
@@ -165,8 +165,8 @@ importers:
   packages/integrate-module-bundler:
     dependencies:
       file-type:
-        specifier: ^20.0.0
-        version: 20.5.0
+        specifier: ^21.0.0
+        version: 21.0.0
       p-timeout:
         specifier: ^6.1.2
         version: 6.1.4
@@ -2311,6 +2311,10 @@ packages:
   file-type@20.5.0:
     resolution: {integrity: sha512-BfHZtG/l9iMm4Ecianu7P8HRD2tBHLtjXinm4X62XBOYzi7CYA7jyqfJzOvXHqzVrVPYqBo2/GvbARMaaJkKVg==}
     engines: {node: '>=18'}
+
+  file-type@21.0.0:
+    resolution: {integrity: sha512-ek5xNX2YBYlXhiUXui3D/BXa3LdqPmoLJ7rqEx2bKJ7EAUEfmXgW0Das7Dc6Nr9MvqaOnIqiPV0mZk/r/UpNAg==}
+    engines: {node: '>=20'}
 
   file-uri-to-path@1.0.0:
     resolution: {integrity: sha512-0Zt+s3L7Vf1biwWZ29aARiVYLx7iMGnEUl9x33fbB/j3jR81u/O2LbqK+Bm1CDSNDKVtJ/YjwY7TUd5SkeLQLw==}
@@ -6280,6 +6284,15 @@ snapshots:
       is-unicode-supported: 2.1.0
 
   file-type@20.5.0:
+    dependencies:
+      '@tokenizer/inflate': 0.2.7
+      strtok3: 10.2.2
+      token-types: 6.0.0
+      uint8array-extras: 1.4.0
+    transitivePeerDependencies:
+      - supports-color
+
+  file-type@21.0.0:
     dependencies:
       '@tokenizer/inflate': 0.2.7
       strtok3: 10.2.2
