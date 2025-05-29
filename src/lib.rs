@@ -22,7 +22,7 @@ use oxc::{
     },
 };
 use oxc_resolver::{
-    Cache, CompilerOptionsSerde, EnforceExtension, PackageType, Resolution, ResolveOptions,
+    Cache, CompilerOptionsSerde, EnforceExtension, ModuleType, Resolution, ResolveOptions,
     Resolver, TsConfigSerde, TsconfigOptions, TsconfigReferences,
 };
 use phf::Set;
@@ -514,15 +514,11 @@ pub fn create_resolve<'env>(
                                     return Some(default_module_resolved_from_tsconfig);
                                 }
                             }
-                            resolution.package_json().and_then(|p| p.r#type).and_then(
-                                |package_type| {
-                                    if package_type == PackageType::Module {
-                                        Some("module")
-                                    } else {
-                                        None
-                                    }
-                                },
-                            )
+                            match resolution.module_type() {
+                                Some(ModuleType::Module) => Some("module"),
+                                Some(ModuleType::CommonJs) => Some("commonjs"),
+                                _ => None,
+                            }
                         }
                     })
                     .unwrap_or("commonjs");
@@ -804,6 +800,7 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, Option<Arc<TsConfigSerde>>, Option<
             ".wasm".to_owned(),
             ".node".to_owned(),
         ],
+        module_type: true,
         ..Default::default()
     });
 
