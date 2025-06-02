@@ -18,7 +18,7 @@
     "lerna": "^8.1.9",
     "lint-staged": "^16.0.0",
     "npm-run-all2": "^8.0.0",
-    "oxlint": "^0.16.0",
+    "oxlint": "^0.17.0",
     "typescript": "^5.7.3"
   },
   "scripts": {
