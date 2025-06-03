@@ -8,7 +8,7 @@
     "p-timeout": "^6.1.2"
   },
   "scripts": {
-    "test": "oxnode -C test ./src/index.ts"
+    "test": "oxnode -C dev ./src/index.ts"
   },
   "devDependencies": {
     "@napi-rs/tar": "^0.1.5",

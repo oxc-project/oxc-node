@@ -1,0 +1,11 @@
+{
+  "name": "condition-dev",
+  "type": "module",
+  "exports": {
+    ".": {
+      "dev": "./index.ts",
+      "node": "./index.mjs",
+      "require": "./index.cjs"
+    }
+  }
+}

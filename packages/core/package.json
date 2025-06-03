@@ -19,7 +19,7 @@
     "prepublishOnly": "node ./reexport-oxc-runtime.mjs"
   },
   "devDependencies": {
-    "@napi-rs/cli": "3.0.0-alpha.79",
+    "@napi-rs/cli": "3.0.0-alpha.84",
     "@oxc-project/runtime": "^0.72.0"
   },
   "dependencies": {
