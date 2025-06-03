@@ -1,1 +1,1 @@
-module.exports.condition = "require";
+module.exports.condition = 'require'

@@ -1,1 +1,1 @@
-export const condition = "node";
+export const condition = 'node'
