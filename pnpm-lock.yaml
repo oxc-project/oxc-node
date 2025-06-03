@@ -91,6 +91,8 @@ importers:
         specifier: ^1.0.0-beta.8
         version: 1.0.0-beta.10
 
+  packages/condition-dev: {}
+
   packages/core:
     dependencies:
       pirates:
@@ -204,6 +206,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.0.5
         version: 19.1.5(@types/react@19.1.6)
+      condition-dev:
+        specifier: workspace:*
+        version: link:../condition-dev
       core-js:
         specifier: ^3.41.0
         version: 3.42.0

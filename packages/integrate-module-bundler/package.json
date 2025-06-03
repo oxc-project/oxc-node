@@ -28,6 +28,7 @@
     "react-dom": "^19.1.0",
     "simple-git": "^3.27.0",
     "ts-node": "^10.9.2",
-    "tsx": "^4.16.2"
+    "tsx": "^4.16.2",
+    "condition-dev": "workspace:*"
   }
 }
