@@ -186,7 +186,8 @@ impl Task for TransformTask {
     fn compute(&mut self) -> Result<Self::Output> {
         let src_path = Path::new(&self.path);
         let cwd = PathBuf::from(&self.cwd);
-        let (_, resolved_tsconfig, _) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd));
+        let (_, resolved_tsconfig, _) =
+            RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd, vec![]));
         oxc_transform(
             src_path,
             &self.source,
@@ -220,7 +221,8 @@ impl OxcTransformer {
     #[napi]
     pub fn transform(&self, path: String, source: Either<String, &[u8]>) -> Result<Output> {
         let cwd = PathBuf::from(&self.cwd);
-        let (_, resolved_tsconfig, _) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd));
+        let (_, resolved_tsconfig, _) =
+            RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd, vec![]));
         oxc_transform(
             Path::new(&path),
             &source,
@@ -443,8 +445,10 @@ pub fn create_resolve<'env>(
     #[cfg(not(target_family = "wasm"))]
     let cwd = env::current_dir()?;
 
+    let conditions = context.conditions.as_slice();
+
     let (resolver, tsconfig, default_module_resolved_from_tsconfig) =
-        RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone()));
+        RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone(), conditions.to_vec()));
 
     let is_absolute_path = specifier.starts_with(PATH_PREFIX);
 
@@ -748,7 +752,10 @@ impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
     }
 }
 
-fn init_resolver(cwd: PathBuf) -> (Resolver, Option<Arc<TsConfigSerde>>, Option<&'static str>) {
+fn init_resolver(
+    cwd: PathBuf,
+    conditions: Vec<String>,
+) -> (Resolver, Option<Arc<TsConfigSerde>>, Option<&'static str>) {
     let tsconfig = env::var("TS_NODE_PROJECT")
         .or_else(|_| env::var("OXC_TSCONFIG_PATH"))
         .map(Cow::Owned)
@@ -768,11 +775,7 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, Option<Arc<TsConfigSerde>>, Option<
         });
     let resolver = Resolver::new(ResolveOptions {
         tsconfig,
-        condition_names: vec![
-            "node".to_owned(),
-            "import".to_owned(),
-            "node-addons".to_owned(),
-        ],
+        condition_names: conditions,
         extension_alias: vec![
             (
                 ".js".to_owned(),

@@ -1,0 +1,11 @@
+{
+  "name": "condition-dev",
+  "type": "module",
+  "exports": {
+    ".": {
+      "dev": "./condition-dev.ts",
+      "node": "./condition-node.mjs",
+      "require": "./condition-require.cjs"
+    }
+  }
+}

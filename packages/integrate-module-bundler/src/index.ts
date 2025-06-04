@@ -14,6 +14,8 @@ import { simpleGit } from 'simple-git'
 import { common } from './common.cjs'
 import { CompiledClass } from './compiled'
 import { Component } from './component'
+// @ts-expect-error
+import { condition } from 'condition-dev'
 import { foo } from './foo'
 import { bar } from './subdirectory/bar'
 import { baz } from './subdirectory/index'
@@ -92,10 +94,12 @@ await test('using syntax', async () => {
   assert.equal(service.getHello(), 'Hello World!')
 })
 
-if (!process.versions.node.startsWith('18')) {
-  await test('resolve typescript cjs', () => {
-    const require = createRequire(import.meta.url)
-    const fooCjs = require('./typescript-cjs').foo
-    assert.equal(fooCjs, 'foo')
-  })
-}
+await test('resolve correct condition', () => {
+  assert.equal(condition, 'dev')
+})
+
+await test('resolve typescript cjs', () => {
+  const require = createRequire(import.meta.url)
+  const fooCjs = require('./typescript-cjs').foo
+  assert.equal(fooCjs, 'foo')
+})

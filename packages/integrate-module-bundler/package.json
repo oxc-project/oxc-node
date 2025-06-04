@@ -8,7 +8,7 @@
     "p-timeout": "^6.1.2"
   },
   "scripts": {
-    "test": "oxnode ./src/index.ts"
+    "test": "oxnode -C dev ./src/index.ts"
   },
   "devDependencies": {
     "@napi-rs/tar": "^0.1.5",
@@ -28,6 +28,7 @@
     "react-dom": "^19.1.0",
     "simple-git": "^3.27.0",
     "ts-node": "^10.9.2",
-    "tsx": "^4.16.2"
+    "tsx": "^4.16.2",
+    "condition-dev": "workspace:*"
   }
 }
