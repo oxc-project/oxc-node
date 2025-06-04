@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     env, fs, mem,
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock, OnceLock},
+    sync::{Arc, OnceLock},
 };
 
 use napi::bindgen_prelude::*;
@@ -131,15 +131,6 @@ pub fn init_tracing() {
 #[cfg(not(target_family = "wasm"))]
 #[napi]
 pub fn init_tracing() {}
-
-static DEFAULT_CONDITIONS: LazyLock<Vec<String>> = LazyLock::new(|| {
-    vec![
-        "node".to_string(),
-        "import".to_string(),
-        "module-sync".to_string(),
-        "node-addons".to_string(),
-    ]
-});
 
 #[cfg_attr(not(target_family = "wasm"), napi_derive::module_init)]
 fn init() {
@@ -456,19 +447,8 @@ pub fn create_resolve<'env>(
 
     let conditions = context.conditions.as_slice();
 
-    let (resolver, tsconfig, default_module_resolved_from_tsconfig) = RESOLVER_AND_TSCONFIG
-        .get_or_init(|| {
-            let mut resorted_conditions = Vec::with_capacity(conditions.len());
-            let default_conditions = DEFAULT_CONDITIONS.clone();
-            // put the custom conditions at the front of the list
-            for cond in conditions {
-                if !default_conditions.contains(cond) {
-                    resorted_conditions.push(cond.to_owned());
-                }
-            }
-            let conditions = [resorted_conditions, default_conditions].concat();
-            init_resolver(cwd.clone(), conditions)
-        });
+    let (resolver, tsconfig, default_module_resolved_from_tsconfig) =
+        RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone(), conditions.to_vec()));
 
     let is_absolute_path = specifier.starts_with(PATH_PREFIX);
 
