@@ -3,9 +3,9 @@
   "type": "module",
   "exports": {
     ".": {
-      "dev": "./index.ts",
-      "node": "./index.mjs",
-      "require": "./index.cjs"
+      "dev": "./condition-dev.ts",
+      "node": "./condition-node.mjs",
+      "require": "./condition-require.cjs"
     }
   }
 }
