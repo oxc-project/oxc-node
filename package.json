@@ -2,7 +2,7 @@
   "name": "oxc-node",
   "version": "0.0.0",
   "private": true,
-  "packageManager": "pnpm@10.11.0",
+  "packageManager": "pnpm@10.12.1",
   "devDependencies": {
     "@napi-rs/cli": "3.0.0-alpha.84",
     "@napi-rs/wasm-runtime": "^0.2.6",
@@ -18,7 +18,7 @@
     "lerna": "^8.1.9",
     "lint-staged": "^16.0.0",
     "npm-run-all2": "^8.0.0",
-    "oxlint": "^0.17.0",
+    "oxlint": "^0.18.0",
     "typescript": "^5.7.3"
   },
   "scripts": {
