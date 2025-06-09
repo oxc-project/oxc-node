@@ -1,6 +1,7 @@
 {
   "name": "condition-dev",
   "type": "module",
+  "private": true,
   "exports": {
     ".": {
       "dev": "./condition-dev.ts",
