@@ -14,7 +14,7 @@
     "@napi-rs/tar": "^0.1.5",
     "@napi-rs/wasm-runtime": "^0.2.4",
     "@oxc-node/cli": "workspace:*",
-    "@types/node": "^22.0.0",
+    "@types/node": "^24.0.0",
     "@types/react": "^19.0.13",
     "@types/react-dom": "^19.0.5",
     "canvaskit-wasm": "^0.40.0",
