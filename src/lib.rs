@@ -669,8 +669,8 @@ fn transform_output(
             let output_code = transform_output
                 .0
                 .map
-                .map(|sm| sm.to_data_url())
                 .map(|sm| {
+                    let sm = sm.to_data_url();
                     const SOURCEMAP_PREFIX: &str = "\n//# sourceMappingURL=";
                     let len = sm.len() + transform_output.0.code.len() + 22;
                     let mut output_code = String::with_capacity(len + 22);
