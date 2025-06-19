@@ -809,6 +809,8 @@ fn init_resolver(
 
     let tsconfig = resolver.resolve_tsconfig(tsconfig_full_path).ok();
 
+    tracing::debug!(tsconfig = ?tsconfig);
+
     let default_module_resolved_from_tsconfig = if let Some(tsconfig) = tsconfig.as_ref() {
         if matches!(
             tsconfig
