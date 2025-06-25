@@ -17,7 +17,7 @@
     "@nestjs/core": "^11.0.12",
     "@nestjs/platform-express": "^11.0.12",
     "@oxc-node/cli": "workspace:*",
-    "@oxc-project/runtime": "^0.74.0",
+    "@oxc-project/runtime": "^0.75.0",
     "@types/express": "^5.0.1",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.13",
