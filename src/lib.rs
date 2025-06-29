@@ -655,7 +655,7 @@ fn transform_output(
                 }
                 return Ok(LoadFnOutput {
                     format: "commonjs".to_owned(),
-                    source: Some(Either4::A(format!("module.exports = {}", source_str))),
+                    source: Some(Either4::A(format!("module.exports = {source_str}"))),
                     response_url: Some(url),
                 });
             }
@@ -701,7 +701,7 @@ impl TryAsStr for Either<String, &[u8]> {
             Either::B(b) => std::str::from_utf8(b).map_err(|err| {
                 Error::new(
                     Status::GenericFailure,
-                    format!("Failed to convert &[u8] to &str: {}", err),
+                    format!("Failed to convert &[u8] to &str: {err}"),
                 )
             }),
         }
