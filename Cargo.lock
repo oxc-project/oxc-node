@@ -65,9 +65,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.27"
+version = "1.2.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d487aa071b5f64da6f19a3e848e3578944b726ee5a4854b82172f02aa876bfdc"
+checksum = "5c1599538de2394445747c8cf7935946e3cc27e9625f889d979bfb2aaf569362"
 dependencies = [
  "shlex",
 ]
@@ -321,9 +321,9 @@ dependencies = [
 
 [[package]]
 name = "napi"
-version = "3.0.0-beta.10"
+version = "3.0.0-beta.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8a8bf588b2ea96bdf618cac8a81b2b6cb5e0f0f86a1ac4ac62859ab78fd79a8"
+checksum = "20d04dd99c9471a6028fab8c99fb6ff91f8bf5d2a73de6204fa3fc55502e57ac"
 dependencies = [
  "bitflags",
  "ctor",
@@ -337,15 +337,15 @@ dependencies = [
 
 [[package]]
 name = "napi-build"
-version = "2.2.1"
+version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44e0e3177307063d3e7e55b7dd7b648cca9d7f46daa35422c0d98cc2bf48c2c1"
+checksum = "fff539e61c5e3dd4d7d283610662f5d672c2aea0f158df78af694f13dbb3287b"
 
 [[package]]
 name = "napi-derive"
-version = "3.0.0-beta.10"
+version = "3.0.0-beta.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cf56acb0b78c92cba806a559cfe62513f53cc4a7947807e2ff3c4ef865e9b3a"
+checksum = "2856e1df1ae797d8443a71c18d10c1a46d75e69a4b0d67f15504e8af98a0b0f6"
 dependencies = [
  "convert_case",
  "ctor",
@@ -357,9 +357,9 @@ dependencies = [
 
 [[package]]
 name = "napi-derive-backend"
-version = "2.0.0-beta.10"
+version = "2.0.0-beta.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6862700f1bdfe43767dc2fd3577306cf6342431f078b765c8336454dda382f1d"
+checksum = "49950e70710f3a5b04b23b5ab5de8c7d23c0a7580ec4aa0fb1322a7679d7daf9"
 dependencies = [
  "convert_case",
  "proc-macro2",
@@ -471,9 +471,9 @@ dependencies = [
 
 [[package]]
 name = "oxc-browserslist"
-version = "2.0.6"
+version = "2.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c7bcc31e3014fa4226346b8596cda0f5cb5797045fa2760c6b871407db5642c"
+checksum = "59d2b662fc47724189e32944e106876be89e15c2d1bbdcd9befc65873acb14a3"
 dependencies = [
  "nom",
  "rustc-hash",
