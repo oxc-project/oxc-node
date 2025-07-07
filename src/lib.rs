@@ -169,6 +169,21 @@ impl Output {
     }
 }
 
+#[napi]
+pub fn transform(path: String, source: Either<String, &[u8]>) -> Result<Output> {
+    let transformer = OxcTransformer::new(None);
+    transformer.transform(path, source)
+}
+
+#[napi]
+pub fn transform_async(
+    path: String,
+    source: Either3<String, Uint8Array, Buffer>,
+) -> AsyncTask<TransformTask> {
+    let transformer = OxcTransformer::new(None);
+    transformer.transform_async(path, source)
+}
+
 pub struct TransformTask {
     cwd: String,
     path: String,
@@ -211,8 +226,15 @@ pub struct OxcTransformer {
 #[napi]
 impl OxcTransformer {
     #[napi(constructor)]
-    pub fn new(cwd: String) -> Self {
-        Self { cwd }
+    pub fn new(cwd: Option<String>) -> Self {
+        Self {
+            cwd: match cwd {
+                Some(cwd) => cwd,
+                None => env::current_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap(),
+            },
+        }
     }
 
     #[napi]
