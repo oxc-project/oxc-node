@@ -13,8 +13,12 @@ export declare class Output {
   sourceMap(): string | null
 }
 
+export function transform(path: string, source: string | Uint8Array): Output
+
+export function transformAsync(path: string, source: string | Uint8Array): Promise<Output>
+
 export declare class OxcTransformer {
-  constructor(cwd: string)
+  constructor(cwd?: string)
   transform(path: string, source: string | Uint8Array): Output
   transformAsync(path: string, source: string | Uint8Array | Buffer): Promise<Output>
 }
