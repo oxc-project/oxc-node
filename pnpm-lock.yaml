@@ -4,13 +4,19 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  default:
+    '@napi-rs/cli':
+      specifier: 3.0.0-alpha.92
+      version: 3.0.0-alpha.92
+
 importers:
 
   .:
     devDependencies:
       '@napi-rs/cli':
-        specifier: 3.0.0-alpha.91
-        version: 3.0.0-alpha.91(@emnapi/runtime@1.4.3)(@types/node@24.0.10)(emnapi@1.4.3)
+        specifier: 'catalog:'
+        version: 3.0.0-alpha.92(@emnapi/runtime@1.4.3)(@types/node@24.0.10)(emnapi@1.4.3)
       '@napi-rs/wasm-runtime':
         specifier: ^0.2.6
         version: 0.2.11
@@ -100,8 +106,8 @@ importers:
         version: 4.0.7
     devDependencies:
       '@napi-rs/cli':
-        specifier: 3.0.0-alpha.84
-        version: 3.0.0-alpha.84(@emnapi/runtime@1.4.3)(@types/node@24.0.10)(emnapi@1.4.3)
+        specifier: 'catalog:'
+        version: 3.0.0-alpha.92(@emnapi/runtime@1.4.3)(@types/node@24.0.10)(emnapi@1.4.3)
       '@oxc-project/runtime':
         specifier: ^0.75.0
         version: 0.75.1
@@ -259,31 +265,26 @@ packages:
     resolution: {integrity: sha512-q0TOGy9FsoSKsEQ4sIMKyFweF5M8rW1S5OfwJDNRR2TU2riWByU9TKYIZUzg53iuwYKRypr/kJ5kdbl516afRQ==}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@dprint/linux-arm64-musl@0.50.1':
     resolution: {integrity: sha512-XRtxN2cA9rc06WFzzVPDIZYGGLmUXqpVf3F0XhhHV77ikQLJZ5reF4xBOQ+0HjJ/zy8W/HzuGDAHedWyCrRf9g==}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@dprint/linux-riscv64-glibc@0.50.1':
     resolution: {integrity: sha512-vAk/eYhSjA3LJ/yuYgxkHamiK8+m6YdqVBO/Ka+i16VxyjQyOdcMKBkrLCIqSxgyXd6b8raf9wM59HJbaIpoOg==}
     cpu: [riscv64]
     os: [linux]
-    libc: [glibc]
 
   '@dprint/linux-x64-glibc@0.50.1':
     resolution: {integrity: sha512-EpW5KLekaq4hXmKBWWtfBgZ244S4C+vFmMOd1YaGi8+f0hmPTJzVWLdIgpO2ZwfPQ5iycaVI/JS514PQmXPOvg==}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@dprint/linux-x64-musl@0.50.1':
     resolution: {integrity: sha512-assISBbaKKL8LkjrIy/5tpE157MVW6HbyIKAjTtg3tPNM3lDn1oH3twuGtK9WBsN/VoEP3QMZVauolcUJT/VOg==}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@dprint/win32-arm64@0.50.1':
     resolution: {integrity: sha512-ZeaRMQYoFjrsO3lvI1SqzDWDGH1GGXWmNSeXvcFuAf2OgYQJWMBlLotCKiHNJ3uyYneoyhTg2tv9QkApNkZV4Q==}
@@ -623,21 +624,8 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  '@napi-rs/cli@3.0.0-alpha.84':
-    resolution: {integrity: sha512-KOhe4oHd5SGCXU5e9looAMDJkwyLQ1s0yOzQQK5P1jvIKP/Pk3tybqjiEqJzXTXixI5zVWlt/D48+kz7EyWH+A==}
-    engines: {node: '>= 16'}
-    hasBin: true
-    peerDependencies:
-      '@emnapi/runtime': ^1.1.0
-      emnapi: ^1.1.0
-    peerDependenciesMeta:
-      '@emnapi/runtime':
-        optional: true
-      emnapi:
-        optional: true
-
-  '@napi-rs/cli@3.0.0-alpha.91':
-    resolution: {integrity: sha512-y84TaF1AFQasCTMgeREEUT3fhHXFZXIeGp/S9YloiGxr1xTqhaN9Tt/VYhjnxJvnxLAhgge9Rsv4xrwrXVoaOw==}
+  '@napi-rs/cli@3.0.0-alpha.92':
+    resolution: {integrity: sha512-vwB/0HDqzXf3uS04zZxgVVQniWluPOnI3ydD1bQRJx77fP/iHNoNMvI9m0L+IcPK4qoqCixBd9qE7UZ9CP4RbA==}
     engines: {node: '>= 16'}
     hasBin: true
     peerDependencies:
@@ -713,49 +701,42 @@ packages:
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@napi-rs/lzma-linux-arm64-musl@1.4.3':
     resolution: {integrity: sha512-k4fWiI4Pm61Esj8hnm7NWIbpZueTtP2jlJqmMhTqJyjqW3NUxbTHjSErZOZKIFRF1B3if4v5Tyzo7JL2X+BaSQ==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@napi-rs/lzma-linux-ppc64-gnu@1.4.3':
     resolution: {integrity: sha512-tTIfk+TYZYbFySxaCMuzp4Zz1T3I6OYVYNAm+IrCSkZDLmUKUzBK3+Su+mT+PjcTNsAiHBa5NVjARXC7b7jmgQ==}
     engines: {node: '>= 10'}
     cpu: [ppc64]
     os: [linux]
-    libc: [glibc]
 
   '@napi-rs/lzma-linux-riscv64-gnu@1.4.3':
     resolution: {integrity: sha512-HPyLYOYhkN7QYaWiKWhSnsLmx/l0pqgiiyaYeycgxCm9dwL8ummFWxveZqYjqdbUUvG7Mgi1jqgRe+55MVdyZQ==}
     engines: {node: '>= 10'}
     cpu: [riscv64]
     os: [linux]
-    libc: [glibc]
 
   '@napi-rs/lzma-linux-s390x-gnu@1.4.3':
     resolution: {integrity: sha512-YkcV+RSZZIMM3D5sPZqvo2Q7/tHXBhgJWBi+6ceo46pTlqgn/nH+pVz+CzsDmLWz5hqNSXyv5IAhOcg2CH6rAg==}
     engines: {node: '>= 10'}
     cpu: [s390x]
     os: [linux]
-    libc: [glibc]
 
   '@napi-rs/lzma-linux-x64-gnu@1.4.3':
     resolution: {integrity: sha512-ep6PLjN1+g4P12Hc7sLRmVpXXaHX22ykqxnOzjXUoj1KTph5XgM4+fUCyE5dsYI+lB4/tXqFuf9ZeFgHk5f00A==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@napi-rs/lzma-linux-x64-musl@1.4.3':
     resolution: {integrity: sha512-QkCO6rVw0Z7eY0ziVc4aCFplbOTMpt0UBLPXWxsPd2lXtkAlRChzqaHOxdcL/HoLmBsqdCxmG0EZuHuAP/vKZQ==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@napi-rs/lzma-wasm32-wasi@1.4.3':
     resolution: {integrity: sha512-+rMamB0xaeDyVt4OP4cV888cnmso+m78iUebNhGcrL/WXIziwql50KQrmj7PBdBCza/W7XEcraZT8pO8gSDGcg==}
@@ -825,42 +806,36 @@ packages:
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@napi-rs/tar-linux-arm64-musl@0.1.5':
     resolution: {integrity: sha512-5xTxsoPVqovnZ197CqTc+q3psRM4i+ErdiyfDgkG4nP045jh50gp22WKZuE24dc7/iS+IyUrM3+PRbmj2mzR8g==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@napi-rs/tar-linux-ppc64-gnu@0.1.5':
     resolution: {integrity: sha512-7FF1u8EkDpCEPCgU0/kvuzsO+opB7eIbsGfKRIbOqrDT7c1DYxDetNTtukPvNoT2kvwfxxThgTfcPADPxdOE/w==}
     engines: {node: '>= 10'}
     cpu: [ppc64]
     os: [linux]
-    libc: [glibc]
 
   '@napi-rs/tar-linux-s390x-gnu@0.1.5':
     resolution: {integrity: sha512-uyIZ7OLCLHtVBpogoJUD0GSAF1IUa3d5c5AVUemTLIwYkVgzdEB+khh3i2+/oKObf79ZKfQ8mYxOryHqfx+ulw==}
     engines: {node: '>= 10'}
     cpu: [s390x]
     os: [linux]
-    libc: [glibc]
 
   '@napi-rs/tar-linux-x64-gnu@0.1.5':
     resolution: {integrity: sha512-y8pFyVTU6lSYiW2lse6i1Ns9yt9mBkAqPbcJnIjqC7ZqRd61T6g3XZDSrKmsM6ycTfsAqoE5WyyFxBjQN29AOA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@napi-rs/tar-linux-x64-musl@0.1.5':
     resolution: {integrity: sha512-8phLYc0QX+tqvp34PQHUulZUi4sy/fdg1KgFHiyYExTRRleBB01vM7KSn7Bk9dwH7lannO5D7j4O8OY46Xcr/A==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@napi-rs/tar-wasm32-wasi@0.1.5':
     resolution: {integrity: sha512-OpVWC/bwY0zb6nbQDg6koxeZGb441gXwPkaYVjaK4O0TJjNpRKbokLAMlGFtcc/sVSPjghFL0+enfnLDt/P7og==}
@@ -930,28 +905,24 @@ packages:
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@napi-rs/wasm-tools-linux-arm64-musl@0.0.3':
     resolution: {integrity: sha512-XN+sPgEwFw3P47wDvtcQyOoZNghIL8gaiRjEGzprB+kE9N21GkuMbk3kdjiBBJkjqKF25f4fbOvNAY0jQEAO3A==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@napi-rs/wasm-tools-linux-x64-gnu@0.0.3':
     resolution: {integrity: sha512-mfMvMEqn33YtEjIyLPguZ6yDsNtF5zV7mqc99620YDyj2SLa0aI35TNTc7Dm+/hlgqHRKhdudsWGfYc4dBND2Q==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@napi-rs/wasm-tools-linux-x64-musl@0.0.3':
     resolution: {integrity: sha512-KXMsXWGELoN5xgPCoRHbgt5TScSx8BK2GcCHKJ9OPZ2HMfsXbLgS/SNi6vz1CbLMZMLPBY2G6HAk0gzLGyS0mQ==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@napi-rs/wasm-tools-wasm32-wasi@0.0.3':
     resolution: {integrity: sha512-v3iMHnAfMteogpbqHTFeLXPeAzL5AhpDJLvZvLXbuRiMsMRL0dn8CbcEnYja2P/Ui6Xlyky6PcaUsepOUTNb7A==}
@@ -1126,28 +1097,24 @@ packages:
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@nx/nx-linux-arm64-musl@20.8.2':
     resolution: {integrity: sha512-4Ev+jM0VAxDHV/dFgMXjQTCXS4I8W4oMe7FSkXpG8RUn6JK659DC8ExIDPoGIh+Cyqq6r6mw1CSia+ciQWICWQ==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@nx/nx-linux-x64-gnu@20.8.2':
     resolution: {integrity: sha512-nR0ev+wxu+nQYRd7bhqggOxK7UfkV6h+Ko1mumUFyrM5GvPpz/ELhjJFSnMcOkOMcvH0b6G5uTBJvN1XWCkbmg==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@nx/nx-linux-x64-musl@20.8.2':
     resolution: {integrity: sha512-ost41l5yc2aq2Gc9bMMpaPi/jkXqbXEMEPHrxWKuKmaek3K2zbVDQzvBBNcQKxf/mlCsrqN4QO0mKYSRRqag5A==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@nx/nx-win32-arm64-msvc@20.8.2':
     resolution: {integrity: sha512-0SEOqT/daBG5WtM9vOGilrYaAuf1tiALdrFavY62+/arXYxXemUKmRI5qoKDTnvoLMBGkJs6kxhMO5b7aUXIvQ==}
@@ -1289,25 +1256,21 @@ packages:
     resolution: {integrity: sha512-Nr8oUAEo20WIBo/qi76dBo5IGw2bQcl7d2YbaigOSQoAGfHR9xE9hAySYhIsnv7W0jtAZu1YTn0So7Tg0idExw==}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@oxlint/linux-arm64-musl@1.5.0':
     resolution: {integrity: sha512-H2MBL0LZnl3GP09r12tFfcv3Y2fvetMD1TYbf5cetYCQ7hG7aIYTsuOTENjZ0SDK+L9Id35YWFNP3YES+3tsgw==}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@oxlint/linux-x64-gnu@1.5.0':
     resolution: {integrity: sha512-pRu77WJ+Uy0l6OkCjljnHuzOlSbMsN1mFDeAyzh8R69O44Mc2C7f1Fe+fbbW2kjgIwFQq8JkUffvPWr1MCMa+A==}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@oxlint/linux-x64-musl@1.5.0':
     resolution: {integrity: sha512-qHG2YR+06pEAF4Gfp3T8hSaiI/IchdbuditnnVYxy32pN43vNMVDO7fU5hnNzJpxh6HozAD3uRrskBNvxgeSrQ==}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@oxlint/win32-arm64@1.5.0':
     resolution: {integrity: sha512-/YRDPf1sPCF6B026buZTvh1vOF/pS+75aBDnxrDWIFhP1w3flqcI9v5QVjtq/sOZEWAoP2ee46CrxcxK5UuYag==}
@@ -1347,25 +1310,21 @@ packages:
     resolution: {integrity: sha512-UxGukDkWnv7uS5R+BPVeJ4FSuwA+lgC62LRsyPPSJhJhKMNGZ2W9sQPIpEtBRlww8t0qR6QBsiD5TGLW98ktGw==}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@rolldown/binding-linux-arm64-musl@1.0.0-beta.24':
     resolution: {integrity: sha512-vB99yGYW9FOQe4lk3MNKa13+vRj+7waZFlRE3Ba/IpEy7RFxZ78ASkPLXkz4+kYYbUvMnRaOfk9RKX2fqYZRUg==}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@rolldown/binding-linux-x64-gnu@1.0.0-beta.24':
     resolution: {integrity: sha512-fAMZBWutuKWHsyvHVsKjFYRXVgTbzBfNmomzPPpog8UtdkHk5Vnb0qVEeZP4hR4TsXnKfzD2EQ98NRqFej5QYA==}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@rolldown/binding-linux-x64-musl@1.0.0-beta.24':
     resolution: {integrity: sha512-0UY/Qo8fAlpolcWOg2ZU7SCUrsCJWifdRMliV9GXlZaBKbMoVNFw0pHGDm9cj/3TWhJu/iB0peZK00dm22LlNw==}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@rolldown/binding-wasm32-wasi@1.0.0-beta.24':
     resolution: {integrity: sha512-7ubbtKCo6FBuAM4q6LoT5dOea7f/zj9OYXgumbwSmA0fw18mN5h8SrFTUjl7h9MpPkOyhi2uY6ss4pb39KXkcw==}
@@ -1453,28 +1412,24 @@ packages:
     engines: {node: '>=10'}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@swc/core-linux-arm64-musl@1.12.9':
     resolution: {integrity: sha512-yghFZWKPVVGbUdqiD7ft23G0JX6YFGDJPz9YbLLAwGuKZ9th3/jlWoQDAw1Naci31LQhVC+oIji6ozihSuwB2A==}
     engines: {node: '>=10'}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@swc/core-linux-x64-gnu@1.12.9':
     resolution: {integrity: sha512-SFUxyhWLZRNL8QmgGNqdi2Q43PNyFVkRZ2zIif30SOGFSxnxcf2JNeSeBgKIGVgaLSuk6xFVVCtJ3KIeaStgRg==}
     engines: {node: '>=10'}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@swc/core-linux-x64-musl@1.12.9':
     resolution: {integrity: sha512-9FB0wM+6idCGTI20YsBNBg9xSWtkDBymnpaTCsZM3qDc0l4uOpJMqbfWhQvp17x7r/ulZfb2QY8RDvQmCL6AcQ==}
     engines: {node: '>=10'}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@swc/core-win32-arm64-msvc@1.12.9':
     resolution: {integrity: sha512-zHOusMVbOH9ik5RtRrMiGzLpKwxrPXgXkBm3SbUCa65HAdjV33NZ0/R9Rv1uPESALtEl2tzMYLUxYA5ECFDFhA==}
@@ -4015,9 +3970,6 @@ packages:
     resolution: {integrity: sha512-IKJ6EzuPPWtKtEIEPpIdXv9j5j2LGJEYk0CKY2efgKoYKLBiZdh6iQkLVBow/CB3phyWAWCyk+bZeaimJn6uRQ==}
     engines: {node: '>=14.16'}
 
-  toml@3.0.0:
-    resolution: {integrity: sha512-y/mWCZinnvxjTKYhJ+pYxwD0mRLVvOtdS2Awbgxln6iEnt4rk0yBxeSBHkGJcPucRiG0e55mwWp+g/05rsrd6w==}
-
   tr46@0.0.3:
     resolution: {integrity: sha512-N3WMsuqV66lT30CrXNbEjx4GEwlow3v6rr4mCcv6prnfwhS01rkgyFdjPNBYd9br7LpXV1+Emh01fHnq2Gdgrw==}
 
@@ -4679,35 +4631,7 @@ snapshots:
       - encoding
       - supports-color
 
-  '@napi-rs/cli@3.0.0-alpha.84(@emnapi/runtime@1.4.3)(@types/node@24.0.10)(emnapi@1.4.3)':
-    dependencies:
-      '@inquirer/prompts': 7.6.0(@types/node@24.0.10)
-      '@napi-rs/cross-toolchain': 0.0.19
-      '@napi-rs/wasm-tools': 0.0.3
-      '@octokit/rest': 22.0.0
-      clipanion: 4.0.0-rc.4(typanion@3.14.0)
-      colorette: 2.0.20
-      debug: 4.4.1
-      js-yaml: 4.1.0
-      lodash-es: 4.17.21
-      semver: 7.7.2
-      toml: 3.0.0
-      typanion: 3.14.0
-      wasm-sjlj: 1.0.6
-    optionalDependencies:
-      '@emnapi/runtime': 1.4.3
-      emnapi: 1.4.3
-    transitivePeerDependencies:
-      - '@napi-rs/cross-toolchain-arm64-target-aarch64'
-      - '@napi-rs/cross-toolchain-arm64-target-armv7'
-      - '@napi-rs/cross-toolchain-arm64-target-x86_64'
-      - '@napi-rs/cross-toolchain-x64-target-aarch64'
-      - '@napi-rs/cross-toolchain-x64-target-armv7'
-      - '@napi-rs/cross-toolchain-x64-target-x86_64'
-      - '@types/node'
-      - supports-color
-
-  '@napi-rs/cli@3.0.0-alpha.91(@emnapi/runtime@1.4.3)(@types/node@24.0.10)(emnapi@1.4.3)':
+  '@napi-rs/cli@3.0.0-alpha.92(@emnapi/runtime@1.4.3)(@types/node@24.0.10)(emnapi@1.4.3)':
     dependencies:
       '@inquirer/prompts': 7.6.0(@types/node@24.0.10)
       '@napi-rs/cross-toolchain': 0.0.19
@@ -8174,8 +8098,6 @@ snapshots:
     dependencies:
       '@tokenizer/token': 0.3.0
       ieee754: 1.2.1
-
-  toml@3.0.0: {}
 
   tr46@0.0.3: {}
 

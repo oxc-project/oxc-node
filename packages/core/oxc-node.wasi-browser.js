@@ -5,12 +5,12 @@ import {
   WASI as __WASI,
 } from '@napi-rs/wasm-runtime'
 
-import __wasmUrl from './oxc-node.wasm32-wasi.wasm?url'
 
 const __wasi = new __WASI({
   version: 'preview1',
 })
 
+const __wasmUrl = new URL('./oxc-node.wasm32-wasi.wasm', import.meta.url).href
 const __emnapiContext = __emnapiGetDefaultContext()
 
 const __sharedMemory = new WebAssembly.Memory({
@@ -54,4 +54,8 @@ const {
   },
 })
 export default __napiModule.exports
-
+export const Output = __napiModule.exports.Output
+export const OxcTransformer = __napiModule.exports.OxcTransformer
+export const createResolve = __napiModule.exports.createResolve
+export const initTracing = __napiModule.exports.initTracing
+export const load = __napiModule.exports.load
