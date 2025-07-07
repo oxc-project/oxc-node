@@ -22,8 +22,8 @@ use oxc::{
     },
 };
 use oxc_resolver::{
-    Cache, CompilerOptionsSerde, EnforceExtension, ModuleType, Resolution, ResolveOptions,
-    Resolver, TsConfigSerde, TsconfigOptions, TsconfigReferences,
+    CompilerOptions, EnforceExtension, ModuleType, Resolution, ResolveOptions, Resolver, TsConfig,
+    TsconfigOptions, TsconfigReferences,
 };
 use phf::Set;
 
@@ -104,11 +104,8 @@ const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
 };
 
 #[allow(clippy::type_complexity)]
-static RESOLVER_AND_TSCONFIG: OnceLock<(
-    Resolver,
-    Option<Arc<TsConfigSerde>>,
-    Option<&'static str>,
-)> = OnceLock::new();
+static RESOLVER_AND_TSCONFIG: OnceLock<(Resolver, Option<Arc<TsConfig>>, Option<&'static str>)> =
+    OnceLock::new();
 
 #[cfg(not(target_os = "windows"))]
 const NODE_MODULES_PATH: &str = "/node_modules/";
@@ -248,7 +245,7 @@ impl OxcTransformer {
 fn oxc_transform<S: TryAsStr>(
     src_path: &Path,
     code: &S,
-    compiler_options: Option<&'static CompilerOptionsSerde>,
+    compiler_options: Option<&'static CompilerOptions>,
     module_target: Option<Module>,
 ) -> Result<Output> {
     let allocator = Allocator::default();
@@ -605,7 +602,7 @@ pub fn load<'env>(
 fn transform_output(
     url: String,
     output: LoadFnOutput,
-    resolved_compiler_options: Option<&'static CompilerOptionsSerde>,
+    resolved_compiler_options: Option<&'static CompilerOptions>,
 ) -> Result<LoadFnOutput> {
     match &output.source {
         Some(Either4::D(_)) | None => {
@@ -755,7 +752,7 @@ impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
 fn init_resolver(
     cwd: PathBuf,
     conditions: Vec<String>,
-) -> (Resolver, Option<Arc<TsConfigSerde>>, Option<&'static str>) {
+) -> (Resolver, Option<Arc<TsConfig>>, Option<&'static str>) {
     let tsconfig = env::var("TS_NODE_PROJECT")
         .or_else(|_| env::var("OXC_TSCONFIG_PATH"))
         .map(Cow::Owned)
@@ -880,7 +877,7 @@ fn add_short_circuit<'env>(
     }
 }
 
-fn oxc_resolved_path_to_url<C: Cache>(resolution: &Resolution<C>) -> String {
+fn oxc_resolved_path_to_url(resolution: &Resolution) -> String {
     #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
     let mut url = if resolution.query().is_some() || resolution.fragment().is_some() {
         format!("{PATH_PREFIX}{}", resolution.full_path().to_string_lossy())
