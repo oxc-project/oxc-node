@@ -1,1 +1,4 @@
 packages: ["packages/*"]
+
+catalog:
+  "@napi-rs/cli": "3.0.0-alpha.92"
