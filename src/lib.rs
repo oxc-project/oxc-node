@@ -22,7 +22,8 @@ use oxc::{
     },
 };
 use oxc_resolver::{
-    CompilerOptions, EnforceExtension, ModuleType, Resolution, ResolveOptions, Resolver, TsConfig, TsconfigOptions, TsconfigReferences
+    CompilerOptions, EnforceExtension, ModuleType, Resolution, ResolveOptions, Resolver, TsConfig,
+    TsconfigOptions, TsconfigReferences,
 };
 use phf::Set;
 
@@ -103,11 +104,8 @@ const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
 };
 
 #[allow(clippy::type_complexity)]
-static RESOLVER_AND_TSCONFIG: OnceLock<(
-    Resolver,
-    Option<Arc<TsConfig>>,
-    Option<&'static str>,
-)> = OnceLock::new();
+static RESOLVER_AND_TSCONFIG: OnceLock<(Resolver, Option<Arc<TsConfig>>, Option<&'static str>)> =
+    OnceLock::new();
 
 #[cfg(not(target_os = "windows"))]
 const NODE_MODULES_PATH: &str = "/node_modules/";
