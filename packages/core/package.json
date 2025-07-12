@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@napi-rs/cli": "catalog:",
-    "@oxc-project/runtime": "^0.76.0"
+    "@oxc-project/runtime": "^0.77.0"
   },
   "dependencies": {
     "pirates": "^4.0.7"
