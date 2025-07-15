@@ -13,12 +13,8 @@ export declare class Output {
   sourceMap(): string | null
 }
 
-export function transform(path: string, source: string | Uint8Array): Output
-
-export function transformAsync(path: string, source: string | Uint8Array): Promise<Output>
-
 export declare class OxcTransformer {
-  constructor(cwd?: string)
+  constructor(cwd?: string | undefined | null)
   transform(path: string, source: string | Uint8Array): Output
   transformAsync(path: string, source: string | Uint8Array | Buffer): Promise<Output>
 }
@@ -62,3 +58,7 @@ export interface ResolveFnOutput {
   url: string
   importAttributes?: Record<string, string> | null
 }
+
+export declare function transform(path: string, source: string | Uint8Array): Output
+
+export declare function transformAsync(path: string, source: string | Uint8Array | Buffer): Promise<unknown>

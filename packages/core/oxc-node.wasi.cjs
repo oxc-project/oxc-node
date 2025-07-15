@@ -82,7 +82,7 @@ const { instance: __napiInstance, module: __wasiModule, napiModule: __napiModule
       const kHandle = Object.getOwnPropertySymbols(worker).find(s =>
         s.toString().includes("kHandle")
       );
-      if (kPublicPort) {
+      if (kHandle) {
         worker[kHandle].ref = () => {};
       }
 
@@ -113,3 +113,5 @@ module.exports.OxcTransformer = __napiModule.exports.OxcTransformer
 module.exports.createResolve = __napiModule.exports.createResolve
 module.exports.initTracing = __napiModule.exports.initTracing
 module.exports.load = __napiModule.exports.load
+module.exports.transform = __napiModule.exports.transform
+module.exports.transformAsync = __napiModule.exports.transformAsync
