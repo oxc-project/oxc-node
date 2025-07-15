@@ -5,7 +5,7 @@ env:
   APP_NAME: oxc-node
   OXC_LOG: "debug"
   MACOSX_DEPLOYMENT_TARGET: "10.13"
-  CC: clang
+  TARGET_CC: clang
 
 permissions: {}
 
