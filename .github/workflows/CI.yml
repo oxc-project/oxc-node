@@ -122,6 +122,9 @@ jobs:
               export CFLAGS="-fuse-ld=lld"
               pnpm --filter=@oxc-node/core build --target s390x-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
+            target: aarch64-unknown-linux-ohos
+            build: pnpm --filter=@oxc-node/core build --target aarch64-unknown-linux-ohos
+          - host: ubuntu-latest
             target: wasm32-wasip1-threads
             build: pnpm --filter=@oxc-node/core build --target wasm32-wasip1-threads
     name: stable - ${{ matrix.settings.target }} - node@22
@@ -149,7 +152,7 @@ jobs:
       - uses: goto-bus-stop/setup-zig@abea47f85e598557f500fa1fd2ab7464fcb39406 # v2.2.1
         if: ${{ contains(matrix.settings.target, 'musl') }}
         with:
-          version: 0.14.0
+          version: 0.14.1
       - name: Install cargo-zigbuild
         uses: taiki-e/install-action@c07504cae06f832dc8de08911c9a9c5cddb0d2d3 # v2.56.13
         if: ${{ contains(matrix.settings.target, 'musl') }}
@@ -157,6 +160,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         with:
           tool: cargo-zigbuild
+      - name: Setup OpenHarmony toolchain
+        if: ${{ contains(matrix.settings.target, 'ohos') }}
+        uses: openharmony-rs/setup-ohos-sdk@10564ad8040178be4aa02e0d3a2c25c32779fa3f # v0.2
       - name: Setup toolchain
         run: ${{ matrix.settings.setup }}
         if: ${{ matrix.settings.setup }}
