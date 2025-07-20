@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.13.1",
   "devDependencies": {
     "@napi-rs/cli": "catalog:",
-    "@napi-rs/wasm-runtime": "^0.2.6",
+    "@napi-rs/wasm-runtime": "^1.0.0",
     "@oxc-node/cli": "workspace:*",
     "@oxc-node/core": "workspace:*",
     "@oxc-project/runtime": "^0.77.0",
