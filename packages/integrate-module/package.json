@@ -12,7 +12,7 @@
   },
   "devDependencies": {
     "@napi-rs/tar": "^0.1.5",
-    "@napi-rs/wasm-runtime": "^0.2.4",
+    "@napi-rs/wasm-runtime": "^1.0.0",
     "@oxc-node/cli": "workspace:*",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.13",
