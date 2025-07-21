@@ -346,8 +346,6 @@ jobs:
               console.log('PLATFORM=linux/ppc64le')
             } else if ('${{ matrix.target }}'.startsWith('s390x')) {
               console.log('PLATFORM=linux/s390x')
-            } else if ('${{ matrix.target }}'.startsWith('powerpc64le')) {
-              console.log('PLATFORM=linux/ppc64le')
             } else {
               console.log('PLATFORM=linux/amd64')
             }
