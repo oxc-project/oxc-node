@@ -8,10 +8,10 @@
   },
   "devDependencies": {
     "@oxc-node/cli": "workspace:*",
-    "@swc/core": "^1.7.0",
-    "esbuild": "^0.25.0",
-    "tinybench": "^4.0.0",
-    "rxjs": "^7.8.1",
-    "typescript": "^5.5.3"
+    "@swc/core": "^1.13.2",
+    "esbuild": "^0.25.8",
+    "tinybench": "^4.0.1",
+    "rxjs": "^7.8.2",
+    "typescript": "^5.8.3"
   }
 }

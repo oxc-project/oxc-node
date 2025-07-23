@@ -1,4 +1,5 @@
-packages: ["packages/*"]
+packages:
+  - packages/*
 
 catalog:
-  "@napi-rs/cli": "3.0.0-alpha.99"
+  "@napi-rs/cli": 3.0.1

@@ -5,24 +5,24 @@
   "private": true,
   "dependencies": {
     "file-type": "^21.0.0",
-    "p-timeout": "^6.1.2"
+    "p-timeout": "^6.1.4"
   },
   "scripts": {
     "test": "oxnode ./src/index.ts"
   },
   "devDependencies": {
-    "@napi-rs/tar": "^0.1.5",
-    "@napi-rs/wasm-runtime": "^1.0.0",
+    "@napi-rs/tar": "^1.0.0",
+    "@napi-rs/wasm-runtime": "^1.0.1",
     "@oxc-node/cli": "workspace:*",
-    "@types/node": "^24.0.0",
-    "@types/react": "^19.0.13",
-    "@types/react-dom": "^19.0.5",
+    "@types/node": "^24.1.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
     "canvaskit-wasm": "^0.40.0",
     "ipaddr.js": "^2.2.0",
-    "postgres": "^3.4.4",
+    "postgres": "^3.4.7",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "simple-git": "^3.27.0",
+    "simple-git": "^3.28.0",
     "ts-node": "^10.9.2"
   }
 }
