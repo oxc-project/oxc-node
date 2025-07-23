@@ -8,8 +8,8 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-napi = { version = "3.0.0-beta.12", default-features = false, features = ["serde-json", "napi3"] }
-napi-derive = { version = "3.0.0-beta.12", default-features = false, features = ["type-def"] }
+napi = { version = "3.0.0", default-features = false, features = ["serde-json", "napi3"] }
+napi-derive = { version = "3.0.0", default-features = false, features = ["type-def"] }
 oxc = { version = "0.77.0", features = ["codegen", "transformer", "semantic", "regular_expression"] }
 oxc_resolver = { version = "11.5.0" }
 phf = "0.12"

@@ -7,7 +7,7 @@
   },
   "devDependencies": {
     "@oxc-node/core": "workspace:*",
-    "ava": "^6.2.0"
+    "ava": "^6.4.1"
   },
   "ava": {
     "extensions": {

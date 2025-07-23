@@ -5,30 +5,30 @@
   "private": true,
   "dependencies": {
     "file-type": "^21.0.0",
-    "p-timeout": "^6.1.2"
+    "p-timeout": "^6.1.4"
   },
   "scripts": {
     "test": "oxnode -C dev ./src/index.ts"
   },
   "devDependencies": {
-    "@napi-rs/tar": "^0.1.5",
-    "@napi-rs/wasm-runtime": "^1.0.0",
-    "@nestjs/common": "^11.0.12",
-    "@nestjs/core": "^11.0.12",
-    "@nestjs/platform-express": "^11.0.12",
+    "@napi-rs/tar": "^1.0.0",
+    "@napi-rs/wasm-runtime": "^1.0.1",
+    "@nestjs/common": "^11.1.5",
+    "@nestjs/core": "^11.1.5",
+    "@nestjs/platform-express": "^11.1.5",
     "@oxc-node/cli": "workspace:*",
-    "@oxc-project/runtime": "^0.77.0",
-    "@types/express": "^5.0.1",
-    "@types/node": "^24.0.0",
-    "@types/react": "^19.0.13",
-    "@types/react-dom": "^19.0.5",
+    "@oxc-project/runtime": "^0.77.3",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.1.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
     "express": "^5.1.0",
-    "core-js": "^3.41.0",
+    "core-js": "^3.44.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "simple-git": "^3.27.0",
+    "simple-git": "^3.28.0",
     "ts-node": "^10.9.2",
-    "tsx": "^4.16.2",
+    "tsx": "^4.20.3",
     "condition-dev": "workspace:*"
   }
 }
