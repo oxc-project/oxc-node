@@ -11,7 +11,7 @@
     "@oxc-project/runtime": "^0.78.0",
     "@types/node": "^24.1.0",
     "ava": "^6.4.1",
-    "cross-env": "^7.0.3",
+    "cross-env": "^10.0.0",
     "dprint": "^0.50.1",
     "emnapi": "^1.4.5",
     "husky": "^9.1.7",
