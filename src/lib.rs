@@ -533,9 +533,9 @@ pub fn create_resolve<'env>(
                             if (ext == "ts" || ext == "tsx")
                                 && let Some(default_module_resolved_from_tsconfig) =
                                     default_module_resolved_from_tsconfig
-                                {
-                                    return Some(default_module_resolved_from_tsconfig);
-                                }
+                            {
+                                return Some(default_module_resolved_from_tsconfig);
+                            }
                             match resolution.module_type() {
                                 Some(ModuleType::Module) => Some("module"),
                                 Some(ModuleType::CommonJs) => Some("commonjs"),
