@@ -468,10 +468,8 @@ jobs:
       - name: Publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
-          npm config set provenance true
+          npm install -g npm
           if git log -1 --pretty=%B | grep "^v\?[0-9]\+\.[0-9]\+\.[0-9]\+$";
           then
             pnpm napi pre-publish -t npm --package-json-path packages/core/package.json
