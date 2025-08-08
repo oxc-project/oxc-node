@@ -530,12 +530,11 @@ pub fn create_resolve<'env>(
                         "cjs" | "cts" | "node" => None,
                         "mts" | "mjs" => Some("module"),
                         _ => {
-                            if ext == "ts" || ext == "tsx" {
-                                if let Some(default_module_resolved_from_tsconfig) =
+                            if (ext == "ts" || ext == "tsx")
+                                && let Some(default_module_resolved_from_tsconfig) =
                                     default_module_resolved_from_tsconfig
-                                {
-                                    return Some(default_module_resolved_from_tsconfig);
-                                }
+                            {
+                                return Some(default_module_resolved_from_tsconfig);
                             }
                             match resolution.module_type() {
                                 Some(ModuleType::Module) => Some("module"),
