@@ -78,8 +78,8 @@ importers:
         specifier: ^7.8.2
         version: 7.8.2
       tinybench:
-        specifier: ^4.0.1
-        version: 4.1.0
+        specifier: ^5.0.0
+        version: 5.0.1
       typescript:
         specifier: ^5.8.3
         version: 5.9.2
@@ -3993,9 +3993,9 @@ packages:
     resolution: {integrity: sha512-TIsDdtKo6+XrPtiTm1ssmMngN1sAhyKnTO2kunQWqNPWIVvCm15Wmw4SWInwTVgJ5u/Tr04+8Ei9TNcw4x4ONA==}
     engines: {node: '>=4'}
 
-  tinybench@4.1.0:
-    resolution: {integrity: sha512-8JZoQRJgWWEIIeAmpiNmMHIREmUY3oGX8GRmlmNapLr/qtgMe+K76vM2qabh85hNScnE2lqTVTajVETjuD9Ixg==}
-    engines: {node: '>=18.0.0'}
+  tinybench@5.0.1:
+    resolution: {integrity: sha512-aNVgWQZY4veCZLQJRftDA1X9OoLUIjDWNfC90nledkX7Lx205IpSEFYnsu4slyofoPGpJ+NIQj+BNSt4U5edMg==}
+    engines: {node: '>=20.0.0'}
 
   tinyglobby@0.2.12:
     resolution: {integrity: sha512-qkf4trmKSIiMTs/E63cxH+ojC2unam7rJ0WrauAzpT3ECNTxGRMlaXxVbfxMUC/w0LaYk6jQ4y/nGR9uBO3tww==}
@@ -8161,7 +8161,7 @@ snapshots:
 
   time-zone@1.0.0: {}
 
-  tinybench@4.1.0: {}
+  tinybench@5.0.1: {}
 
   tinyglobby@0.2.12:
     dependencies:
