@@ -2,7 +2,7 @@
   "name": "oxc-node",
   "version": "0.0.0",
   "private": true,
-  "packageManager": "pnpm@10.14.0",
+  "packageManager": "pnpm@10.15.0",
   "devDependencies": {
     "@napi-rs/cli": "catalog:",
     "@napi-rs/wasm-runtime": "^1.0.1",
