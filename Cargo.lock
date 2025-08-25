@@ -897,9 +897,9 @@ dependencies = [
 
 [[package]]
 name = "oxc_resolver"
-version = "11.7.0"
+version = "11.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c37433d4a98748aec5fe9709de095981e71db7d9fbc1d85e1d439d314d0456f5"
+checksum = "0784392356fa78dd4c9047fce7c9046c141f8990736792d00310bf40935b1870"
 dependencies = [
  "cfg-if",
  "indexmap",
