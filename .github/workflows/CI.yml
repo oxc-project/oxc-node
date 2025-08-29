@@ -156,8 +156,6 @@ jobs:
       - name: Install cargo-zigbuild
         uses: taiki-e/install-action@f63c33fd96cc1e69a29bafd06541cf28588b43a4 # v2.58.21
         if: ${{ contains(matrix.settings.target, 'musl') }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         with:
           tool: cargo-zigbuild
       - name: Setup OpenHarmony toolchain
@@ -466,8 +464,6 @@ jobs:
           name: cli
           path: ./packages/cli/dist
       - name: Publish
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           npm install -g npm
           if git log -1 --pretty=%B | grep "^v\?[0-9]\+\.[0-9]\+\.[0-9]\+$";
