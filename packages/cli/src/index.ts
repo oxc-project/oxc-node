@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { exec, execSync } from 'node:child_process'
 import process from 'node:process'
 
