@@ -494,15 +494,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
 
 [[package]]
-name = "memmap2"
-version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "843a98750cd611cc2965a8213b53b43e715f13c37a9e096c6408e69990961db7"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "mimalloc-safe"
 version = "0.1.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -891,14 +882,13 @@ dependencies = [
 
 [[package]]
 name = "oxc_resolver"
-version = "11.8.0"
+version = "11.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6931137dbbef5828cf3c2a3b29e8b09d428f92a1975e1f0ac0c1422dc875989f"
+checksum = "c9af74d25d3c56c51a2df4cbe43c2ca7a9a907669fc30811cbdc66bd177f819e"
 dependencies = [
  "cfg-if",
  "indexmap",
  "json-strip-comments",
- "memmap2",
  "once_cell",
  "papaya",
  "rustc-hash",
