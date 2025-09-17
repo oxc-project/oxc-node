@@ -42,16 +42,17 @@ class MainCommand extends Command {
     if (this.nodeHelp) {
       this.args.push(`--help `)
     }
-    const args = this.args.length ? ` ${this.args.join(' ')}` : ''
+    const args = this.args.length ? `${this.args.join(' ')}` : ''
+    const register = import.meta.resolve('@oxc-node/core/register')
     if (!args.length) {
-      execSync(`node --enable-source-maps --import @oxc-node/core/register`, {
+      execSync(`node --enable-source-maps --import ${register}`, {
         env: process.env,
         cwd: process.cwd(),
         stdio: `inherit`,
       })
       return
     }
-    const cp = exec(`node --enable-source-maps --import @oxc-node/core/register ${args}`, {
+    const cp = exec(`node --enable-source-maps --import ${register} ${args}`, {
       env: process.env,
       cwd: process.cwd(),
     })

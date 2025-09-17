@@ -63,6 +63,13 @@ jobs:
         run: pnpm install
       - name: Build
         run: pnpm --filter="@oxc-node/cli" build
+      - name: Test global install
+        run: |
+          npm install -g ./packages/cli
+          cd /tmp
+          which oxnode
+          oxnode --version
+          oxnode --help
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
