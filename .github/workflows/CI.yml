@@ -167,7 +167,7 @@ jobs:
           tool: cargo-zigbuild
       - name: Setup OpenHarmony toolchain
         if: ${{ contains(matrix.settings.target, 'ohos') }}
-        uses: openharmony-rs/setup-ohos-sdk@3c181b3244cec76aaec289ab84fb00f55f2fce3f # v0.2
+        uses: Boshen/setup-ohos-sdk@edb865a89a712f1f15dbad932dfa9cfce849d95c # v1.0.0
       - name: Setup toolchain
         run: ${{ matrix.settings.setup }}
         if: ${{ matrix.settings.setup }}
