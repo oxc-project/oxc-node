@@ -25,6 +25,7 @@
     "registry": "https://registry.npmjs.org/",
     "access": "public"
   },
+  "homepage": "https://github.com/oxc-project/oxc-node/tree/main/packages/cli",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/oxc-project/oxc-node.git"
