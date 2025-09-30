@@ -27,8 +27,8 @@ importers:
         specifier: workspace:*
         version: link:packages/core
       '@oxc-project/runtime':
-        specifier: ^0.92.0
-        version: 0.92.0
+        specifier: ^0.93.0
+        version: 0.93.0
       '@types/node':
         specifier: ^24.1.0
         version: 24.4.0
@@ -109,8 +109,8 @@ importers:
         specifier: 'catalog:'
         version: 3.2.0(@emnapi/runtime@1.5.0)(@types/node@24.4.0)(emnapi@1.5.0)
       '@oxc-project/runtime':
-        specifier: ^0.92.0
-        version: 0.92.0
+        specifier: ^0.93.0
+        version: 0.93.0
 
   packages/integrate-ava:
     devDependencies:
@@ -198,8 +198,8 @@ importers:
         specifier: workspace:*
         version: link:../cli
       '@oxc-project/runtime':
-        specifier: ^0.92.0
-        version: 0.92.0
+        specifier: ^0.93.0
+        version: 0.93.0
       '@types/express':
         specifier: ^5.0.3
         version: 5.0.3
@@ -1276,8 +1276,8 @@ packages:
     resolution: {integrity: sha512-ky2Hqi2q/uGX36UfY79zxMbUqiNIl1RyKKVJfFenG70lbn+/fcaKBVTbhmUwn8a2wPyv2gNtDQxuDytbKX9giQ==}
     engines: {node: '>=6.9.0'}
 
-  '@oxc-project/runtime@0.92.0':
-    resolution: {integrity: sha512-Z7x2dZOmznihvdvCvLKMl+nswtOSVxS2H2ocar+U9xx6iMfTp0VGIrX6a4xB1v80IwOPC7dT1LXIJrY70Xu3Jw==}
+  '@oxc-project/runtime@0.93.0':
+    resolution: {integrity: sha512-3fqxDqOq4BRLxNAYF8WSQtuxtIR3H819k8QgwWiJgxt8VKyRPfaDYNO216DqXH2Qcv++FpFKSSMKnBSo4whx9g==}
     engines: {node: ^20.19.0 || >=22.12.0}
 
   '@oxc-project/types@0.87.0':
@@ -5314,7 +5314,7 @@ snapshots:
 
   '@oxc-project/runtime@0.87.0': {}
 
-  '@oxc-project/runtime@0.92.0': {}
+  '@oxc-project/runtime@0.93.0': {}
 
   '@oxc-project/types@0.87.0': {}
 
