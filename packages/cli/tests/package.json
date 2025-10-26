@@ -1,0 +1,17 @@
+{
+  "name": "@oxc-node/cli-tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@oxc-node/cli": "workspace:*",
+    "@oxc-node/core": "workspace:*",
+    "@types/node": "^24.1.0",
+    "execa": "^9.6.0",
+    "strip-ansi": "^7.1.0",
+    "vitest": "^2.1.8"
+  }
+}
