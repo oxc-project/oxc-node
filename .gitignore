@@ -239,3 +239,7 @@ target/
 *.wasm
 pgo-data
 /npm
+
+# Claude Code local configuration
+CLAUDE.local.md
+.claude
