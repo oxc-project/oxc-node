@@ -1,5 +1,6 @@
 packages:
   - packages/*
+  - packages/cli/tests
 
 catalog:
   "@napi-rs/cli": 3.3.1
