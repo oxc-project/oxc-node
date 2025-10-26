@@ -16,9 +16,9 @@ use oxc::{
     semantic::SemanticBuilder,
     span::SourceType,
     transformer::{
-        ClassPropertiesOptions, CompilerAssumptions, DecoratorOptions, ES2022Options, ES2026Options,
-        EnvOptions, HelperLoaderOptions, JsxOptions, JsxRuntime, Module, RewriteExtensionsMode,
-        TransformOptions, Transformer, TransformerReturn, TypeScriptOptions,
+        ClassPropertiesOptions, CompilerAssumptions, DecoratorOptions, ES2022Options,
+        ES2026Options, EnvOptions, HelperLoaderOptions, JsxOptions, JsxRuntime, Module,
+        RewriteExtensionsMode, TransformOptions, Transformer, TransformerReturn, TypeScriptOptions,
     },
 };
 use oxc_resolver::{
