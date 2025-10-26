@@ -16,8 +16,8 @@ use oxc::{
     semantic::SemanticBuilder,
     span::SourceType,
     transformer::{
-        ClassPropertiesOptions, CompilerAssumptions, DecoratorOptions, ES2022Options, EnvOptions,
-        HelperLoaderOptions, JsxOptions, JsxRuntime, Module, RewriteExtensionsMode,
+        ClassPropertiesOptions, CompilerAssumptions, DecoratorOptions, ES2022Options, ES2026Options,
+        EnvOptions, HelperLoaderOptions, JsxOptions, JsxRuntime, Module, RewriteExtensionsMode,
         TransformOptions, Transformer, TransformerReturn, TypeScriptOptions,
     },
 };
@@ -346,6 +346,9 @@ fn oxc_transform<S: TryAsStr>(
                     class_properties: Some(ClassPropertiesOptions {
                         loose: use_define_for_class_fields,
                     }),
+                },
+                es2026: ES2026Options {
+                    explicit_resource_management: true,
                 },
                 ..Default::default()
             },
