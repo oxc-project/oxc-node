@@ -16,14 +16,14 @@ use oxc::{
     semantic::SemanticBuilder,
     span::SourceType,
     transformer::{
-        ClassPropertiesOptions, CompilerAssumptions, DecoratorOptions, ES2022Options, EnvOptions,
-        HelperLoaderOptions, JsxOptions, JsxRuntime, Module, ProposalOptions,
+        ClassPropertiesOptions, CompilerAssumptions, DecoratorOptions, ES2022Options,
+        ES2026Options, EnvOptions, HelperLoaderOptions, JsxOptions, JsxRuntime, Module,
         RewriteExtensionsMode, TransformOptions, Transformer, TransformerReturn, TypeScriptOptions,
     },
 };
 use oxc_resolver::{
     CompilerOptions, EnforceExtension, ModuleType, Resolution, ResolveOptions, Resolver, TsConfig,
-    TsconfigOptions, TsconfigReferences,
+    TsconfigDiscovery, TsconfigOptions, TsconfigReferences,
 };
 use phf::Set;
 
@@ -347,10 +347,10 @@ fn oxc_transform<S: TryAsStr>(
                         loose: use_define_for_class_fields,
                     }),
                 },
+                es2026: ES2026Options {
+                    explicit_resource_management: true,
+                },
                 ..Default::default()
-            },
-            proposals: ProposalOptions {
-                explicit_resource_management: true,
             },
             helper_loader: HelperLoaderOptions {
                 module_name: Cow::Borrowed("@oxc-node/core"),
@@ -792,7 +792,7 @@ fn init_resolver(
             references: TsconfigReferences::Auto,
         });
     let resolver = Resolver::new(ResolveOptions {
-        tsconfig,
+        tsconfig: tsconfig.map(TsconfigDiscovery::Manual),
         condition_names: conditions,
         extension_alias: vec![
             (
