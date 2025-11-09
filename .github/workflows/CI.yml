@@ -122,12 +122,14 @@ jobs:
             build: |
               export CC=clang
               pnpm --filter=@oxc-node/core build --target powerpc64le-unknown-linux-gnu --use-napi-cross
-          - host: ubuntu-latest
-            target: s390x-unknown-linux-gnu
-            build: |
-              export CC=clang
-              export CFLAGS="-fuse-ld=lld"
-              pnpm --filter=@oxc-node/core build --target s390x-unknown-linux-gnu --use-napi-cross
+          # Segmentation fault (core dumped)
+          # https://github.com/tonistiigi/binfmt/issues/215
+          # - host: ubuntu-latest
+          # target: s390x-unknown-linux-gnu
+          # build: |
+          # export CC=clang
+          # export CFLAGS="-fuse-ld=lld"
+          # pnpm --filter=@oxc-node/core build --target s390x-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
             target: aarch64-unknown-linux-ohos
             build: pnpm --filter=@oxc-node/core build --target aarch64-unknown-linux-ohos
@@ -322,7 +324,7 @@ jobs:
           - aarch64-unknown-linux-gnu
           - aarch64-unknown-linux-musl
           - armv7-unknown-linux-gnueabihf
-          - s390x-unknown-linux-gnu
+          # - s390x-unknown-linux-gnu
           - powerpc64le-unknown-linux-gnu
         node:
           - "20"
