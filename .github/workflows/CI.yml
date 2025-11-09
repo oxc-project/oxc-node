@@ -124,12 +124,12 @@ jobs:
               pnpm --filter=@oxc-node/core build --target powerpc64le-unknown-linux-gnu --use-napi-cross
           # Segmentation fault (core dumped)
           # https://github.com/tonistiigi/binfmt/issues/215
-          # - host: ubuntu-latest
-          # target: s390x-unknown-linux-gnu
-          # build: |
-          # export CC=clang
-          # export CFLAGS="-fuse-ld=lld"
-          # pnpm --filter=@oxc-node/core build --target s390x-unknown-linux-gnu --use-napi-cross
+          - host: ubuntu-latest
+            target: s390x-unknown-linux-gnu
+            build: |
+              export CC=clang
+              export CFLAGS="-fuse-ld=lld"
+              pnpm --filter=@oxc-node/core build --target s390x-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
             target: aarch64-unknown-linux-ohos
             build: pnpm --filter=@oxc-node/core build --target aarch64-unknown-linux-ohos
@@ -161,7 +161,7 @@ jobs:
       - uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f # v2.0.5
         if: ${{ contains(matrix.settings.target, 'musl') }}
         with:
-          version: 0.14.1
+          version: 0.15.2
       - name: Install cargo-zigbuild
         uses: taiki-e/install-action@81ee1d48d9194cdcab880cbdc7d36e87d39874cb # v2.62.45
         if: ${{ contains(matrix.settings.target, 'musl') }}
@@ -324,14 +324,14 @@ jobs:
           - aarch64-unknown-linux-gnu
           - aarch64-unknown-linux-musl
           - armv7-unknown-linux-gnueabihf
-          # - s390x-unknown-linux-gnu
+          - s390x-unknown-linux-gnu
           - powerpc64le-unknown-linux-gnu
         node:
           - "20"
           - "22"
     # Node.js on qemu segfaults on s390x and arm64v8 when using 24.04
     # See also https://github.com/actions/runner-images/issues/11471
-    runs-on: ${{ contains(matrix.target, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-22.04' }}
+    runs-on: ${{ contains(matrix.target, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     steps:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
       - name: setup pnpm
@@ -387,13 +387,13 @@ jobs:
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
         with:
           platforms: all
-          image: tonistiigi/binfmt:qemu-v7.0.0-28
+          image: tonistiigi/binfmt:qemu-v10.0.4
       - run: docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
         if: ${{ !contains(matrix.target, 'aarch64') }}
       - name: Test bindings
         uses: addnab/docker-run-action@4f65fabd2431ebc8d299f8e5a018d79a769ae185 # v3
-        # Node.js on qemu randomly segfaults on powerpc64le
-        continue-on-error: ${{ matrix.target == 'powerpc64le-unknown-linux-gnu' }}
+        # Node.js on qemu randomly segfaults on powerpc64le and s390x
+        continue-on-error: ${{ matrix.target == 'powerpc64le-unknown-linux-gnu' || matrix.target == 's390x-unknown-linux-gnu' }}
         with:
           image: ${{ steps.docker.outputs.IMAGE }}
           options: -v ${{ steps.docker.outputs.PNPM_STORE_PATH }}:${{ steps.docker.outputs.PNPM_STORE_PATH }} -v ${{ github.workspace }}:${{ github.workspace }} -w ${{ github.workspace }} --platform ${{ steps.docker.outputs.PLATFORM }}
