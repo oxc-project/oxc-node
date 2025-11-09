@@ -124,12 +124,12 @@ jobs:
               pnpm --filter=@oxc-node/core build --target powerpc64le-unknown-linux-gnu --use-napi-cross
           # Segmentation fault (core dumped)
           # https://github.com/tonistiigi/binfmt/issues/215
-          # - host: ubuntu-latest
-          # target: s390x-unknown-linux-gnu
-          # build: |
-          # export CC=clang
-          # export CFLAGS="-fuse-ld=lld"
-          # pnpm --filter=@oxc-node/core build --target s390x-unknown-linux-gnu --use-napi-cross
+          - host: ubuntu-latest
+            target: s390x-unknown-linux-gnu
+            build: |
+              export CC=clang
+              export CFLAGS="-fuse-ld=lld"
+              pnpm --filter=@oxc-node/core build --target s390x-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
             target: aarch64-unknown-linux-ohos
             build: pnpm --filter=@oxc-node/core build --target aarch64-unknown-linux-ohos
@@ -324,7 +324,7 @@ jobs:
           - aarch64-unknown-linux-gnu
           - aarch64-unknown-linux-musl
           - armv7-unknown-linux-gnueabihf
-          # - s390x-unknown-linux-gnu
+          - s390x-unknown-linux-gnu
           - powerpc64le-unknown-linux-gnu
         node:
           - "20"
@@ -387,7 +387,7 @@ jobs:
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
         with:
           platforms: all
-          image: tonistiigi/binfmt:qemu-v7.0.0-28
+          image: tonistiigi/binfmt:qemu-v8.1.5
       - run: docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
         if: ${{ !contains(matrix.target, 'aarch64') }}
       - name: Test bindings
