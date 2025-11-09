@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.0.34](https://github.com/oxc-project/oxc-node/compare/v0.0.33...v0.0.34) (2025-11-09)
+
+**Note:** Version bump only for package @oxc-node/cli
+
 ## [0.0.27](https://github.com/oxc-project/oxc-node/compare/v0.0.26...v0.0.27) (2025-05-03)
 
 **Note:** Version bump only for package @oxc-node/cli
