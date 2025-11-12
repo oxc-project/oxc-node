@@ -347,6 +347,7 @@ fn oxc_transform<S: TryAsStr>(
                     class_properties: Some(ClassPropertiesOptions {
                         loose: use_define_for_class_fields,
                     }),
+                    top_level_await: true,
                 },
                 es2026: ES2026Options {
                     explicit_resource_management: true,
