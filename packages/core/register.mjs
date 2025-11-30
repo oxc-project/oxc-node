@@ -1,8 +1,11 @@
-import { register, setSourceMapsSupport } from 'node:module'
+import * as NodeModule from 'node:module'
 
 import { addHook } from 'pirates'
 
 import { OxcTransformer } from './index.js'
+
+// Destructure from NodeModule namespace to support older Node.js versions
+const { register, setSourceMapsSupport } = NodeModule
 
 const DEFAULT_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.mts', '.cjs', '.cts', '.es6', '.es'])
 
