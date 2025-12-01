@@ -206,6 +206,7 @@ impl Task for TransformTask {
             &self.source,
             resolved_tsconfig.as_ref().map(|t| &t.compiler_options),
             Some(Module::CommonJS),
+            true,
         )
     }
 
@@ -248,6 +249,7 @@ impl OxcTransformer {
             &source,
             resolved_tsconfig.as_ref().map(|t| &t.compiler_options),
             Some(Module::CommonJS),
+            true,
         )
     }
 
@@ -270,6 +272,7 @@ fn oxc_transform<S: TryAsStr>(
     code: &S,
     compiler_options: Option<&'static CompilerOptions>,
     module_target: Option<Module>,
+    enable_top_level_await: bool,
 ) -> Result<Output> {
     let allocator = Allocator::default();
     let source_type = SourceType::from_path(src_path).unwrap_or_default();
@@ -347,7 +350,8 @@ fn oxc_transform<S: TryAsStr>(
                     class_properties: Some(ClassPropertiesOptions {
                         loose: use_define_for_class_fields,
                     }),
-                    top_level_await: true,
+                    // Turn this on would throw error for all top-level awaits.
+                    top_level_await: enable_top_level_await,
                 },
                 es2026: ES2026Options {
                     explicit_resource_management: true,
@@ -685,7 +689,8 @@ fn transform_output(
                 src_path,
                 output.source.as_ref().unwrap(),
                 resolved_compiler_options,
-                None,
+                Some(Module::Preserve),
+                output.format != "module",
             )?;
             let output_code = transform_output
                 .0
