@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.0.35](https://github.com/oxc-project/oxc-node/compare/v0.0.34...v0.0.35) (2025-12-01)
+
+### Bug Fixes
+
+- **core:** transform tla error ([#355](https://github.com/oxc-project/oxc-node/issues/355)) ([3374ad1](https://github.com/oxc-project/oxc-node/commit/3374ad1f1be9ecd86ac76ed990b65013102ed806))
+- sourcemaps for pirates hook. ([#350](https://github.com/oxc-project/oxc-node/issues/350)) ([dc915e0](https://github.com/oxc-project/oxc-node/commit/dc915e0336eeb9b326caa1fbd5628b8156f61d92))
+
 ## [0.0.34](https://github.com/oxc-project/oxc-node/compare/v0.0.33...v0.0.34) (2025-11-09)
 
 **Note:** Version bump only for package oxc-node
