@@ -14,6 +14,7 @@
       "ts": "module"
     },
     "cache": false,
+    "timeout": "1m",
     "nodeArguments": [
       "--import",
       "@oxc-node/core/register"
