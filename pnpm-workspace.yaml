@@ -2,4 +2,4 @@ packages:
   - packages/*
 
 catalog:
-  "@napi-rs/cli": 3.4.1
+  "@napi-rs/cli": 3.5.0
