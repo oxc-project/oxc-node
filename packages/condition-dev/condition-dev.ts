@@ -1,1 +1,1 @@
-export const condition = 'dev'
+export const condition = "dev";

@@ -1,5 +1,5 @@
 export class CompiledClass {
   constructor() {
-    this.name = 'CompiledClass'
+    this.name = "CompiledClass";
   }
 }

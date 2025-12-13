@@ -1,4 +1,4 @@
-export { baz } from './baz'
+export { baz } from "./baz";
 export function module() {
-  return 'module'
+  return "module";
 }

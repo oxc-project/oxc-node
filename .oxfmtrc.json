@@ -1,0 +1,3 @@
+{
+  "ignorePatterns": ["pnpm-lock.yaml"]
+}

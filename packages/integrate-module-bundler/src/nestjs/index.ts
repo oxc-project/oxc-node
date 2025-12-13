@@ -1,9 +1,9 @@
-import { NestFactory } from '@nestjs/core'
+import { NestFactory } from "@nestjs/core";
 
-import { AppModule } from './app.module'
+import { AppModule } from "./app.module";
 
 export async function bootstrap() {
-  const app = await NestFactory.create(AppModule)
-  await app.listen(3000)
-  return { app, [Symbol.asyncDispose]: async () => app.close() }
+  const app = await NestFactory.create(AppModule);
+  await app.listen(3000);
+  return { app, [Symbol.asyncDispose]: async () => app.close() };
 }

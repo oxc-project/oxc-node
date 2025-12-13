@@ -1,12 +1,12 @@
-import { isMainThread, MessageChannel } from 'node:worker_threads'
+import { isMainThread, MessageChannel } from "node:worker_threads";
 
-import { createResolve, initTracing, load } from './index.js'
+import { createResolve, initTracing, load } from "./index.js";
 
-initTracing()
+initTracing();
 
 if (!isMainThread) {
-  const mc = new MessageChannel()
-  mc.port1.ref()
+  const mc = new MessageChannel();
+  mc.port1.ref();
 }
 
 /**
@@ -20,7 +20,7 @@ function resolve(specifier, context, nextResolve) {
     specifier,
     context,
     nextResolve,
-  )
+  );
 }
 
-export { load, resolve }
+export { load, resolve };

@@ -1,3 +1,3 @@
 export function baz() {
-  return 'baz'
+  return "baz";
 }

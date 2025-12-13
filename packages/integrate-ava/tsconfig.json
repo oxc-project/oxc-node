@@ -4,9 +4,9 @@
     "outDir": "lib",
     "composite": true,
     "module": "ESNext",
-    "moduleResolution": "Bundler"
+    "moduleResolution": "Bundler",
   },
   "include": ["__tests__/**/*.ts"],
   "exclude": ["__tests__/fixtures/**/*"],
-  "references": [{ "path": "../core" }]
+  "references": [{ "path": "../core" }],
 }
