@@ -1,97 +1,97 @@
-import assert from 'node:assert'
-import test from 'node:test'
+import assert from "node:assert";
+import test from "node:test";
 
-import { EntryType } from '@napi-rs/tar'
-import { OxcTransformer } from '@oxc-node/core'
-import { bar as subBar } from '@subdirectory/bar.mjs'
-import canvaskit from 'canvaskit-wasm'
-import { supportedExtensions } from 'file-type'
-import ipaddr from 'ipaddr.js'
-import postgres from 'postgres'
-import { renderToString } from 'react-dom/server'
-import { simpleGit } from 'simple-git'
+import { EntryType } from "@napi-rs/tar";
+import { OxcTransformer } from "@oxc-node/core";
+import { bar as subBar } from "@subdirectory/bar.mjs";
+import canvaskit from "canvaskit-wasm";
+import { supportedExtensions } from "file-type";
+import ipaddr from "ipaddr.js";
+import postgres from "postgres";
+import { renderToString } from "react-dom/server";
+import { simpleGit } from "simple-git";
 
-import { CompiledClass } from './compiled.js'
-import { Component } from './component.js'
-import { foo } from './foo.mjs'
-import { bar } from './subdirectory/bar.mjs'
-import { baz } from './subdirectory/index.mjs'
-import './js-module.mjs'
-import pkgJson from '../package.json'
-import { version } from '../package.json'
+import { CompiledClass } from "./compiled.js";
+import { Component } from "./component.js";
+import { foo } from "./foo.mjs";
+import { bar } from "./subdirectory/bar.mjs";
+import { baz } from "./subdirectory/index.mjs";
+import "./js-module.mjs";
+import pkgJson from "../package.json";
+import { version } from "../package.json";
 
-const { foo: fooWithQuery } = await import(`./foo.mjs?q=${Date.now()}`)
+const { foo: fooWithQuery } = await import(`./foo.mjs?q=${Date.now()}`);
 
-await test('file-type should work', () => {
-  assert.ok(supportedExtensions.has('jpg'))
-})
+await test("file-type should work", () => {
+  assert.ok(supportedExtensions.has("jpg"));
+});
 
-await test('resolve adjacent file path', () => {
-  assert.equal(foo(), 'foo')
-})
+await test("resolve adjacent file path", () => {
+  assert.equal(foo(), "foo");
+});
 
-await test('resolve nested file path', () => {
-  assert.equal(bar(), 'bar')
-})
+await test("resolve nested file path", () => {
+  assert.equal(bar(), "bar");
+});
 
-await test('resolve nested entry point', () => {
-  assert.equal(baz(), 'baz')
-})
+await test("resolve nested entry point", () => {
+  assert.equal(baz(), "baz");
+});
 
-await test('resolve paths', () => {
-  assert.equal(subBar(), 'bar')
-})
+await test("resolve paths", () => {
+  assert.equal(subBar(), "bar");
+});
 
-await test('resolve with query', () => {
-  assert.equal(fooWithQuery(), 'foo')
-})
+await test("resolve with query", () => {
+  assert.equal(fooWithQuery(), "foo");
+});
 
-await test('compiled js file with .d.ts', () => {
-  const instance = new CompiledClass()
-  assert.equal(instance.name, 'CompiledClass')
-})
+await test("compiled js file with .d.ts", () => {
+  const instance = new CompiledClass();
+  assert.equal(instance.name, "CompiledClass");
+});
 
-await test('jsx should work', () => {
-  assert.equal(renderToString(Component()), '<div>Component</div>')
-})
+await test("jsx should work", () => {
+  assert.equal(renderToString(Component()), "<div>Component</div>");
+});
 
-await test('resolve @napi-rs projects', () => {
-  assert.equal(EntryType.GNUSparse, 10)
-})
+await test("resolve @napi-rs projects", () => {
+  assert.equal(EntryType.GNUSparse, 10);
+});
 
-await test('resolve simple-git', () => {
-  assert.ok(simpleGit)
-})
+await test("resolve simple-git", () => {
+  assert.ok(simpleGit);
+});
 
-await test('resolve package.json', () => {
-  assert.equal(pkgJson.name, 'integrate-module')
-})
+await test("resolve package.json", () => {
+  assert.equal(pkgJson.name, "integrate-module");
+});
 
-await test('named import from json', () => {
-  assert.equal(version, '0.0.0')
-})
+await test("named import from json", () => {
+  assert.equal(version, "0.0.0");
+});
 
-await test('resolve ipaddr.js', () => {
-  assert.ok(ipaddr.isValid('::1'))
-})
+await test("resolve ipaddr.js", () => {
+  assert.ok(ipaddr.isValid("::1"));
+});
 
-await test('resolve postgres', () => {
-  const sql = postgres()
-  assert.ok(sql)
-})
+await test("resolve postgres", () => {
+  const sql = postgres();
+  assert.ok(sql);
+});
 
-await test('resolve canvaskit-wasm', async () => {
-  if (process.arch === 's390x') {
-    assert.ok('skipping test on s390x')
-    return
+await test("resolve canvaskit-wasm", async () => {
+  if (process.arch === "s390x") {
+    assert.ok("skipping test on s390x");
+    return;
   }
   // @ts-expect-error
-  const canvas = await canvaskit()
-  assert.ok(canvas.MakeSurface(100, 100))
-})
+  const canvas = await canvaskit();
+  assert.ok(canvas.MakeSurface(100, 100));
+});
 
-await test('should resolve native addon', async () => {
-  const transformer = new OxcTransformer(process.cwd())
-  const result = await transformer.transformAsync('index.ts', 'const a: number = 1')
-  assert.equal(result.source(), '"use strict";\nconst a = 1;\n')
-})
+await test("should resolve native addon", async () => {
+  const transformer = new OxcTransformer(process.cwd());
+  const result = await transformer.transformAsync("index.ts", "const a: number = 1");
+  assert.equal(result.source(), '"use strict";\nconst a = 1;\n');
+});

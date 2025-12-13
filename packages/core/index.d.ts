@@ -5,60 +5,78 @@ export declare class Output {
    * Returns the generated code
    * Cache the result of this function if you need to use it multiple times
    */
-  source(): string
+  source(): string;
   /**
    * Returns the source map as a JSON string
    * Cache the result of this function if you need to use it multiple times
    */
-  sourceMap(): string | null
+  sourceMap(): string | null;
 }
 
 export declare class OxcTransformer {
-  constructor(cwd?: string | undefined | null)
-  transform(path: string, source: string | Uint8Array): Output
-  transformAsync(path: string, source: string | Uint8Array | Buffer): Promise<Output>
+  constructor(cwd?: string | undefined | null);
+  transform(path: string, source: string | Uint8Array): Output;
+  transformAsync(path: string, source: string | Uint8Array | Buffer): Promise<Output>;
 }
 
-export declare function createResolve(options: OxcResolveOptions, specifier: string, context: ResolveContext, nextResolve: (arg0: string, arg1?: ResolveContext | undefined | null) => ResolveFnOutput | Promise<ResolveFnOutput>): ResolveFnOutput | Promise<ResolveFnOutput>
+export declare function createResolve(
+  options: OxcResolveOptions,
+  specifier: string,
+  context: ResolveContext,
+  nextResolve: (
+    arg0: string,
+    arg1?: ResolveContext | undefined | null,
+  ) => ResolveFnOutput | Promise<ResolveFnOutput>,
+): ResolveFnOutput | Promise<ResolveFnOutput>;
 
-export declare function initTracing(): void
+export declare function initTracing(): void;
 
-export declare function load(url: string, context: LoadContext, nextLoad: (arg0: string, arg1?: LoadContext | undefined | null) => LoadFnOutput | Promise<LoadFnOutput>): LoadFnOutput | Promise<LoadFnOutput>
+export declare function load(
+  url: string,
+  context: LoadContext,
+  nextLoad: (
+    arg0: string,
+    arg1?: LoadContext | undefined | null,
+  ) => LoadFnOutput | Promise<LoadFnOutput>,
+): LoadFnOutput | Promise<LoadFnOutput>;
 
 export interface LoadContext {
   /** Export conditions of the relevant `package.json` */
-  conditions?: Array<string>
+  conditions?: Array<string>;
   /** The format optionally supplied by the `resolve` hook chain */
-  format: string | null
+  format: string | null;
   /** An object whose key-value pairs represent the assertions for the module to import */
-  importAttributes: Record<string, string>
+  importAttributes: Record<string, string>;
 }
 
 export interface LoadFnOutput {
-  format: string
-  source?: string | Uint8Array | Buffer | null
-  responseURL?: string
+  format: string;
+  source?: string | Uint8Array | Buffer | null;
+  responseURL?: string;
 }
 
 export interface OxcResolveOptions {
-  getCurrentDirectory?: () => string
+  getCurrentDirectory?: () => string;
 }
 
 export interface ResolveContext {
   /** Export conditions of the relevant `package.json` */
-  conditions: Array<string>
+  conditions: Array<string>;
   /** An object whose key-value pairs represent the assertions for the module to import */
-  importAttributes: Record<string, string>
-  parentURL?: string
+  importAttributes: Record<string, string>;
+  parentURL?: string;
 }
 
 export interface ResolveFnOutput {
-  format?: string | null
-  shortCircuit?: boolean
-  url: string
-  importAttributes?: Record<string, string> | null
+  format?: string | null;
+  shortCircuit?: boolean;
+  url: string;
+  importAttributes?: Record<string, string> | null;
 }
 
-export declare function transform(path: string, source: string | Uint8Array): Output
+export declare function transform(path: string, source: string | Uint8Array): Output;
 
-export declare function transformAsync(path: string, source: string | Uint8Array | Buffer): Promise<unknown>
+export declare function transformAsync(
+  path: string,
+  source: string | Uint8Array | Buffer,
+): Promise<unknown>;

@@ -1,5 +1,5 @@
 declare const exports: {
-  default: () => string
-}
+  default: () => string;
+};
 
-export default exports
+export default exports;

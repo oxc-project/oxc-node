@@ -1,9 +1,7 @@
 {
   "$schema": "node_modules/lerna/schemas/lerna-schema.json",
   "version": "0.0.35",
-  "packages": [
-    "packages/*"
-  ],
+  "packages": ["packages/*"],
   "npmClient": "pnpm",
   "skipNxCache": true,
   "signGitCommit": true,

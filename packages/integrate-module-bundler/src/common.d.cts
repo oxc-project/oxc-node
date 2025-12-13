@@ -1,1 +1,1 @@
-export const common: string
+export const common: string;

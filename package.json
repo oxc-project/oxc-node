@@ -12,25 +12,25 @@
     "@types/node": "^24.1.0",
     "ava": "^6.4.1",
     "cross-env": "^10.0.0",
-    "dprint": "^0.50.1",
     "emnapi": "^1.4.5",
     "husky": "^9.1.7",
     "lerna": "^9.0.0",
     "lint-staged": "^16.1.2",
     "npm-run-all2": "^8.0.4",
+    "oxfmt": "^0.17.0",
     "oxlint": "^1.8.0",
     "typescript": "^5.8.3"
   },
   "scripts": {
     "bench": "pnpm --filter=bench bench",
-    "format": "dprint fmt && cargo fmt",
+    "fmt": "oxfmt && cargo fmt",
     "lint": "oxlint",
     "test": "pnpm --sequential --filter=integrate* run test",
     "prepare": "husky"
   },
   "lint-staged": {
-    "*.@(js|ts|tsx|yml|yaml|md|json|html|toml)": [
-      "dprint fmt"
+    "*": [
+      "oxfmt --no-error-on-unmatched-pattern"
     ],
     "*.@(js|ts|tsx)": [
       "oxlint --fix"

@@ -1,1 +1,1 @@
-module.exports.common = 'common'
+module.exports.common = "common";
