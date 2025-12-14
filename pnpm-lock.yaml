@@ -159,10 +159,10 @@ importers:
         version: 3.4.7
       react:
         specifier: ^19.1.0
-        version: 19.2.1
+        version: 19.2.2
       react-dom:
         specifier: ^19.1.0
-        version: 19.2.1(react@19.2.1)
+        version: 19.2.2(react@19.2.2)
       simple-git:
         specifier: ^3.28.0
         version: 3.30.0
@@ -223,10 +223,10 @@ importers:
         version: 5.2.1
       react:
         specifier: ^19.1.0
-        version: 19.2.1
+        version: 19.2.2
       react-dom:
         specifier: ^19.1.0
-        version: 19.2.1(react@19.2.1)
+        version: 19.2.2(react@19.2.2)
       simple-git:
         specifier: ^3.28.0
         version: 3.30.0
@@ -3741,16 +3741,16 @@ packages:
     resolution: {integrity: sha512-K5zQjDllxWkf7Z5xJdV0/B0WTNqx6vxG70zJE4N0kBs4LovmEYWJzQGxC9bS9RAKu3bgM40lrd5zoLJ12MQ5BA==}
     engines: {node: '>= 0.10'}
 
-  react-dom@19.2.1:
-    resolution: {integrity: sha512-ibrK8llX2a4eOskq1mXKu/TGZj9qzomO+sNfO98M6d9zIPOEhlBkMkBUBLd1vgS0gQsLDBzA+8jJBVXDnfHmJg==}
+  react-dom@19.2.2:
+    resolution: {integrity: sha512-fhyD2BLrew6qYf4NNtHff1rLXvzR25rq49p+FeqByOazc6TcSi2n8EYulo5C1PbH+1uBW++5S1SG7FcUU6mlDg==}
     peerDependencies:
-      react: ^19.2.1
+      react: ^19.2.2
 
   react-is@18.3.1:
     resolution: {integrity: sha512-/LLMVyas0ljjAtoYiPqYiL8VWXzUUdThrmU5+n20DZv+a+ClRoevUzw5JxU+Ieh5/c87ytoTBV9G1FiKfNJdmg==}
 
-  react@19.2.1:
-    resolution: {integrity: sha512-DGrYcCWK7tvYMnWh79yrPHt+vdx9tY+1gPZa7nJQtO/p8bLTDaHp4dzwEhQB7pZ4Xe3ok4XKuEPrVuc+wlpkmw==}
+  react@19.2.2:
+    resolution: {integrity: sha512-BdOGOY8OKRBcgoDkwqA8Q5XvOIhoNx/Sh6BnGJlet2Abt0X5BK0BDrqGyQgLhAVjD2nAg5f6o01u/OPUhG022Q==}
     engines: {node: '>=0.10.0'}
 
   read-cmd-shim@4.0.0:
@@ -8038,14 +8038,14 @@ snapshots:
       iconv-lite: 0.7.0
       unpipe: 1.0.0
 
-  react-dom@19.2.1(react@19.2.1):
+  react-dom@19.2.2(react@19.2.2):
     dependencies:
-      react: 19.2.1
+      react: 19.2.2
       scheduler: 0.27.0
 
   react-is@18.3.1: {}
 
-  react@19.2.1: {}
+  react@19.2.2: {}
 
   read-cmd-shim@4.0.0: {}
 
