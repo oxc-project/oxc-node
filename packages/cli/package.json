@@ -1,30 +1,7 @@
 {
   "name": "@oxc-node/cli",
   "version": "0.0.35",
-  "license": "MIT",
-  "type": "module",
   "description": "OXC Node cli",
-  "bin": {
-    "oxnode": "./dist/index.js"
-  },
-  "dependencies": {
-    "@oxc-node/core": "workspace:*"
-  },
-  "devDependencies": {
-    "clipanion": "^4.0.0-rc.4",
-    "rolldown": "^1.0.0-beta.29"
-  },
-  "files": [
-    "dist"
-  ],
-  "scripts": {
-    "build": "rolldown --config ./rolldown.config.js",
-    "dev": "node --import @oxc-node/core/register ./src/index.ts"
-  },
-  "publishConfig": {
-    "registry": "https://registry.npmjs.org/",
-    "access": "public"
-  },
   "homepage": "https://github.com/oxc-project/oxc-node/tree/main/packages/cli",
   "repository": {
     "type": "git",
@@ -39,5 +16,28 @@
       "type": "github",
       "url": "https://github.com/sponsors/Boshen"
     }
-  ]
+  ],
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "oxnode": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rolldown --config ./rolldown.config.js",
+    "dev": "node --import @oxc-node/core/register ./src/index.ts"
+  },
+  "dependencies": {
+    "@oxc-node/core": "workspace:*"
+  },
+  "devDependencies": {
+    "clipanion": "^4.0.0-rc.4",
+    "rolldown": "^1.0.0-beta.29"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
 }

@@ -8,8 +8,8 @@
     "resolveJsonModule": true,
     "baseUrl": "./",
     "paths": {
-      "@subdirectory/*": ["./src/subdirectory/*"],
-    },
+      "@subdirectory/*": ["./src/subdirectory/*"]
+    }
   },
-  "include": ["src", "package.json"],
+  "include": ["src", "package.json"]
 }

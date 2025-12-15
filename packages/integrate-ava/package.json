@@ -10,17 +10,17 @@
     "ava": "^6.4.1"
   },
   "ava": {
+    "cache": false,
     "extensions": {
       "ts": "module"
     },
-    "cache": false,
-    "timeout": "1m",
+    "files": [
+      "__tests__/**/*.spec.ts"
+    ],
     "nodeArguments": [
       "--import",
       "@oxc-node/core/register"
     ],
-    "files": [
-      "__tests__/**/*.spec.ts"
-    ]
+    "timeout": "1m"
   }
 }

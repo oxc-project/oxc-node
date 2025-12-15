@@ -2,7 +2,21 @@
   "name": "oxc-node",
   "version": "0.0.0",
   "private": true,
-  "packageManager": "pnpm@10.25.0",
+  "scripts": {
+    "bench": "pnpm --filter=bench bench",
+    "fmt": "oxfmt && cargo fmt",
+    "lint": "oxlint",
+    "test": "pnpm --sequential --filter=integrate* run test",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*": [
+      "oxfmt --no-error-on-unmatched-pattern"
+    ],
+    "*.@(js|ts|tsx)": [
+      "oxlint --fix"
+    ]
+  },
   "devDependencies": {
     "@napi-rs/cli": "catalog:",
     "@napi-rs/wasm-runtime": "^1.0.1",
@@ -21,19 +35,5 @@
     "oxlint": "^1.8.0",
     "typescript": "^5.8.3"
   },
-  "scripts": {
-    "bench": "pnpm --filter=bench bench",
-    "fmt": "oxfmt && cargo fmt",
-    "lint": "oxlint",
-    "test": "pnpm --sequential --filter=integrate* run test",
-    "prepare": "husky"
-  },
-  "lint-staged": {
-    "*": [
-      "oxfmt --no-error-on-unmatched-pattern"
-    ],
-    "*.@(js|ts|tsx)": [
-      "oxlint --fix"
-    ]
-  }
+  "packageManager": "pnpm@10.25.0"
 }
