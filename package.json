@@ -2,25 +2,6 @@
   "name": "oxc-node",
   "version": "0.0.0",
   "private": true,
-  "packageManager": "pnpm@10.25.0",
-  "devDependencies": {
-    "@napi-rs/cli": "catalog:",
-    "@napi-rs/wasm-runtime": "^1.0.1",
-    "@oxc-node/cli": "workspace:*",
-    "@oxc-node/core": "workspace:*",
-    "@oxc-project/runtime": "^0.103.0",
-    "@types/node": "^25.0.0",
-    "ava": "^6.4.1",
-    "cross-env": "^10.0.0",
-    "emnapi": "^1.4.5",
-    "husky": "^9.1.7",
-    "lerna": "^9.0.0",
-    "lint-staged": "^16.1.2",
-    "npm-run-all2": "^8.0.4",
-    "oxfmt": "^0.17.0",
-    "oxlint": "^1.8.0",
-    "typescript": "^5.8.3"
-  },
   "scripts": {
     "bench": "pnpm --filter=bench bench",
     "fmt": "oxfmt && cargo fmt",
@@ -35,5 +16,24 @@
     "*.@(js|ts|tsx)": [
       "oxlint --fix"
     ]
-  }
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "catalog:",
+    "@napi-rs/wasm-runtime": "^1.0.1",
+    "@oxc-node/cli": "workspace:*",
+    "@oxc-node/core": "workspace:*",
+    "@oxc-project/runtime": "^0.103.0",
+    "@types/node": "^25.0.0",
+    "ava": "^6.4.1",
+    "cross-env": "^10.0.0",
+    "emnapi": "^1.4.5",
+    "husky": "^9.1.7",
+    "lerna": "^9.0.0",
+    "lint-staged": "^16.1.2",
+    "npm-run-all2": "^8.0.4",
+    "oxfmt": "^0.18.0",
+    "oxlint": "^1.8.0",
+    "typescript": "^5.8.3"
+  },
+  "packageManager": "pnpm@10.25.0"
 }

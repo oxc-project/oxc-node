@@ -3,21 +3,21 @@
     "strict": true,
     "target": "ESNext",
     "moduleResolution": "NodeNext",
-    "module": "NodeNext",
+    "module": "NodeNext"
   },
   "references": [
     {
-      "path": "./packages/cli",
+      "path": "./packages/cli"
     },
     {
-      "path": "./packages/core",
+      "path": "./packages/core"
     },
     {
-      "path": "./packages/integrate-module",
+      "path": "./packages/integrate-module"
     },
     {
-      "path": "./packages/integrate-module-bundler",
-    },
+      "path": "./packages/integrate-module-bundler"
+    }
   ],
-  "include": [],
+  "include": []
 }

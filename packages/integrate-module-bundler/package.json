@@ -1,14 +1,14 @@
 {
   "name": "integrate-module-bundler",
-  "type": "module",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "oxnode -C dev ./src/index.ts"
+  },
   "dependencies": {
     "file-type": "^21.0.0",
     "p-timeout": "^7.0.0"
-  },
-  "scripts": {
-    "test": "oxnode -C dev ./src/index.ts"
   },
   "devDependencies": {
     "@napi-rs/tar": "^1.0.0",
@@ -22,13 +22,13 @@
     "@types/node": "^25.0.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
-    "express": "^5.1.0",
+    "condition-dev": "workspace:*",
     "core-js": "^3.44.0",
+    "express": "^5.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "simple-git": "^3.28.0",
     "ts-node": "^10.9.2",
-    "tsx": "^4.20.3",
-    "condition-dev": "workspace:*"
+    "tsx": "^4.20.3"
   }
 }

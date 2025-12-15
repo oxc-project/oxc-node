@@ -4,8 +4,8 @@
     "outDir": "dist",
     "composite": true,
     "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "moduleResolution": "NodeNext"
   },
   "include": ["index.ts"],
-  "exclude": ["dist"],
+  "exclude": ["dist"]
 }

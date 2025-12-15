@@ -1,14 +1,14 @@
 {
   "name": "integrate-module",
-  "type": "module",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "oxnode ./src/index.ts"
+  },
   "dependencies": {
     "file-type": "^21.0.0",
     "p-timeout": "^7.0.0"
-  },
-  "scripts": {
-    "test": "oxnode ./src/index.ts"
   },
   "devDependencies": {
     "@napi-rs/tar": "^1.0.0",
