@@ -1,6 +1,7 @@
 {
   "name": "@oxc-node/core",
   "version": "0.0.35",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/oxc-project/oxc-node.git"
@@ -15,8 +16,17 @@
       "url": "https://github.com/sponsors/Boshen"
     }
   ],
-  "license": "MIT",
+  "files": [
+    "browser.js",
+    "esm.mjs",
+    "index.d.ts",
+    "index.js",
+    "register.mjs",
+    "src/**/*"
+  ],
   "main": "./index.js",
+  "browser": "./browser.js",
+  "types": "./index.d.ts",
   "exports": {
     ".": {
       "types": "./index.d.ts",
@@ -1084,16 +1094,10 @@
       "import": "./register.mjs"
     }
   },
-  "browser": "./browser.js",
-  "types": "./index.d.ts",
-  "files": [
-    "browser.js",
-    "esm.mjs",
-    "index.d.ts",
-    "index.js",
-    "register.mjs",
-    "src/**/*"
-  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
     "build": "napi build --platform --release --manifest-path ../../Cargo.toml -o .",
     "export-oxc-runtime": "node ./reexport-oxc-runtime.mjs",
@@ -1134,9 +1138,5 @@
         "fs": false
       }
     }
-  },
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
   }
 }
