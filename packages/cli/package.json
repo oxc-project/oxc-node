@@ -3,6 +3,7 @@
   "version": "0.0.35",
   "description": "OXC Node cli",
   "homepage": "https://github.com/oxc-project/oxc-node/tree/main/packages/cli",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/oxc-project/oxc-node.git"
@@ -17,14 +18,17 @@
       "url": "https://github.com/sponsors/Boshen"
     }
   ],
-  "license": "MIT",
-  "type": "module",
   "bin": {
     "oxnode": "./dist/index.js"
   },
   "files": [
     "dist"
   ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
     "build": "rolldown --config ./rolldown.config.js",
     "dev": "node --import @oxc-node/core/register ./src/index.ts"
@@ -35,9 +39,5 @@
   "devDependencies": {
     "clipanion": "^4.0.0-rc.4",
     "rolldown": "^1.0.0-beta.29"
-  },
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
   }
 }
