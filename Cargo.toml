@@ -10,12 +10,20 @@ crate-type = ["cdylib"]
 [dependencies]
 napi = { version = "3.5.1", default-features = false, features = ["serde-json", "napi3"] }
 napi-derive = { version = "3.3.2", default-features = false, features = ["type-def"] }
-oxc = { version = "0.104.0", features = ["codegen", "transformer", "semantic", "regular_expression"] }
+oxc = { version = "0.104.0", features = [
+  "codegen",
+  "transformer",
+  "semantic",
+  "regular_expression",
+] }
 oxc_resolver = { version = "11.13.1" }
 phf = "0.13"
 serde_json = "1"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt"] } # Omit the `regex` feature
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+  "std",
+  "fmt",
+] } # Omit the `regex` feature
 
 [target.'cfg(all(not(target_os = "linux"), not(target_os = "freebsd"), not(target_arch = "arm"), not(target_arch = "x86"), not(target_family = "wasm")))'.dependencies]
 mimalloc-safe = { version = "0.1", features = ["skip_collect_on_exit"] }
