@@ -125,7 +125,7 @@ importers:
     dependencies:
       file-type:
         specifier: ^21.0.0
-        version: 21.1.1
+        version: 21.2.0
       p-timeout:
         specifier: ^7.0.0
         version: 7.0.1
@@ -174,7 +174,7 @@ importers:
     dependencies:
       file-type:
         specifier: ^21.0.0
-        version: 21.1.1
+        version: 21.2.0
       p-timeout:
         specifier: ^7.0.0
         version: 7.0.1
@@ -2508,6 +2508,10 @@ packages:
 
   file-type@21.1.1:
     resolution: {integrity: sha512-ifJXo8zUqbQ/bLbl9sFoqHNTNWbnPY1COImFfM6CCy7z+E+jC1eY9YfOKkx0fckIg+VljAy2/87T61fp0+eEkg==}
+    engines: {node: '>=20'}
+
+  file-type@21.2.0:
+    resolution: {integrity: sha512-vCYBgFOrJQLoTzDyAXAL/RFfKnXXpUYt4+tipVy26nJJhT7ftgGETf2tAQF59EEL61i3MrorV/PG6tf7LJK7eg==}
     engines: {node: '>=20'}
 
   file-uri-to-path@1.0.0:
@@ -6606,6 +6610,15 @@ snapshots:
       is-unicode-supported: 2.1.0
 
   file-type@21.1.1:
+    dependencies:
+      '@tokenizer/inflate': 0.4.1
+      strtok3: 10.3.4
+      token-types: 6.1.1
+      uint8array-extras: 1.5.0
+    transitivePeerDependencies:
+      - supports-color
+
+  file-type@21.2.0:
     dependencies:
       '@tokenizer/inflate': 0.4.1
       strtok3: 10.3.4
