@@ -23,7 +23,7 @@
     "lerna": "^9.0.0",
     "lint-staged": "^16.1.2",
     "npm-run-all2": "^8.0.4",
-    "oxfmt": "^0.20.0",
+    "oxfmt": "^0.21.0",
     "oxlint": "^1.8.0",
     "typescript": "^5.8.3"
   },
