@@ -2,6 +2,6 @@ packages:
   - packages/*
 
 catalog:
-  "@napi-rs/cli": 3.5.0
+  "@napi-rs/cli": 3.5.1
 
 verifyDepsBeforeRun: install
