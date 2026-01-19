@@ -1109,7 +1109,7 @@
   },
   "devDependencies": {
     "@napi-rs/cli": "catalog:",
-    "@oxc-project/runtime": "^0.109.0"
+    "@oxc-project/runtime": "^0.110.0"
   },
   "napi": {
     "binaryName": "oxc-node",
