@@ -154,7 +154,7 @@ jobs:
           cache-key: ${{ matrix.settings.target }}-${{ matrix.settings.host }}
           save-cache: ${{ github.ref_name == 'main' }}
       - name: Cache cross toolchain
-        uses: actions/cache@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
         with:
           path: ~/.napi-rs
           key: ${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}
@@ -163,7 +163,7 @@ jobs:
         with:
           version: 0.15.2
       - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@81a2f66614862089b24532663f669a485d79c889 # v2.67.10
+        uses: taiki-e/install-action@650c5ca14212efbbf3e580844b04bdccf68dac31 # v2.67.18
         if: ${{ contains(matrix.settings.target, 'musl') }}
         with:
           tool: cargo-zigbuild
