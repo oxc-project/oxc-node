@@ -149,7 +149,7 @@ jobs:
           cache: pnpm
       - name: Install
         run: rustup target add ${{ matrix.settings.target }}
-      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
+      - uses: oxc-project/setup-rust@704e1648ce532a12b4d6fb98db0ba10afa3ae879 # v1.0.13
         with:
           cache-key: ${{ matrix.settings.target }}-${{ matrix.settings.host }}
           save-cache: ${{ github.ref_name == 'main' }}
@@ -163,7 +163,7 @@ jobs:
         with:
           version: 0.15.2
       - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@f92912fad184299a31e22ad070a5059fd07d4f59 # v2.68.7
+        uses: taiki-e/install-action@68675c5a5f1a6950c3975d33f3ae0ef155e5bf3d # v2.68.15
         if: ${{ contains(matrix.settings.target, 'musl') }}
         with:
           tool: cargo-zigbuild
