@@ -83,4 +83,4 @@ const cli = new Cli({
 cli.register(MainCommand);
 cli.register(Builtins.HelpCommand);
 cli.register(Builtins.VersionCommand);
-cli.runExit(stdArgs);
+void cli.runExit(stdArgs);

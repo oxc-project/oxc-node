@@ -17,8 +17,7 @@ import { foo } from "./foo.mjs";
 import { bar } from "./subdirectory/bar.mjs";
 import { baz } from "./subdirectory/index.mjs";
 import "./js-module.mjs";
-import pkgJson from "../package.json";
-import { version } from "../package.json";
+import pkgJson from "../package.json" with { type: "json" };
 
 const { foo: fooWithQuery } = await import(`./foo.mjs?q=${Date.now()}`);
 
@@ -68,7 +67,7 @@ await test("resolve package.json", () => {
 });
 
 await test("named import from json", () => {
-  assert.equal(version, "0.0.0");
+  assert.equal(pkgJson.version, "0.0.0");
 });
 
 await test("resolve ipaddr.js", () => {

@@ -34,7 +34,7 @@ bench
     });
   })
   .add("oxc", () => {
-    const { source: _source, sourceMap: _sourceMap } = oxc("ajax.ts", fixture);
+    oxc("ajax.ts", fixture);
   })
   .add("esbuild", () => {
     esbuild(fixture, {
