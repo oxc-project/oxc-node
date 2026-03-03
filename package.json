@@ -25,8 +25,8 @@
     "npm-run-all2": "^8.0.4",
     "oxfmt": "^0.36.0",
     "oxlint": "^1.51.0",
-    "typescript": "^5.8.3",
-    "oxlint-tsgolint": "^0.15.0"
+    "oxlint-tsgolint": "^0.15.0",
+    "typescript": "^5.8.3"
   },
   "lint-staged": {
     "*": [
