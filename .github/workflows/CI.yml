@@ -136,7 +136,7 @@ jobs:
           - host: ubuntu-latest
             target: wasm32-wasip1-threads
             build: pnpm --filter=@oxc-node/core build --target wasm32-wasip1-threads
-    name: stable - ${{ matrix.settings.target }} - node@22
+    name: stable - ${{ matrix.settings.target }} - node@24
     runs-on: ${{ matrix.settings.host }}
     steps:
       - uses: taiki-e/checkout-action@83ed61bfbe2b8abbb3c66e8b65b1335484c70009 # v1.4.1
