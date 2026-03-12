@@ -38,7 +38,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - name: Install dependencies
         run: pnpm install
@@ -57,7 +57,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - name: Install dependencies
         run: pnpm install
@@ -145,7 +145,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - name: Install
         run: rustup target add ${{ matrix.settings.target }}
@@ -208,7 +208,7 @@ jobs:
           RUSTUP_IO_THREADS: 1
         with:
           operating_system: freebsd
-          version: "14.2"
+          version: "15.0"
           memory: 8G
           cpu_count: 3
           environment_variables: "DEBUG RUSTUP_IO_THREADS"
@@ -269,15 +269,15 @@ jobs:
             target: aarch64-apple-darwin
             architecture: arm64
         node:
-          - "20"
           - "22"
+          - "24"
         transform_all:
           - "true"
           - "false"
         exclude:
           - settings:
               target: i686-pc-windows-msvc
-            node: "20"
+            node: "24"
     runs-on: ${{ matrix.settings.host }}
     steps:
       - uses: taiki-e/checkout-action@83ed61bfbe2b8abbb3c66e8b65b1335484c70009 # v1.4.1
@@ -327,8 +327,8 @@ jobs:
           - s390x-unknown-linux-gnu
           - powerpc64le-unknown-linux-gnu
         node:
-          - "20"
           - "22"
+          - "24"
     # Node.js on qemu segfaults on s390x and arm64v8 when using 24.04
     # See also https://github.com/actions/runner-images/issues/11471
     runs-on: ${{ contains(matrix.target, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
@@ -411,7 +411,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
@@ -452,7 +452,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - name: Install dependencies
         run: pnpm install
