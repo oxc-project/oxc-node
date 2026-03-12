@@ -329,6 +329,9 @@ jobs:
         node:
           - "22"
           - "24"
+        exclude:
+          - target: armv7-unknown-linux-gnueabihf
+            node: "24"
     # Node.js on qemu segfaults on s390x and arm64v8 when using 24.04
     # See also https://github.com/actions/runner-images/issues/11471
     runs-on: ${{ contains(matrix.target, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
