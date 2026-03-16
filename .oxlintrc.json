@@ -3,5 +3,6 @@
   "options": {
     "typeAware": true,
     "typeCheck": true
-  }
+  },
+  "ignorePatterns": ["**/fixtures/**"]
 }
