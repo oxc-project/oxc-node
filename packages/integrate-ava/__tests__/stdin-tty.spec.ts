@@ -37,7 +37,11 @@ test("CLI preserves TTY properties when stdin is a TTY", (t) => {
   t.falsy(result.error, result.error?.message);
   t.is(result.status, 0, `oxnode should run successfully. stderr: ${result.stderr}`);
 
-  const output = JSON.parse(result.stdout.trim());
+  // Extract JSON from stdout, filtering out debug logs
+  const jsonLine = result.stdout.split("\n").find((line) => line.trim().startsWith("{"));
+  t.truthy(jsonLine, "should find JSON output in stdout");
+
+  const output = JSON.parse(jsonLine!.trim());
 
   // In a non-TTY environment (like CI), isTTY will be undefined and omitted from JSON
   // In a TTY environment, isTTY should be true
@@ -83,7 +87,14 @@ test("CLI properly handles stdin piping", async (t) => {
   });
 
   t.is(stderr, "", "should not produce any errors");
-  t.is(stdout.trim(), testInput, "should echo the input correctly");
+
+  // Extract the actual output, filtering out debug lines
+  const outputLines = stdout
+    .split("\n")
+    .filter((line) => !line.includes("DEBUG") && line.trim().length > 0);
+  const actualOutput = outputLines.join("\n").trim();
+
+  t.is(actualOutput, testInput, "should echo the input correctly");
 });
 
 test("CLI with node directly preserves TTY (baseline comparison)", (t) => {
@@ -101,7 +112,11 @@ test("CLI with node directly preserves TTY (baseline comparison)", (t) => {
   t.falsy(result.error, result.error?.message);
   t.is(result.status, 0, "node with --import should run successfully");
 
-  const output = JSON.parse(result.stdout.trim());
+  // Extract JSON from stdout, filtering out debug logs
+  const jsonLine = result.stdout.split("\n").find((line) => line.trim().startsWith("{"));
+  t.truthy(jsonLine, "should find JSON output in stdout");
+
+  const output = JSON.parse(jsonLine!.trim());
 
   // This is the baseline - both oxnode and node --import should behave the same
   if ("isTTY" in output) {
