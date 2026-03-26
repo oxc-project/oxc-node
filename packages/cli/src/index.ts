@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { exec, execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import process from "node:process";
 
 import { Builtins, Cli, Command, Option, Usage } from "clipanion";
@@ -52,22 +52,14 @@ class MainCommand extends Command {
       });
       return;
     }
-    const cp = exec(`node --enable-source-maps --import ${register} ${args}`, {
+    const cp = spawn(`node`, [`--enable-source-maps`, `--import`, register, ...this.args], {
       env: process.env,
       cwd: process.cwd(),
+      stdio: `inherit`,
     });
     cp.addListener(`error`, (error) => {
       console.error(error);
     });
-    if (cp.stdin) {
-      this.context.stdin.pipe(cp.stdin);
-    }
-    if (cp.stdout) {
-      cp.stdout.pipe(this.context.stdout);
-    }
-    if (cp.stderr) {
-      cp.stderr.pipe(this.context.stderr);
-    }
     cp.addListener(`exit`, (code) => {
       process.exit(code ?? 0);
     });
