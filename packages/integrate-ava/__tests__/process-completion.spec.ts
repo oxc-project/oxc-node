@@ -5,12 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const CLI_PATH = fileURLToPath(
-  new URL("../../../cli/src/index.ts", import.meta.url),
-);
-const FIXTURE_PATH = fileURLToPath(
-  new URL("./fixtures/write-file-delayed.ts", import.meta.url),
-);
+const CLI_PATH = fileURLToPath(new URL("../../../cli/src/index.ts", import.meta.url));
+const FIXTURE_PATH = fileURLToPath(new URL("./fixtures/write-file-delayed.ts", import.meta.url));
 
 test("child process completes before parent exits", (t) => {
   // Create a temporary directory for the test output
@@ -36,10 +32,7 @@ test("child process completes before parent exits", (t) => {
     t.falsy(result.error, "No spawn error should occur");
 
     // If the parent doesn't wait for the child, this file won't exist
-    t.true(
-      existsSync(outputPath),
-      "Output file should exist after parent process exits",
-    );
+    t.true(existsSync(outputPath), "Output file should exist after parent process exits");
 
     // Verify the file content
     const content = readFileSync(outputPath, "utf8");
@@ -53,13 +46,7 @@ test("child process completes before parent exits", (t) => {
 test("child process exit code is propagated to parent", (t) => {
   const result = spawnSync(
     process.execPath,
-    [
-      "--import",
-      "@oxc-node/core/register",
-      CLI_PATH,
-      "-e",
-      "process.exit(42)",
-    ],
+    ["--import", "@oxc-node/core/register", CLI_PATH, "-e", "process.exit(42)"],
     {
       encoding: "utf8",
       env: {
