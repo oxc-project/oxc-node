@@ -40,7 +40,7 @@ class MainCommand extends Command {
       return;
     }
     if (this.nodeHelp) {
-      this.args.push(`--help `);
+      this.args.push(`--help`);
     }
     const args = this.args.length ? `${this.args.join(" ")}` : "";
     const register = import.meta.resolve("@oxc-node/core/register");
