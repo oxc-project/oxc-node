@@ -86,7 +86,18 @@ test("CLI properly handles stdin piping", async (t) => {
     child.on("exit", resolve);
   });
 
-  t.is(stderr, "", "should not produce any errors");
+  // Filter out experimental warnings from stderr (e.g., WASI warnings)
+  const stderrLines = stderr
+    .split("\n")
+    .filter(
+      (line) =>
+        !line.includes("ExperimentalWarning") &&
+        !line.includes("Use `node --trace-warnings") &&
+        line.trim().length > 0,
+    );
+  const actualStderr = stderrLines.join("\n").trim();
+
+  t.is(actualStderr, "", "should not produce any errors");
 
   // Extract the actual output, filtering out debug lines
   const outputLines = stdout
