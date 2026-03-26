@@ -39,7 +39,7 @@ if (__nodeFs.existsSync(__wasmDebugFilePath)) {
   __wasmFilePath = __wasmDebugFilePath;
 } else if (!__nodeFs.existsSync(__wasmFilePath)) {
   try {
-    __wasmFilePath = __nodePath.resolve("@oxc-node/core-wasm32-wasi");
+    __wasmFilePath = require.resolve("@oxc-node/core-wasm32-wasi/oxc-node.wasm32-wasi.wasm");
   } catch {
     throw new Error(
       "Cannot find oxc-node.wasm32-wasi.wasm file, and @oxc-node/core-wasm32-wasi package is not installed.",

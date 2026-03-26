@@ -80,12 +80,12 @@ function requireNative() {
         const binding = require("@oxc-node/core-android-arm64");
         const bindingPackageVersion = require("@oxc-node/core-android-arm64/package.json").version;
         if (
-          bindingPackageVersion !== "0.0.34" &&
+          bindingPackageVersion !== "0.0.35" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+            `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
           );
         }
         return binding;
@@ -103,12 +103,12 @@ function requireNative() {
         const bindingPackageVersion =
           require("@oxc-node/core-android-arm-eabi/package.json").version;
         if (
-          bindingPackageVersion !== "0.0.34" &&
+          bindingPackageVersion !== "0.0.35" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+            `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
           );
         }
         return binding;
@@ -134,12 +134,12 @@ function requireNative() {
           const bindingPackageVersion =
             require("@oxc-node/core-win32-x64-gnu/package.json").version;
           if (
-            bindingPackageVersion !== "0.0.34" &&
+            bindingPackageVersion !== "0.0.35" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+              `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
             );
           }
           return binding;
@@ -157,12 +157,12 @@ function requireNative() {
           const bindingPackageVersion =
             require("@oxc-node/core-win32-x64-msvc/package.json").version;
           if (
-            bindingPackageVersion !== "0.0.34" &&
+            bindingPackageVersion !== "0.0.35" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+              `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
             );
           }
           return binding;
@@ -181,12 +181,12 @@ function requireNative() {
         const bindingPackageVersion =
           require("@oxc-node/core-win32-ia32-msvc/package.json").version;
         if (
-          bindingPackageVersion !== "0.0.34" &&
+          bindingPackageVersion !== "0.0.35" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+            `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
           );
         }
         return binding;
@@ -204,12 +204,12 @@ function requireNative() {
         const bindingPackageVersion =
           require("@oxc-node/core-win32-arm64-msvc/package.json").version;
         if (
-          bindingPackageVersion !== "0.0.34" &&
+          bindingPackageVersion !== "0.0.35" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+            `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
           );
         }
         return binding;
@@ -229,12 +229,12 @@ function requireNative() {
       const binding = require("@oxc-node/core-darwin-universal");
       const bindingPackageVersion = require("@oxc-node/core-darwin-universal/package.json").version;
       if (
-        bindingPackageVersion !== "0.0.34" &&
+        bindingPackageVersion !== "0.0.35" &&
         process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
         process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
       ) {
         throw new Error(
-          `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+          `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
         );
       }
       return binding;
@@ -251,12 +251,12 @@ function requireNative() {
         const binding = require("@oxc-node/core-darwin-x64");
         const bindingPackageVersion = require("@oxc-node/core-darwin-x64/package.json").version;
         if (
-          bindingPackageVersion !== "0.0.34" &&
+          bindingPackageVersion !== "0.0.35" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+            `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
           );
         }
         return binding;
@@ -273,12 +273,12 @@ function requireNative() {
         const binding = require("@oxc-node/core-darwin-arm64");
         const bindingPackageVersion = require("@oxc-node/core-darwin-arm64/package.json").version;
         if (
-          bindingPackageVersion !== "0.0.34" &&
+          bindingPackageVersion !== "0.0.35" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+            `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
           );
         }
         return binding;
@@ -299,12 +299,12 @@ function requireNative() {
         const binding = require("@oxc-node/core-freebsd-x64");
         const bindingPackageVersion = require("@oxc-node/core-freebsd-x64/package.json").version;
         if (
-          bindingPackageVersion !== "0.0.34" &&
+          bindingPackageVersion !== "0.0.35" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+            `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
           );
         }
         return binding;
@@ -321,12 +321,12 @@ function requireNative() {
         const binding = require("@oxc-node/core-freebsd-arm64");
         const bindingPackageVersion = require("@oxc-node/core-freebsd-arm64/package.json").version;
         if (
-          bindingPackageVersion !== "0.0.34" &&
+          bindingPackageVersion !== "0.0.35" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+            `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
           );
         }
         return binding;
@@ -349,12 +349,12 @@ function requireNative() {
           const bindingPackageVersion =
             require("@oxc-node/core-linux-x64-musl/package.json").version;
           if (
-            bindingPackageVersion !== "0.0.34" &&
+            bindingPackageVersion !== "0.0.35" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+              `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
             );
           }
           return binding;
@@ -372,12 +372,12 @@ function requireNative() {
           const bindingPackageVersion =
             require("@oxc-node/core-linux-x64-gnu/package.json").version;
           if (
-            bindingPackageVersion !== "0.0.34" &&
+            bindingPackageVersion !== "0.0.35" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+              `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
             );
           }
           return binding;
@@ -397,12 +397,12 @@ function requireNative() {
           const bindingPackageVersion =
             require("@oxc-node/core-linux-arm64-musl/package.json").version;
           if (
-            bindingPackageVersion !== "0.0.34" &&
+            bindingPackageVersion !== "0.0.35" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+              `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
             );
           }
           return binding;
@@ -420,12 +420,12 @@ function requireNative() {
           const bindingPackageVersion =
             require("@oxc-node/core-linux-arm64-gnu/package.json").version;
           if (
-            bindingPackageVersion !== "0.0.34" &&
+            bindingPackageVersion !== "0.0.35" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+              `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
             );
           }
           return binding;
@@ -445,12 +445,12 @@ function requireNative() {
           const bindingPackageVersion =
             require("@oxc-node/core-linux-arm-musleabihf/package.json").version;
           if (
-            bindingPackageVersion !== "0.0.34" &&
+            bindingPackageVersion !== "0.0.35" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+              `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
             );
           }
           return binding;
@@ -468,12 +468,12 @@ function requireNative() {
           const bindingPackageVersion =
             require("@oxc-node/core-linux-arm-gnueabihf/package.json").version;
           if (
-            bindingPackageVersion !== "0.0.34" &&
+            bindingPackageVersion !== "0.0.35" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+              `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
             );
           }
           return binding;
@@ -493,12 +493,12 @@ function requireNative() {
           const bindingPackageVersion =
             require("@oxc-node/core-linux-loong64-musl/package.json").version;
           if (
-            bindingPackageVersion !== "0.0.34" &&
+            bindingPackageVersion !== "0.0.35" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+              `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
             );
           }
           return binding;
@@ -516,12 +516,12 @@ function requireNative() {
           const bindingPackageVersion =
             require("@oxc-node/core-linux-loong64-gnu/package.json").version;
           if (
-            bindingPackageVersion !== "0.0.34" &&
+            bindingPackageVersion !== "0.0.35" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+              `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
             );
           }
           return binding;
@@ -541,12 +541,12 @@ function requireNative() {
           const bindingPackageVersion =
             require("@oxc-node/core-linux-riscv64-musl/package.json").version;
           if (
-            bindingPackageVersion !== "0.0.34" &&
+            bindingPackageVersion !== "0.0.35" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+              `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
             );
           }
           return binding;
@@ -564,12 +564,12 @@ function requireNative() {
           const bindingPackageVersion =
             require("@oxc-node/core-linux-riscv64-gnu/package.json").version;
           if (
-            bindingPackageVersion !== "0.0.34" &&
+            bindingPackageVersion !== "0.0.35" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+              `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
             );
           }
           return binding;
@@ -588,12 +588,12 @@ function requireNative() {
         const bindingPackageVersion =
           require("@oxc-node/core-linux-ppc64-gnu/package.json").version;
         if (
-          bindingPackageVersion !== "0.0.34" &&
+          bindingPackageVersion !== "0.0.35" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+            `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
           );
         }
         return binding;
@@ -611,12 +611,12 @@ function requireNative() {
         const bindingPackageVersion =
           require("@oxc-node/core-linux-s390x-gnu/package.json").version;
         if (
-          bindingPackageVersion !== "0.0.34" &&
+          bindingPackageVersion !== "0.0.35" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+            `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
           );
         }
         return binding;
@@ -638,12 +638,12 @@ function requireNative() {
         const bindingPackageVersion =
           require("@oxc-node/core-openharmony-arm64/package.json").version;
         if (
-          bindingPackageVersion !== "0.0.34" &&
+          bindingPackageVersion !== "0.0.35" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+            `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
           );
         }
         return binding;
@@ -661,12 +661,12 @@ function requireNative() {
         const bindingPackageVersion =
           require("@oxc-node/core-openharmony-x64/package.json").version;
         if (
-          bindingPackageVersion !== "0.0.34" &&
+          bindingPackageVersion !== "0.0.35" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+            `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
           );
         }
         return binding;
@@ -684,12 +684,12 @@ function requireNative() {
         const bindingPackageVersion =
           require("@oxc-node/core-openharmony-arm/package.json").version;
         if (
-          bindingPackageVersion !== "0.0.34" &&
+          bindingPackageVersion !== "0.0.35" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== "0"
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.0.34 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
+            `Native binding package version mismatch, expected 0.0.35 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
           );
         }
         return binding;
@@ -719,13 +719,17 @@ if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
       wasiBindingError = err;
     }
   }
-  if (!nativeBinding) {
+  if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
     try {
       wasiBinding = require("@oxc-node/core-wasm32-wasi");
       nativeBinding = wasiBinding;
     } catch (err) {
       if (process.env.NAPI_RS_FORCE_WASI) {
-        wasiBindingError.cause = err;
+        if (!wasiBindingError) {
+          wasiBindingError = err;
+        } else {
+          wasiBindingError.cause = err;
+        }
         loadErrors.push(err);
       }
     }
