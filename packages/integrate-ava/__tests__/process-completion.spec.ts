@@ -15,8 +15,11 @@ test("child process completes before parent exits", (t) => {
 
   try {
     // Run the fixture via oxnode CLI
+    // Use stdio: 'ignore' to prevent spawnSync from blocking on grandchild's stdio
+    // This ensures we're only waiting for the CLI process, not its spawned child
     const result = spawnSync(process.execPath, [CLI_PATH, FIXTURE_PATH, outputPath], {
       encoding: "utf8",
+      stdio: "ignore",
       env: {
         ...process.env,
         NODE_OPTIONS: undefined,
@@ -40,8 +43,10 @@ test("child process completes before parent exits", (t) => {
 });
 
 test("child process exit code is propagated to parent", (t) => {
+  // Use stdio: 'ignore' to prevent spawnSync from blocking on grandchild's stdio
   const result = spawnSync(process.execPath, [CLI_PATH, "-e", "process.exit(42)"], {
     encoding: "utf8",
+    stdio: "ignore",
     env: {
       ...process.env,
       NODE_OPTIONS: undefined,
