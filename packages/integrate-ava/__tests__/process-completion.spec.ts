@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const CLI_PATH = fileURLToPath(new URL("../../../cli/src/index.ts", import.meta.url));
+const CLI_PATH = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
 const FIXTURE_PATH = fileURLToPath(new URL("./fixtures/write-file-delayed.ts", import.meta.url));
 
 test("child process completes before parent exits", (t) => {
@@ -15,17 +15,13 @@ test("child process completes before parent exits", (t) => {
 
   try {
     // Run the fixture via oxnode CLI
-    const result = spawnSync(
-      process.execPath,
-      ["--import", "@oxc-node/core/register", CLI_PATH, FIXTURE_PATH, outputPath],
-      {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          NODE_OPTIONS: undefined,
-        },
+    const result = spawnSync(process.execPath, [CLI_PATH, FIXTURE_PATH, outputPath], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NODE_OPTIONS: undefined,
       },
-    );
+    });
 
     // The fixture exits with code 0 after writing the file
     t.is(result.status, 0, "Process should exit with code 0");
@@ -44,17 +40,13 @@ test("child process completes before parent exits", (t) => {
 });
 
 test("child process exit code is propagated to parent", (t) => {
-  const result = spawnSync(
-    process.execPath,
-    ["--import", "@oxc-node/core/register", CLI_PATH, "-e", "process.exit(42)"],
-    {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        NODE_OPTIONS: undefined,
-      },
+  const result = spawnSync(process.execPath, [CLI_PATH, "-e", "process.exit(42)"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      NODE_OPTIONS: undefined,
     },
-  );
+  });
 
   t.is(result.status, 42, "Parent should exit with same code as child");
 });
