@@ -52,7 +52,7 @@ class MainCommand extends Command {
       });
       return;
     }
-    return new Promise<void>((resolve) => {
+    return new Promise<number>((resolve) => {
       const cp = spawn(`node`, [`--enable-source-maps`, `--import`, register, ...this.args], {
         env: process.env,
         cwd: process.cwd(),
@@ -62,8 +62,7 @@ class MainCommand extends Command {
         console.error(error);
       });
       cp.addListener(`exit`, (code) => {
-        process.exitCode = code ?? 0;
-        resolve();
+        resolve(code ?? 0);
       });
     });
   }
