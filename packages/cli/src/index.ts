@@ -52,16 +52,18 @@ class MainCommand extends Command {
       });
       return;
     }
-    const cp = spawn(`node`, [`--enable-source-maps`, `--import`, register, ...this.args], {
-      env: process.env,
-      cwd: process.cwd(),
-      stdio: `inherit`,
-    });
-    cp.addListener(`error`, (error) => {
-      console.error(error);
-    });
-    cp.addListener(`exit`, (code) => {
-      process.exit(code ?? 0);
+    return new Promise<number>((resolve) => {
+      const cp = spawn(`node`, [`--enable-source-maps`, `--import`, register, ...this.args], {
+        env: process.env,
+        cwd: process.cwd(),
+        stdio: `inherit`,
+      });
+      cp.addListener(`error`, (error) => {
+        console.error(error);
+      });
+      cp.addListener(`exit`, (code) => {
+        resolve(code ?? 0);
+      });
     });
   }
 }
