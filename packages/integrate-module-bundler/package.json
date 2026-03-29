@@ -7,7 +7,7 @@
     "test": "oxnode -C dev ./src/index.ts"
   },
   "dependencies": {
-    "file-type": "^21.0.0",
+    "file-type": "^22.0.0",
     "p-timeout": "^7.0.0"
   },
   "devDependencies": {
