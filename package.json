@@ -36,5 +36,5 @@
       "oxlint --fix"
     ]
   },
-  "packageManager": "pnpm@10.30.0"
+  "packageManager": "pnpm@10.33.0"
 }
