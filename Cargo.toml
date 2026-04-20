@@ -3,6 +3,7 @@ name = "oxc-node"
 version = "0.0.0"
 authors = ["LongYinan <github@lyn.one>"]
 edition = "2024"
+publish = false
 
 [lib]
 crate-type = ["cdylib"]
