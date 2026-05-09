@@ -3,9 +3,9 @@ import * as NodeModule from "node:module";
 import { addHook } from "pirates";
 
 import { OxcTransformer } from "./index.js";
+import { createResolve, initTracing, load } from "./index.js";
 
-// Destructure from NodeModule namespace to support older Node.js versions
-const { register, setSourceMapsSupport } = NodeModule;
+const { registerHooks, register, setSourceMapsSupport } = NodeModule;
 
 const DEFAULT_EXTENSIONS = new Set([
   ".js",
@@ -20,7 +20,25 @@ const DEFAULT_EXTENSIONS = new Set([
   ".es",
 ]);
 
-register("@oxc-node/core/esm", import.meta.url);
+// Use registerHooks (Node.js >= 24.4) when available, fall back to deprecated register()
+if (typeof registerHooks === "function") {
+  initTracing();
+
+  // Wrap resolve to strip fields not recognized by the native binding
+  function resolve(specifier, context, nextResolve) {
+    const { parentURL, conditions } = context;
+    return createResolve(
+      { getCurrentDirectory: () => process.cwd() },
+      specifier,
+      { parentURL, conditions },
+      nextResolve,
+    );
+  }
+
+  registerHooks({ resolve, load });
+} else {
+  register("@oxc-node/core/esm", import.meta.url);
+}
 
 if (typeof setSourceMapsSupport === "function") {
   setSourceMapsSupport(true, { nodeModules: true, generatedCode: true });
