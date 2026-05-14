@@ -1,5 +1,11 @@
 packages:
   - packages/*
+allowBuilds:
+  '@nestjs/core': true
+  '@swc/core': true
+  core-js: true
+  esbuild: true
+  nx: true
 
 catalog:
   "@napi-rs/cli": 3.6.2
