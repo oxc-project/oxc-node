@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "oxnode ./src/index.ts"
+    "test": "node --enable-source-maps --import @oxc-node/core/register ./src/index.ts"
   },
   "dependencies": {
     "file-type": "^22.0.0",

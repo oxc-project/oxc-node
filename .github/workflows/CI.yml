@@ -39,7 +39,6 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 24
-          cache: pnpm
       - name: Install dependencies
         run: pnpm install
       - name: Lint
@@ -58,7 +57,6 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 24
-          cache: pnpm
       - name: Install dependencies
         run: pnpm install
       - name: Build
@@ -146,7 +144,6 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 24
-          cache: pnpm
       - name: Install
         run: rustup target add ${{ matrix.settings.target }}
       - uses: oxc-project/setup-rust@23f38cfb0c04af97a055f76acee94d5be71c7c82 # v1.0.16
@@ -177,7 +174,6 @@ jobs:
         if: matrix.settings.target == 'i686-pc-windows-msvc'
         with:
           node-version: 22
-          cache: pnpm
           architecture: x86
       - name: Build
         run: ${{ matrix.settings.build }}
@@ -229,7 +225,8 @@ jobs:
             pnpm --filter=@oxc-node/core build --target x86_64-unknown-freebsd
             pnpm --filter=@oxc-node/core export-oxc-runtime
             pnpm --filter @oxc-node/cli build
-            pnpm rebuild
+            # Re-link workspace bins after the CLI entrypoint is generated.
+            pnpm install --offline --ignore-scripts
             pnpm test
             rm -rf node_modules
             rm -rf target
@@ -283,7 +280,6 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: ${{ matrix.node }}
-          cache: pnpm
           check-latest: true
           architecture: ${{ matrix.settings.architecture }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -339,7 +335,6 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: ${{ matrix.node }}
-          cache: pnpm
       - name: Output docker params
         id: docker
         run: |
@@ -411,7 +406,6 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 24
-          cache: pnpm
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: cli
@@ -452,7 +446,6 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 24
-          cache: pnpm
       - name: Install dependencies
         run: pnpm install
       - name: Download all artifacts

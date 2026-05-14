@@ -31,7 +31,8 @@ use phf::Set;
 #[cfg(all(
     not(target_arch = "x86"),
     not(target_arch = "arm"),
-    not(target_family = "wasm")
+    not(target_family = "wasm"),
+    not(all(target_os = "windows", target_arch = "aarch64"))
 ))]
 #[global_allocator]
 static ALLOC: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
@@ -457,6 +458,24 @@ pub fn create_resolve<'env>(
             return add_short_circuit(specifier, Some("json"), context, next_resolve);
         }
         return add_short_circuit(specifier, Some("module"), context, next_resolve);
+    }
+
+    let has_custom_conditions = context.conditions.iter().any(|condition| {
+        !matches!(
+            condition.as_str(),
+            "node" | "import" | "module-sync" | "node-addons" | "require" | "default"
+        )
+    });
+    if has_custom_conditions
+        && !specifier.starts_with('.')
+        && !specifier.starts_with('/')
+        && !specifier.starts_with(PATH_PREFIX)
+    {
+        tracing::debug!(
+            "delegating bare-specifier resolve with custom conditions: {}",
+            specifier
+        );
+        return next_resolve.call((specifier, None).into());
     }
 
     #[cfg(target_family = "wasm")]

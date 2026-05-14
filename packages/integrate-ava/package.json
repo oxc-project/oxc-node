@@ -11,9 +11,9 @@
   },
   "ava": {
     "cache": false,
-    "extensions": {
-      "ts": "module"
-    },
+    "extensions": [
+      "ts"
+    ],
     "files": [
       "__tests__/**/*.spec.ts"
     ],
