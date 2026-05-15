@@ -778,28 +778,52 @@ impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
     }
 }
 
+fn find_tsconfig_upwards(start: &Path) -> Option<PathBuf> {
+    for ancestor in start.ancestors() {
+        let candidate = ancestor.join("tsconfig.json");
+        if fs::exists(&candidate).unwrap_or(false) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 fn init_resolver(
     cwd: PathBuf,
     conditions: Vec<String>,
 ) -> (Resolver, Option<Arc<TsConfig>>, Option<&'static str>) {
-    let tsconfig = env::var("TS_NODE_PROJECT")
+    let (tsconfig, used_default_name) = env::var("TS_NODE_PROJECT")
         .or_else(|_| env::var("OXC_TSCONFIG_PATH"))
-        .map(Cow::Owned)
-        .unwrap_or(Cow::Borrowed("tsconfig.json"));
-    tracing::debug!(tsconfig = ?tsconfig);
-    let tsconfig_full_path = if !tsconfig.starts_with('/') {
-        cwd.join(PathBuf::from(&*tsconfig))
-    } else {
+        .map(|v| (Cow::Owned(v), false))
+        .unwrap_or((Cow::Borrowed("tsconfig.json"), true));
+    tracing::debug!(tsconfig = ?tsconfig, used_default_name);
+    let initial_tsconfig_path = if Path::new(&*tsconfig).is_absolute() {
         PathBuf::from(&*tsconfig)
+    } else {
+        cwd.join(PathBuf::from(&*tsconfig))
     };
-    tracing::debug!(tsconfig_full_path = ?tsconfig_full_path);
-    let tsconfig =
-        fs::exists(&tsconfig_full_path)
-            .unwrap_or(false)
-            .then_some(TsconfigDiscovery::Manual(TsconfigOptions {
-                config_file: tsconfig_full_path.clone(),
-                references: TsconfigReferences::Auto,
-            }));
+    let (tsconfig_full_path, tsconfig_exists) = if fs::exists(&initial_tsconfig_path)
+        .unwrap_or(false)
+    {
+        (initial_tsconfig_path, true)
+    } else if used_default_name {
+        match find_tsconfig_upwards(&cwd) {
+            Some(found) => {
+                tracing::debug!(discovered_tsconfig = ?found, "found tsconfig.json by walking up parents");
+                (found, true)
+            }
+            None => (initial_tsconfig_path, false),
+        }
+    } else {
+        (initial_tsconfig_path, false)
+    };
+    tracing::debug!(tsconfig_full_path = ?tsconfig_full_path, tsconfig_exists);
+    let tsconfig = tsconfig_exists.then(|| {
+        TsconfigDiscovery::Manual(TsconfigOptions {
+            config_file: tsconfig_full_path.clone(),
+            references: TsconfigReferences::Auto,
+        })
+    });
     let resolver = Resolver::new(ResolveOptions {
         tsconfig,
         condition_names: conditions,
