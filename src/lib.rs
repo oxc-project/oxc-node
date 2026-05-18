@@ -31,7 +31,8 @@ use phf::Set;
 #[cfg(all(
     not(target_arch = "x86"),
     not(target_arch = "arm"),
-    not(target_family = "wasm")
+    not(target_family = "wasm"),
+    not(all(target_os = "windows", target_arch = "aarch64"))
 ))]
 #[global_allocator]
 static ALLOC: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;

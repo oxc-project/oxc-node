@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "oxnode ./src/index.ts"
+    "test": "node ../cli/dist/index.js ./src/index.ts"
   },
   "dependencies": {
     "file-type": "^22.0.0",
