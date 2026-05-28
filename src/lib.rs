@@ -313,6 +313,9 @@ fn oxc_transform<S: TryAsStr>(
                 emit_decorator_metadata: compiler_options
                     .and_then(|c| c.emit_decorator_metadata)
                     .unwrap_or(false),
+                strict_null_checks: compiler_options
+                    .and_then(|c| c.strict_null_checks)
+                    .unwrap_or(false),
             },
             jsx: JsxOptions {
                 runtime: compiler_options
