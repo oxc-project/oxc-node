@@ -566,7 +566,18 @@ pub fn create_resolve<'env>(
                 tracing::debug!(path = ?p, format = ?format);
                 format
             };
-            return add_short_circuit(url, Some(format), context, next_resolve);
+            // oxc-node has fully resolved this module (URL + format), so return the
+            // output directly instead of calling `next_resolve`. Re-resolving the already
+            // resolved URL through Node would redundantly re-read `package.json` and `stat`
+            // the file. This is only done for files oxc-node transforms (outside
+            // `node_modules`); `node_modules` modules still defer to Node below so its
+            // CommonJS named-export detection keeps working.
+            return Ok(Either::A(ResolveFnOutput {
+                format: Some(Either::A(format.to_owned())),
+                short_circuit: Some(true),
+                url,
+                import_attributes: context.import_attributes.map(Either::A),
+            }));
         } else {
             return add_short_circuit(url, None, context, next_resolve);
         }
