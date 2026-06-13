@@ -577,6 +577,42 @@ pub fn create_resolve<'env>(
     add_short_circuit(specifier, None, context, next_resolve)
 }
 
+/// Resolve a CommonJS `require()` specifier to an absolute file path using oxc-node's
+/// resolver (which honours tsconfig `paths`, package `exports`, conditions, symlinks, …).
+///
+/// This exists for the synchronous `module.registerHooks()` loader: CommonJS `require()`
+/// calls are routed through the ESM-style `resolve` hook, whose `nextResolve` does not
+/// consult `Module._extensions` (where `pirates` installs its TypeScript handler). The
+/// hook uses this to complete an extensionless specifier to a concrete file path that the
+/// CommonJS loader can then hand to `pirates` for transpilation. Returns `None` when the
+/// specifier cannot be resolved (so the caller can defer to Node.js' own resolver).
+#[napi]
+#[cfg_attr(target_family = "wasm", allow(unused_variables))]
+pub fn resolve_cjs_specifier(specifier: String, parent_path: Option<String>) -> Option<String> {
+    #[cfg(target_family = "wasm")]
+    {
+        None
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let cwd = env::current_dir().ok()?;
+        let (resolver, _, _) = RESOLVER_AND_TSCONFIG.get_or_init(|| {
+            init_resolver(cwd.clone(), vec!["require".to_owned(), "node".to_owned()])
+        });
+
+        let directory = parent_path
+            .as_deref()
+            .and_then(|parent| Path::new(parent).parent())
+            .unwrap_or(cwd.as_path());
+
+        resolver
+            .resolve(directory, &specifier)
+            .ok()
+            .map(|resolution| resolution.full_path().to_string_lossy().into_owned())
+    }
+}
+
 #[napi(object)]
 #[derive(Debug)]
 pub struct LoadContext {

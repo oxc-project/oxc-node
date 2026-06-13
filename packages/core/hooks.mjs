@@ -1,8 +1,7 @@
-import { existsSync } from "node:fs";
-import { dirname, extname, resolve as resolvePath } from "node:path";
-import { fileURLToPath } from "node:url";
+import { extname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { createResolve, initTracing, load as oxcLoad } from "./index.js";
+import { createResolve, initTracing, load as oxcLoad, resolveCjsSpecifier } from "./index.js";
 
 initTracing();
 
@@ -19,10 +18,6 @@ initTracing();
 // modules entirely to Node.js, its built-in CommonJS named-export detection keeps working.
 const OXC_TRANSFORM_EXTENSIONS = /\.(?:[mc]?tsx?|jsx|es6?|es)$/;
 
-// Extensions that the CommonJS loader cannot resolve on its own but that
-// oxc-node's `pirates` hook can compile (registered in `register.mjs`).
-const CJS_RESOLVABLE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".jsx"];
-
 function isOxcTransformable(url) {
   if (typeof url !== "string") {
     return false;
@@ -38,33 +33,29 @@ function isCommonJsRequire(context) {
   return Array.isArray(context?.conditions) && context.conditions.includes("require");
 }
 
-// Best-effort extensionless completion for relative/absolute `require()` specifiers
-// that point at TypeScript/JSX files. Under the synchronous `module.registerHooks()`
-// loader, CommonJS `require()` calls are routed through this ESM-style resolve hook,
-// whose `nextResolve` does not consult `Module._extensions` (where `pirates` installs
-// its `.ts` handler). Returning a specifier that already carries an extension lets the
-// CommonJS loader find the file and `pirates` transpile it, matching the behaviour of
-// the legacy `module.register()` worker-thread loader.
-function completeCjsExtension(specifier, parentURL) {
-  if (extname(specifier) !== "" || (!specifier.startsWith(".") && !specifier.startsWith("/"))) {
+// Complete an extensionless CommonJS `require()` specifier that points at a file
+// oxc-node transforms, using oxc-node's own resolver (which honours tsconfig `paths`,
+// package `exports`, conditions and symlinks). Under the synchronous
+// `module.registerHooks()` loader, CommonJS `require()` is routed through this
+// ESM-style resolve hook, whose `nextResolve` does not consult `Module._extensions`
+// (where `pirates` installs its TypeScript handler). Returning a concrete `file:` URL
+// lets the CommonJS loader find the file and `pirates` transpile it, matching the
+// behaviour of the legacy `module.register()` worker-thread loader.
+function completeCommonJsTypeScript(specifier, parentURL) {
+  if (extname(specifier) !== "") {
     return undefined;
   }
-  let basedir;
-  try {
-    basedir = typeof parentURL === "string" ? dirname(fileURLToPath(parentURL)) : process.cwd();
-  } catch {
-    return undefined;
-  }
-  const absolute = resolvePath(basedir, specifier);
-  for (const ext of CJS_RESOLVABLE_EXTENSIONS) {
-    if (existsSync(absolute + ext)) {
-      return specifier + ext;
+  let parentPath;
+  if (typeof parentURL === "string") {
+    try {
+      parentPath = fileURLToPath(parentURL);
+    } catch {
+      parentPath = undefined;
     }
   }
-  for (const ext of CJS_RESOLVABLE_EXTENSIONS) {
-    if (existsSync(resolvePath(absolute, `index${ext}`))) {
-      return `${specifier}/index${ext}`;
-    }
+  const resolved = resolveCjsSpecifier(specifier, parentPath);
+  if (typeof resolved === "string" && OXC_TRANSFORM_EXTENSIONS.test(resolved)) {
+    return pathToFileURL(resolved).href;
   }
   return undefined;
 }
@@ -76,11 +67,14 @@ function resolve(specifier, context, nextResolve) {
   // CommonJS `require()` (only reachable under `module.registerHooks()`). Keep these on
   // Node's built-in CommonJS resolution + `pirates` transpilation instead of oxc-node's
   // ESM resolver, which would hand the CommonJS loader an ESM `file:` URL it cannot load.
-  // We only step in to complete a missing TypeScript/JSX extension that Node's resolver
-  // would otherwise reject.
+  // We only step in to complete an extensionless TypeScript/JSX specifier that Node's
+  // CommonJS resolver would otherwise reject.
   if (isCommonJsRequire(context)) {
-    const completed = completeCjsExtension(specifier, context.parentURL);
-    return nextResolve(completed ?? specifier, context);
+    const completed = completeCommonJsTypeScript(specifier, context.parentURL);
+    if (completed !== undefined) {
+      return { url: completed, shortCircuit: true };
+    }
+    return nextResolve(specifier, context);
   }
 
   // Let Node.js resolve first. If the target is not something oxc-node needs to
