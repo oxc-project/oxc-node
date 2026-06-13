@@ -390,10 +390,13 @@ fn oxc_transform<S: TryAsStr>(
 #[napi(object)]
 #[derive(Debug)]
 pub struct ResolveContext {
-    /// Export conditions of the relevant `package.json`
-    pub conditions: Vec<String>,
-    /// An object whose key-value pairs represent the assertions for the module to import
-    pub import_attributes: HashMap<String, String>,
+    /// Export conditions of the relevant `package.json`.
+    /// Optional because the CommonJS `require()` path of the synchronous
+    /// `module.registerHooks()` loader does not always provide it.
+    pub conditions: Option<Vec<String>>,
+    /// An object whose key-value pairs represent the assertions for the module to import.
+    /// Optional for the same reason as `conditions`.
+    pub import_attributes: Option<HashMap<String, String>>,
 
     #[napi(js_name = "parentURL")]
     pub parent_url: Option<String>,
@@ -454,7 +457,11 @@ pub fn create_resolve<'env>(
     }
     if specifier.ends_with(".json") {
         tracing::debug!("short-circuiting JSON resolve: {}", specifier);
-        if context.import_attributes.contains_key("type") {
+        if context
+            .import_attributes
+            .as_ref()
+            .is_some_and(|attrs| attrs.contains_key("type"))
+        {
             return add_short_circuit(specifier, Some("json"), context, next_resolve);
         }
         return add_short_circuit(specifier, Some("module"), context, next_resolve);
@@ -472,7 +479,7 @@ pub fn create_resolve<'env>(
     #[cfg(not(target_family = "wasm"))]
     let cwd = env::current_dir()?;
 
-    let conditions = context.conditions.as_slice();
+    let conditions = context.conditions.as_deref().unwrap_or(&[]);
 
     let (resolver, tsconfig, default_module_resolved_from_tsconfig) =
         RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone(), conditions.to_vec()));
@@ -512,7 +519,11 @@ pub fn create_resolve<'env>(
     );
 
     // import attributes
-    if !context.import_attributes.is_empty() {
+    if context
+        .import_attributes
+        .as_ref()
+        .is_some_and(|attrs| !attrs.is_empty())
+    {
         tracing::debug!(
             "short-circuiting import attributes resolve: {}, attributes: {:?}",
             specifier,
@@ -573,8 +584,10 @@ pub struct LoadContext {
     pub conditions: Option<Vec<String>>,
     /// The format optionally supplied by the `resolve` hook chain
     pub format: Either<String, Null>,
-    /// An object whose key-value pairs represent the assertions for the module to import
-    pub import_attributes: HashMap<String, String>,
+    /// An object whose key-value pairs represent the assertions for the module to import.
+    /// Optional because the CommonJS `require()` path of the synchronous
+    /// `module.registerHooks()` loader does not always provide it.
+    pub import_attributes: Option<HashMap<String, String>>,
 }
 
 #[napi(object)]
