@@ -75,11 +75,20 @@ function resolve(specifier, context, nextResolve) {
       : nextResolve(specifier, context);
   }
 
-  // Let Node.js resolve first. If the target is not something oxc-node transforms, return
-  // Node's own result verbatim — preserving the resolution metadata Node relies on
-  // (notably for CommonJS named-export detection) instead of round-tripping it through the
-  // native binding. Node's resolver cannot handle TypeScript-only constructs (tsconfig
-  // `paths`, extensionless `.ts`, …), so a failure simply means oxc-node must resolve it.
+  // Fast path: a specifier that already carries a transformable extension (e.g.
+  // `./foo.ts`) is unconditionally oxc-node's to resolve, so skip the speculative
+  // `nextResolve` below (whose result would only be discarded). This avoids resolving
+  // every relative TypeScript import twice.
+  if (needsTransform(specifier)) {
+    return createResolve({ getCurrentDirectory: getCwd }, specifier, context, nextResolve);
+  }
+
+  // Otherwise let Node.js resolve first. If the target is not something oxc-node
+  // transforms, return Node's own result verbatim — preserving the resolution metadata
+  // Node relies on (notably for CommonJS named-export detection) instead of round-tripping
+  // it through the native binding. Node's resolver cannot handle TypeScript-only constructs
+  // (tsconfig `paths`, extensionless `.ts`, …), so a failure simply means oxc-node must
+  // resolve it.
   try {
     const nodeResolved = nextResolve(specifier, context);
     if (nodeResolved !== undefined && !needsTransform(nodeResolved.url)) {
