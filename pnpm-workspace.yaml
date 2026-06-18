@@ -8,6 +8,6 @@ allowBuilds:
   nx: true
 
 catalog:
-  "@napi-rs/cli": 3.7.1
+  "@napi-rs/cli": 3.7.2
 
 verifyDepsBeforeRun: install
