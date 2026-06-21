@@ -18,7 +18,7 @@ oxc = { version = "0.132.0", features = [
   "regular_expression",
 ] }
 oxc_resolver = { version = "11.13.1" }
-phf = "0.13"
+phf = "0.14"
 serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = [
