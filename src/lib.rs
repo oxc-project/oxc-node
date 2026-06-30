@@ -390,10 +390,13 @@ fn oxc_transform<S: TryAsStr>(
 #[napi(object)]
 #[derive(Debug)]
 pub struct ResolveContext {
-    /// Export conditions of the relevant `package.json`
-    pub conditions: Vec<String>,
-    /// An object whose key-value pairs represent the assertions for the module to import
-    pub import_attributes: HashMap<String, String>,
+    /// Export conditions of the relevant `package.json`.
+    /// Optional because the CommonJS `require()` path of the synchronous
+    /// `module.registerHooks()` loader does not always provide it.
+    pub conditions: Option<Vec<String>>,
+    /// An object whose key-value pairs represent the assertions for the module to import.
+    /// Optional for the same reason as `conditions`.
+    pub import_attributes: Option<HashMap<String, String>>,
 
     #[napi(js_name = "parentURL")]
     pub parent_url: Option<String>,
@@ -454,7 +457,11 @@ pub fn create_resolve<'env>(
     }
     if specifier.ends_with(".json") {
         tracing::debug!("short-circuiting JSON resolve: {}", specifier);
-        if context.import_attributes.contains_key("type") {
+        if context
+            .import_attributes
+            .as_ref()
+            .is_some_and(|attrs| attrs.contains_key("type"))
+        {
             return add_short_circuit(specifier, Some("json"), context, next_resolve);
         }
         return add_short_circuit(specifier, Some("module"), context, next_resolve);
@@ -472,7 +479,7 @@ pub fn create_resolve<'env>(
     #[cfg(not(target_family = "wasm"))]
     let cwd = env::current_dir()?;
 
-    let conditions = context.conditions.as_slice();
+    let conditions = context.conditions.as_deref().unwrap_or(&[]);
 
     let (resolver, tsconfig, default_module_resolved_from_tsconfig) =
         RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone(), conditions.to_vec()));
@@ -512,7 +519,11 @@ pub fn create_resolve<'env>(
     );
 
     // import attributes
-    if !context.import_attributes.is_empty() {
+    if context
+        .import_attributes
+        .as_ref()
+        .is_some_and(|attrs| !attrs.is_empty())
+    {
         tracing::debug!(
             "short-circuiting import attributes resolve: {}, attributes: {:?}",
             specifier,
@@ -555,7 +566,18 @@ pub fn create_resolve<'env>(
                 tracing::debug!(path = ?p, format = ?format);
                 format
             };
-            return add_short_circuit(url, Some(format), context, next_resolve);
+            // oxc-node has fully resolved this module (URL + format), so return the
+            // output directly instead of calling `next_resolve`. Re-resolving the already
+            // resolved URL through Node would redundantly re-read `package.json` and `stat`
+            // the file. This is only done for files oxc-node transforms (outside
+            // `node_modules`); `node_modules` modules still defer to Node below so its
+            // CommonJS named-export detection keeps working.
+            return Ok(Either::A(ResolveFnOutput {
+                format: Some(Either::A(format.to_owned())),
+                short_circuit: Some(true),
+                url,
+                import_attributes: context.import_attributes.map(Either::A),
+            }));
         } else {
             return add_short_circuit(url, None, context, next_resolve);
         }
@@ -566,6 +588,42 @@ pub fn create_resolve<'env>(
     add_short_circuit(specifier, None, context, next_resolve)
 }
 
+/// Resolve a CommonJS `require()` specifier to an absolute file path using oxc-node's
+/// resolver (which honours tsconfig `paths`, package `exports`, conditions, symlinks, …).
+///
+/// This exists for the synchronous `module.registerHooks()` loader: CommonJS `require()`
+/// calls are routed through the ESM-style `resolve` hook, whose `nextResolve` does not
+/// consult `Module._extensions` (where `pirates` installs its TypeScript handler). The
+/// hook uses this to complete an extensionless specifier to a concrete file path that the
+/// CommonJS loader can then hand to `pirates` for transpilation. Returns `None` when the
+/// specifier cannot be resolved (so the caller can defer to Node.js' own resolver).
+#[napi]
+#[cfg_attr(target_family = "wasm", allow(unused_variables))]
+pub fn resolve_cjs_specifier(specifier: String, parent_path: Option<String>) -> Option<String> {
+    #[cfg(target_family = "wasm")]
+    {
+        None
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let cwd = env::current_dir().ok()?;
+        let (resolver, _, _) = RESOLVER_AND_TSCONFIG.get_or_init(|| {
+            init_resolver(cwd.clone(), vec!["require".to_owned(), "node".to_owned()])
+        });
+
+        let directory = parent_path
+            .as_deref()
+            .and_then(|parent| Path::new(parent).parent())
+            .unwrap_or(cwd.as_path());
+
+        resolver
+            .resolve(directory, &specifier)
+            .ok()
+            .map(|resolution| resolution.full_path().to_string_lossy().into_owned())
+    }
+}
+
 #[napi(object)]
 #[derive(Debug)]
 pub struct LoadContext {
@@ -573,8 +631,10 @@ pub struct LoadContext {
     pub conditions: Option<Vec<String>>,
     /// The format optionally supplied by the `resolve` hook chain
     pub format: Either<String, Null>,
-    /// An object whose key-value pairs represent the assertions for the module to import
-    pub import_attributes: HashMap<String, String>,
+    /// An object whose key-value pairs represent the assertions for the module to import.
+    /// Optional because the CommonJS `require()` path of the synchronous
+    /// `module.registerHooks()` loader does not always provide it.
+    pub import_attributes: Option<HashMap<String, String>>,
 }
 
 #[napi(object)]
