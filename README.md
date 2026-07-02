@@ -15,6 +15,21 @@ Transformer and register for Node.js projects.
 node --import @oxc-node/core/register ./path/to/entry.ts
 ```
 
+### `tsconfig.json` discovery
+
+On startup, oxc-node resolves a `tsconfig.json` using this precedence:
+
+1. `TS_NODE_PROJECT` — used as-is if set.
+2. `OXC_TSCONFIG_PATH` — used as-is if set.
+3. `tsconfig.json` in the current working directory.
+4. If none of the above exist, walk up parent directories and use the first
+   `tsconfig.json` found. This makes a root-workspace `tsconfig.json` (e.g. one
+   with `experimentalDecorators: true`) apply to sub-projects that don't have
+   their own config.
+
+To opt out of the walk-up, point `TS_NODE_PROJECT` or `OXC_TSCONFIG_PATH` at an
+explicit path (a non-existent path disables discovery entirely).
+
 ## [Sponsored By](https://github.com/sponsors/Boshen)
 
 <p align="center">
