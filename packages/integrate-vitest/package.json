@@ -1,5 +1,5 @@
 {
-  "name": "integrate-ava",
+  "name": "integrate-vitest",
   "private": true,
   "type": "module",
   "scripts": {
