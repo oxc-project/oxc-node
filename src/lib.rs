@@ -26,6 +26,7 @@ use oxc_resolver::{
     CompilerOptions, EnforceExtension, ModuleType, Resolution, ResolveOptions, Resolver, TsConfig,
     TsconfigDiscovery, TsconfigOptions, TsconfigReferences,
 };
+use oxc_sourcemap::SourceMap;
 use phf::Set;
 
 #[cfg(all(
@@ -152,7 +153,10 @@ fn init() {
 }
 
 #[napi]
-pub struct Output(CodegenReturn);
+pub struct Output {
+    code: String,
+    map: Option<SourceMap<'static>>,
+}
 
 #[napi]
 impl Output {
@@ -160,14 +164,14 @@ impl Output {
     /// Returns the generated code
     /// Cache the result of this function if you need to use it multiple times
     pub fn source(&self) -> String {
-        self.0.code.clone()
+        self.code.clone()
     }
 
     #[napi]
     /// Returns the source map as a JSON string
     /// Cache the result of this function if you need to use it multiple times
     pub fn source_map(&self) -> Option<String> {
-        self.0.map.clone().map(|s| s.to_json_string())
+        self.map.as_ref().map(|source_map| source_map.to_json_string())
     }
 }
 
@@ -272,10 +276,10 @@ fn oxc_transform<S: TryAsStr>(
     let allocator = Allocator::default();
     let source_type = SourceType::from_path(src_path).unwrap_or_default();
     let source_str = code.try_as_str()?;
-    let ParserReturn { mut program, errors, .. } =
+    let ParserReturn { mut program, diagnostics, .. } =
         Parser::new(&allocator, source_str, source_type).parse();
-    if !errors.is_empty() {
-        let msg = join_errors(errors, source_str);
+    if !diagnostics.is_empty() {
+        let msg = join_errors(diagnostics.into_vec(), source_str);
         return Err(Error::new(
             Status::GenericFailure,
             format!("Failed to parse {}: {}", src_path.display(), msg),
@@ -285,7 +289,7 @@ fn oxc_transform<S: TryAsStr>(
 
     let use_define_for_class_fields =
         compiler_options.and_then(|c| c.use_define_for_class_fields).unwrap_or_default();
-    let TransformerReturn { errors, .. } = Transformer::new(
+    let TransformerReturn { diagnostics, .. } = Transformer::new(
         &allocator,
         src_path,
         &TransformOptions {
@@ -355,22 +359,21 @@ fn oxc_transform<S: TryAsStr>(
     )
     .build_with_scoping(scoping, &mut program);
 
-    if !errors.is_empty() {
-        let msg = join_errors(errors, source_str);
+    if !diagnostics.is_empty() {
+        let msg = join_errors(diagnostics.into_vec(), source_str);
         return Err(Error::new(
             Status::GenericFailure,
             format!("Failed to transform {}: {}", src_path.display(), msg),
         ));
     }
 
-    Ok(Output(
-        Codegen::new()
-            .with_options(CodegenOptions {
-                source_map_path: Some(src_path.to_path_buf()),
-                ..Default::default()
-            })
-            .build(&program),
-    ))
+    let CodegenReturn { code, map, .. } = Codegen::new()
+        .with_options(CodegenOptions {
+            source_map_path: Some(src_path.to_path_buf()),
+            ..Default::default()
+        })
+        .build(&program);
+    Ok(Output { code, map: map.map(|source_map| source_map.into_owned()) })
 }
 
 #[napi(object)]
@@ -650,19 +653,18 @@ fn transform_output(
                 output.format != "module",
             )?;
             let output_code = transform_output
-                .0
                 .map
                 .map(|sm| {
                     let sm = sm.to_data_url();
                     const SOURCEMAP_PREFIX: &str = "\n//# sourceMappingURL=";
-                    let len = sm.len() + transform_output.0.code.len() + 22;
+                    let len = sm.len() + transform_output.code.len() + 22;
                     let mut output_code = String::with_capacity(len + 22);
-                    output_code.push_str(&transform_output.0.code);
+                    output_code.push_str(&transform_output.code);
                     output_code.push_str(SOURCEMAP_PREFIX);
                     output_code.push_str(sm.as_str());
                     output_code
                 })
-                .unwrap_or_else(|| transform_output.0.code);
+                .unwrap_or_else(|| transform_output.code);
             tracing::debug!("loaded {} format: {}", url, output.format);
             Ok(LoadFnOutput {
                 format: output.format,
