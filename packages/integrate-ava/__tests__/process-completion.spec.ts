@@ -1,14 +1,14 @@
-import test from "ava";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { expect, test } from "vitest";
 
 const CLI_PATH = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
 const FIXTURE_PATH = fileURLToPath(new URL("./fixtures/write-file-delayed.ts", import.meta.url));
 
-test("child process completes before parent exits", (t) => {
+test("child process completes before parent exits", () => {
   // Create a temporary directory for the test output
   const tmpDir = mkdtempSync(join(tmpdir(), "oxnode-test-"));
   const outputPath = join(tmpDir, "output.txt");
@@ -27,22 +27,24 @@ test("child process completes before parent exits", (t) => {
     });
 
     // The fixture exits with code 0 after writing the file
-    t.is(result.status, 0, "Process should exit with code 0");
-    t.falsy(result.error, "No spawn error should occur");
+    expect(result.status, "Process should exit with code 0").toBe(0);
+    expect(result.error, "No spawn error should occur").toBeFalsy();
 
     // If the parent doesn't wait for the child, this file won't exist
-    t.true(existsSync(outputPath), "Output file should exist after parent process exits");
+    expect(existsSync(outputPath), "Output file should exist after parent process exits").toBe(
+      true,
+    );
 
     // Verify the file content
     const content = readFileSync(outputPath, "utf8");
-    t.is(content, "completed", "File should contain 'completed'");
+    expect(content, "File should contain 'completed'").toBe("completed");
   } finally {
     // Clean up
     rmSync(tmpDir, { recursive: true, force: true });
   }
 });
 
-test("child process exit code is propagated to parent", (t) => {
+test("child process exit code is propagated to parent", () => {
   // Use stdio: 'ignore' to prevent spawnSync from blocking on grandchild's stdio
   const result = spawnSync(process.execPath, [CLI_PATH, "-e", "process.exit(42)"], {
     encoding: "utf8",
@@ -53,5 +55,5 @@ test("child process exit code is propagated to parent", (t) => {
     },
   });
 
-  t.is(result.status, 42, "Parent should exit with same code as child");
+  expect(result.status, "Parent should exit with same code as child").toBe(42);
 });

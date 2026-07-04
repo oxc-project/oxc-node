@@ -1,6 +1,6 @@
-import test, { ExecutionContext } from "ava";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { expect, test } from "vitest";
 
 const STACKTRACE_LINE = 6;
 const STACKTRACE_COLUMN = 12;
@@ -34,7 +34,7 @@ const runCliFixture = (fixtureName: string) => {
   return { ...result, fixturePath };
 };
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const expectStackLocation = (t: ExecutionContext, output: string, fixturePath: string) => {
+const expectStackLocation = (output: string, fixturePath: string) => {
   const fileUrl = pathToFileURL(fixturePath).href;
   const pattern = new RegExp(
     `(?:${escapeRegExp(fileUrl)}|${escapeRegExp(fixturePath)}):(\\d+):(\\d+)`,
@@ -42,22 +42,22 @@ const expectStackLocation = (t: ExecutionContext, output: string, fixturePath: s
   );
   const matches = [...output.matchAll(pattern)];
 
-  t.true(matches.length > 0, "stack trace should reference the failing fixture path");
+  expect(matches.length > 0, "stack trace should reference the failing fixture path").toBe(true);
 
   const exactLocation = matches.find(([, line, column]) => {
     return Number(line) === STACKTRACE_LINE && Number(column) === STACKTRACE_COLUMN;
   });
 
-  t.truthy(exactLocation, "stack trace should include the original TypeScript location");
+  expect(exactLocation, "stack trace should include the original TypeScript location").toBeTruthy();
 };
 
 for (const fixture of FIXTURE_PATHS.keys()) {
-  test(`CLI stack trace for ${fixture}`, (t) => {
+  test(`CLI stack trace for ${fixture}`, () => {
     const { stdout, stderr, status, error, fixturePath } = runCliFixture(fixture);
 
-    t.falsy(error, error?.message);
-    t.not(status, 0, "fixture should fail to trigger stack trace output");
+    expect(error, error?.message).toBeFalsy();
+    expect(status, "fixture should fail to trigger stack trace output").not.toBe(0);
 
-    expectStackLocation(t, `${stdout}${stderr}`, fixturePath);
+    expectStackLocation(`${stdout}${stderr}`, fixturePath);
   });
 }

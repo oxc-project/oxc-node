@@ -1,7 +1,6 @@
-import test from "ava";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { expect, test } from "vitest";
 
 const FIXTURE_PATHS = new Map(
   ["tty-check.ts", "stdin-echo.ts"].map((name) => [
@@ -20,7 +19,7 @@ const getFixturePath = (fixtureName: string) => {
 
 const oxnodePath = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
 
-test("CLI preserves TTY properties when stdin is a TTY", (t) => {
+test("CLI preserves TTY properties when stdin is a TTY", () => {
   const fixturePath = getFixturePath("tty-check.ts");
 
   // Run with oxnode via spawn to inherit stdio
@@ -34,12 +33,12 @@ test("CLI preserves TTY properties when stdin is a TTY", (t) => {
     },
   });
 
-  t.falsy(result.error, result.error?.message);
-  t.is(result.status, 0, `oxnode should run successfully. stderr: ${result.stderr}`);
+  expect(result.error, result.error?.message).toBeFalsy();
+  expect(result.status, `oxnode should run successfully. stderr: ${result.stderr}`).toBe(0);
 
   // Extract JSON from stdout, filtering out debug logs
   const jsonLine = result.stdout.split("\n").find((line) => line.trim().startsWith("{"));
-  t.truthy(jsonLine, "should find JSON output in stdout");
+  expect(jsonLine, "should find JSON output in stdout").toBeTruthy();
 
   const output = JSON.parse(jsonLine!.trim());
 
@@ -47,14 +46,14 @@ test("CLI preserves TTY properties when stdin is a TTY", (t) => {
   // In a TTY environment, isTTY should be true
   // The key is that we're checking it's not explicitly broken by piping
   if ("isTTY" in output) {
-    t.true(output.isTTY, "when present, isTTY should be true");
+    expect(output.isTTY, "when present, isTTY should be true").toBe(true);
   }
   // When stdin is a TTY, setRawMode should be available
   // When stdin is not a TTY, setRawMode might not be available
-  t.is(typeof output.hasSetRawMode, "boolean", "hasSetRawMode should be a boolean");
+  expect(typeof output.hasSetRawMode, "hasSetRawMode should be a boolean").toBe("boolean");
 });
 
-test("CLI properly handles stdin piping", async (t) => {
+test("CLI properly handles stdin piping", async () => {
   const fixturePath = getFixturePath("stdin-echo.ts");
   const testInput = "Hello from stdin test";
 
@@ -97,7 +96,7 @@ test("CLI properly handles stdin piping", async (t) => {
     );
   const actualStderr = stderrLines.join("\n").trim();
 
-  t.is(actualStderr, "", "should not produce any errors");
+  expect(actualStderr, "should not produce any errors").toBe("");
 
   // Extract the actual output, filtering out debug lines
   const outputLines = stdout
@@ -105,10 +104,10 @@ test("CLI properly handles stdin piping", async (t) => {
     .filter((line) => !line.includes("DEBUG") && line.trim().length > 0);
   const actualOutput = outputLines.join("\n").trim();
 
-  t.is(actualOutput, testInput, "should echo the input correctly");
+  expect(actualOutput, "should echo the input correctly").toBe(testInput);
 });
 
-test("CLI with node directly preserves TTY (baseline comparison)", (t) => {
+test("CLI with node directly preserves TTY (baseline comparison)", () => {
   const fixturePath = getFixturePath("tty-check.ts");
 
   // Run with node directly with --import for baseline comparison
@@ -120,18 +119,20 @@ test("CLI with node directly preserves TTY (baseline comparison)", (t) => {
     },
   });
 
-  t.falsy(result.error, result.error?.message);
-  t.is(result.status, 0, "node with --import should run successfully");
+  expect(result.error, result.error?.message).toBeFalsy();
+  expect(result.status, "node with --import should run successfully").toBe(0);
 
   // Extract JSON from stdout, filtering out debug logs
   const jsonLine = result.stdout.split("\n").find((line) => line.trim().startsWith("{"));
-  t.truthy(jsonLine, "should find JSON output in stdout");
+  expect(jsonLine, "should find JSON output in stdout").toBeTruthy();
 
   const output = JSON.parse(jsonLine!.trim());
 
   // This is the baseline - both oxnode and node --import should behave the same
   if ("isTTY" in output) {
-    t.true(output.isTTY, "baseline: when present, isTTY should be true");
+    expect(output.isTTY, "baseline: when present, isTTY should be true").toBe(true);
   }
-  t.is(typeof output.hasSetRawMode, "boolean", "baseline: hasSetRawMode should be a boolean");
+  expect(typeof output.hasSetRawMode, "baseline: hasSetRawMode should be a boolean").toBe(
+    "boolean",
+  );
 });
