@@ -1,5 +1,5 @@
 import { OxcTransformer } from "@oxc-node/core";
-import { expect, test } from "vite-plus/test";
+import { expect, test } from "vitest";
 
 test("transform", async () => {
   const transformer = new OxcTransformer(process.cwd());

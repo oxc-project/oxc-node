@@ -7,7 +7,7 @@
     "fmt": "vp fmt && cargo fmt",
     "lint": "vp lint",
     "test": "pnpm --sequential --filter=integrate* run test",
-    "prepare": "vp config"
+    "prepare": "vp config || exit 0"
   },
   "devDependencies": {
     "@napi-rs/cli": "catalog:",
@@ -19,7 +19,6 @@
     "emnapi": "^1.4.5",
     "lerna": "^9.0.0",
     "typescript": "^6.0.0",
-    "vite": "catalog:",
     "vite-plus": "catalog:"
   },
   "packageManager": "pnpm@11.9.0"

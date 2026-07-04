@@ -12,14 +12,5 @@ export default defineConfig({
       typeCheck: true,
     },
     ignorePatterns: ["**/fixtures/**"],
-    jsPlugins: [
-      {
-        name: "vite-plus",
-        specifier: "vite-plus/oxlint-plugin",
-      },
-    ],
-    rules: {
-      "vite-plus/prefer-vite-plus-imports": "error",
-    },
   },
 });

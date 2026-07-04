@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "vite-plus/test";
+import { expect, test } from "vitest";
 
 const CLI_PATH = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
 const FIXTURE_PATH = fileURLToPath(new URL("./fixtures/write-file-delayed.ts", import.meta.url));

@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "vite-plus/test";
+import { expect, test } from "vitest";
 
 const FIXTURE_PATHS = new Map(
   ["tty-check.ts", "stdin-echo.ts"].map((name) => [

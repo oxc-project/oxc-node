@@ -9,14 +9,6 @@ allowBuilds:
 
 catalog:
   "@napi-rs/cli": 3.7.2
-  vite: npm:@voidzero-dev/vite-plus-core@0.2.2
   vite-plus: 0.2.2
 
 verifyDepsBeforeRun: install
-overrides:
-  vite: "catalog:"
-peerDependencyRules:
-  allowAny:
-    - vite
-  allowedVersions:
-    vite: "*"

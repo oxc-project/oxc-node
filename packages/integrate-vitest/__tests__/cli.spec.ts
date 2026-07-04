@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { expect, test } from "vite-plus/test";
+import { expect, test } from "vitest";
 
 const STACKTRACE_LINE = 6;
 const STACKTRACE_COLUMN = 12;

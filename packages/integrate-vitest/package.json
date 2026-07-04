@@ -3,11 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vp test run"
+    "test": "vitest run"
   },
   "devDependencies": {
     "@oxc-node/core": "workspace:*",
-    "vite": "catalog:",
-    "vite-plus": "catalog:"
+    "vitest": "^4.0.0"
   }
 }
