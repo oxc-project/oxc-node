@@ -112,15 +112,6 @@ importers:
         specifier: ^0.132.0
         version: 0.132.0
 
-  packages/integrate-ava:
-    devDependencies:
-      '@oxc-node/core':
-        specifier: workspace:*
-        version: link:../core
-      vitest:
-        specifier: ^4.0.0
-        version: 4.1.9(@types/node@25.0.2)(vite@8.1.3(@types/node@25.0.2)(esbuild@0.28.1)(tsx@4.22.4)(yaml@2.9.0))
-
   packages/integrate-module:
     dependencies:
       file-type:
@@ -236,6 +227,15 @@ importers:
       tsx:
         specifier: ^4.20.3
         version: 4.22.4
+
+  packages/integrate-vitest:
+    devDependencies:
+      '@oxc-node/core':
+        specifier: workspace:*
+        version: link:../core
+      vitest:
+        specifier: ^4.0.0
+        version: 4.1.9(@types/node@25.0.2)(vite@8.1.3(@types/node@25.0.2)(esbuild@0.28.1)(tsx@4.22.4)(yaml@2.9.0))
 
 packages:
 
