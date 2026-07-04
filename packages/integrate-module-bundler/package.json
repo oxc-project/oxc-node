@@ -7,8 +7,7 @@
     "test": "node ../cli/dist/index.js -C dev ./src/index.ts"
   },
   "dependencies": {
-    "file-type": "^22.0.0",
-    "p-timeout": "^7.0.0"
+    "file-type": "^22.0.0"
   },
   "devDependencies": {
     "@napi-rs/tar": "^1.0.0",
@@ -27,8 +26,6 @@
     "express": "^5.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "simple-git": "^3.28.0",
-    "ts-node": "^10.9.2",
-    "tsx": "^4.20.3"
+    "simple-git": "^3.28.0"
   }
 }
