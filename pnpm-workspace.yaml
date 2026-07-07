@@ -12,3 +12,6 @@ catalog:
   vite-plus: 0.2.2
 
 verifyDepsBeforeRun: install
+
+minimumReleaseAgeExclude:
+  - "@oxc-project/*"
