@@ -20,10 +20,10 @@ node --import @oxc-node/core/register ./path/to/entry.ts
 [npm-url]: https://npmx.dev/package/@oxc-node/core
 [npm-badge]: https://img.shields.io/npm/dw/@oxc-node/core?label=npm
 
-## ❤ Who's [Sponsoring Oxc](https://github.com/sponsors/Boshen)?
+# [Sponsored By](https://oxc.rs/sponsor)
 
 <p align="center">
-  <a href="https://github.com/sponsors/Boshen">
-    <img src="https://raw.githubusercontent.com/Boshen/sponsors/main/sponsors.svg" alt="Our sponsors" />
+  <a href="https://oxc.rs/sponsor">
+    <img src="https://raw.githubusercontent.com/oxc-project/sponsors/main/sponsors.svg" alt="Our sponsors" />
   </a>
 </p>
