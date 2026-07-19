@@ -9,7 +9,7 @@ allowBuilds:
 
 catalog:
   "@napi-rs/cli": 3.7.3
-  vite-plus: 0.2.4
+  vite-plus: 0.2.5
 
 verifyDepsBeforeRun: install
 
