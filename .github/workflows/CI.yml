@@ -475,7 +475,6 @@ jobs:
           path: ./packages/cli/dist
       - name: Publish
         run: |
-          npm install -g npm
           if git log -1 --pretty=%B | grep "^v\?[0-9]\+\.[0-9]\+\.[0-9]\+$";
           then
             pnpm napi pre-publish -t npm --package-json-path packages/core/package.json
