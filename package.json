@@ -18,7 +18,7 @@
     "@types/node": "^25.0.0",
     "emnapi": "^1.4.5",
     "lerna": "^9.0.0",
-    "typescript": "^6.0.0",
+    "typescript": "^7.0.0",
     "vite-plus": "catalog:"
   },
   "packageManager": "pnpm@11.9.0"
