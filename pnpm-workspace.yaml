@@ -8,7 +8,7 @@ allowBuilds:
   nx: true
 
 catalog:
-  "@napi-rs/cli": 3.7.4
+  "@napi-rs/cli": 3.8.2
   vite-plus: 0.2.7
 
 verifyDepsBeforeRun: install
