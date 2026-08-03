@@ -19,6 +19,7 @@
   "files": [
     "browser.js",
     "esm.mjs",
+    "hooks.mjs",
     "index.d.ts",
     "index.js",
     "register.mjs",

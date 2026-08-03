@@ -5,7 +5,7 @@ import { addHook } from "pirates";
 import { OxcTransformer } from "./index.js";
 
 // Destructure from NodeModule namespace to support older Node.js versions
-const { register, setSourceMapsSupport } = NodeModule;
+const { register, registerHooks, setSourceMapsSupport } = NodeModule;
 
 const DEFAULT_EXTENSIONS = new Set([
   ".js",
@@ -20,7 +20,15 @@ const DEFAULT_EXTENSIONS = new Set([
   ".es",
 ]);
 
-register("@oxc-node/core/esm", import.meta.url);
+// Prefer the synchronous, in-thread `module.registerHooks()` (Node.js >= 23.5.0 / 22.15.0).
+// It avoids the DEP0205 deprecation warning emitted by `module.register()`, which has been
+// runtime-deprecated since Node.js v25.9.0. Fall back to `module.register()` on older runtimes.
+if (typeof registerHooks === "function") {
+  const { load, resolve } = await import("./hooks.mjs");
+  registerHooks({ load, resolve });
+} else {
+  register("@oxc-node/core/esm", import.meta.url);
+}
 
 if (typeof setSourceMapsSupport === "function") {
   setSourceMapsSupport(true, { nodeModules: true, generatedCode: true });
