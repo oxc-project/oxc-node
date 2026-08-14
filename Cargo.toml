@@ -41,3 +41,9 @@ napi-build = "2"
 codegen-units = 1
 lto = true
 strip = "symbols"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
