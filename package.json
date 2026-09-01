@@ -10,6 +10,7 @@
     "prepare": "vp config || exit 0"
   },
   "devDependencies": {
+    "@emnapi/runtime": "^2.0.0-alpha.4",
     "@napi-rs/cli": "catalog:",
     "@napi-rs/wasm-runtime": "^1.2.3",
     "@oxc-node/cli": "workspace:*",
