@@ -7,20 +7,20 @@
     "test": "node ../cli/dist/index.js ./src/index.ts"
   },
   "dependencies": {
-    "file-type": "^22.0.0"
+    "file-type": "^22.0.2"
   },
   "devDependencies": {
-    "@napi-rs/tar": "^1.0.0",
-    "@napi-rs/wasm-runtime": "^1.0.1",
+    "@napi-rs/tar": "^1.1.1",
+    "@napi-rs/wasm-runtime": "^1.2.3",
     "@oxc-node/cli": "workspace:*",
-    "@types/node": "^25.0.0",
-    "@types/react": "^19.1.8",
-    "@types/react-dom": "^19.1.6",
+    "@types/node": "^26.4.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
     "canvaskit-wasm": "^0.42.0",
-    "ipaddr.js": "^2.2.0",
-    "postgres": "^3.4.7",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "simple-git": "^3.28.0"
+    "ipaddr.js": "^2.5.0",
+    "postgres": "^3.4.9",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "simple-git": "^3.36.0"
   }
 }

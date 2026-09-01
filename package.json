@@ -10,16 +10,17 @@
     "prepare": "vp config || exit 0"
   },
   "devDependencies": {
+    "@emnapi/runtime": "^2.0.0-alpha.4",
     "@napi-rs/cli": "catalog:",
-    "@napi-rs/wasm-runtime": "^1.0.1",
+    "@napi-rs/wasm-runtime": "^1.2.3",
     "@oxc-node/cli": "workspace:*",
     "@oxc-node/core": "workspace:*",
     "@oxc-project/runtime": "^0.148.0",
-    "@types/node": "^25.0.0",
-    "emnapi": "^1.4.5",
-    "lerna": "^9.0.0",
-    "typescript": "^6.0.0",
+    "@types/node": "^26.4.0",
+    "emnapi": "^2.0.0-alpha.4",
+    "lerna": "^10.0.1",
+    "typescript": "^7.0.2",
     "vite-plus": "catalog:"
   },
-  "packageManager": "pnpm@11.24.0"
+  "packageManager": "pnpm@11.25.0"
 }
