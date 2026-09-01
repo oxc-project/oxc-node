@@ -159,7 +159,7 @@ jobs:
           version: 0.15.2
           use-cache: false
       - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         if: ${{ contains(matrix.settings.target, 'musl') }}
         with:
           tool: cargo-zigbuild
@@ -206,7 +206,7 @@ jobs:
       - uses: taiki-e/checkout-action@7d1e50e93dc4fb3bba58f85018fadf77898aee8b # v1.4.2
       - name: Build
         id: build
-        uses: cross-platform-actions/action@24ef01df165c76df1ed2b9f9e9212e78dc2fc963 # v1.4.0
+        uses: cross-platform-actions/action@faa0c6197e94aacf1c5956460152c8380d3560a5 # v1.5.0
         env:
           DEBUG: napi:*
           RUSTUP_IO_THREADS: 1
@@ -385,7 +385,7 @@ jobs:
         run: pnpm --filter=@oxc-node/core export-oxc-runtime
       - name: Set up QEMU
         if: ${{ !contains(matrix.target, 'aarch64') }}
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
         with:
           platforms: all
           image: tonistiigi/binfmt:qemu-v10.0.4

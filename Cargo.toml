@@ -10,15 +10,15 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-napi = { version = "3.5.1", default-features = false, features = ["serde-json", "napi3"] }
-napi-derive = { version = "3.3.2", default-features = false, features = ["type-def"] }
+napi = { version = "3.12.2", default-features = false, features = ["serde-json", "napi3"] }
+napi-derive = { version = "3.6.3", default-features = false, features = ["type-def"] }
 oxc = { version = "0.148.0", features = [
   "codegen",
   "transformer",
   "semantic",
   "regular_expression",
 ] }
-oxc_resolver = { version = "11.13.1" }
+oxc_resolver = { version = "11.24.3" }
 oxc_sourcemap = "8"
 phf = { version = "0.14", features = ["macros"] }
 serde_json = "1"
