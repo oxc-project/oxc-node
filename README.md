@@ -77,14 +77,16 @@ transform hook.
 
 ### Loader implementation
 
+`@oxc-node/core` requires Node.js v20.19.0 or later — the release where
+`require(esm)` became available by default in the 20 line.
+
 The hooks are installed with the synchronous, in-thread
 [`module.registerHooks()`][registerHooks] on Node.js v22.22.3 and later in the
-22 line, and on v24.8.0 and later. Node.js 23 is end of life and never received
-the fixes this needs, so it is excluded along with everything older, and those
-versions fall back to [`module.register()`][register], which runs the hooks on a
-dedicated loader thread. `module.register()` is runtime deprecated as DEP0205 from
-Node.js v26.0.0; every version that emits that warning uses the synchronous hooks
-instead, so the warning never appears.
+22 line, and on v24.8.0 and later. Node.js 20, 23 and 25 never received the fixes
+this needs, so they fall back to [`module.register()`][register], which runs the
+hooks on a dedicated loader thread. `module.register()` is runtime deprecated as
+DEP0205 from Node.js v26.0.0; every version that emits that warning uses the
+synchronous hooks instead, so the warning never appears.
 
 `module.registerHooks()` has a single hook chain and runs the most recently
 registered hook first, so a hook registered _before_ `@oxc-node/core/register`
