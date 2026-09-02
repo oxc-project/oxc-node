@@ -141,12 +141,52 @@ enum TsconfigSource {
 const JS_EXTENSIONS: [&str; 4] = ["js", "jsx", "mjs", "cjs"];
 
 impl TsconfigSource {
-    /// The `tsconfig.json` that governs `path`, if any.
+    /// The `tsconfig.json` that governs `path`, if any, by strict ownership.
+    ///
+    /// This is the answer used for everything that changes emitted code — the
+    /// transform API, the load hook, and the module-format decision. A config
+    /// that does not claim the file does not get to compile it, which is the
+    /// whole point of honouring `files` / `include` / `exclude`.
     ///
     /// `path` must be an absolute file path (not a `file://` URL); the resolver
     /// returns `None` for anything else.
     fn for_path(&self, resolver: &Resolver, path: &Path) -> Option<Arc<TsConfig>> {
         match self {
+            Self::Manual(tsconfig) => tsconfig.clone(),
+            Self::Auto => Self::discover(resolver, path),
+        }
+    }
+
+    /// The `tsconfig.json` whose `paths` and `baseUrl` an importer's specifiers
+    /// resolve against — [`Self::for_path`], plus a fallback for JavaScript.
+    ///
+    /// `oxc_resolver` applies TypeScript's own program-membership rule:
+    /// `is_file_included_in_tsconfig` calls `is_extensionless_or_uncompiled_js`,
+    /// which rejects `js` / `jsx` / `mjs` / `cjs` outright unless `allowJs` is
+    /// set. So no config ever claims a plain JavaScript file, and such a file
+    /// would silently lose every path alias and fail to resolve at runtime.
+    ///
+    /// But "is this file an input to the TypeScript program" is not the question
+    /// being asked here. The question is "which project does this file belong to,
+    /// **for the purpose of module resolution**", and a `.mjs` file sitting in
+    /// `src/` resolves its imports the same way its `.ts` neighbours do. So when
+    /// nothing claims a JavaScript file, ask again as if it were TypeScript.
+    ///
+    /// This deliberately stops at resolution and must never be used to pick
+    /// compiler options. A config saying `exclude: ["src/**/*.js"]` has said, in
+    /// as many words, that those files are not its program; applying its
+    /// `experimentalDecorators` or `useDefineForClassFields` to them anyway
+    /// would break the ownership rule this whole discovery scheme exists to
+    /// honour. Keep the two lookups separate.
+    ///
+    /// The probe path never has to exist: `claims_ownership_of` only matches
+    /// `files` / `include` / `exclude` globs and project references against the
+    /// string, and stats nothing but the candidate `tsconfig.json` files it walks
+    /// past.
+    fn for_importer(&self, resolver: &Resolver, path: &Path) -> Option<Arc<TsConfig>> {
+        match self {
+            // An explicitly named config already applies to every file, so there
+            // is nothing for the probe to recover.
             Self::Manual(tsconfig) => tsconfig.clone(),
             Self::Auto => Self::discover(resolver, path).or_else(|| {
                 Self::probe_as_typescript(path)
@@ -178,24 +218,7 @@ impl TsconfigSource {
 
     /// The same path with a `.ts` extension, for a JavaScript-family file only.
     ///
-    /// `oxc_resolver` applies TypeScript's own program-membership rule:
-    /// `is_file_included_in_tsconfig` calls `is_extensionless_or_uncompiled_js`,
-    /// which rejects `js` / `jsx` / `mjs` / `cjs` outright unless `allowJs` is
-    /// set. No config ever claims a plain JavaScript file, so under auto
-    /// discovery such a file would silently lose `paths` and `baseUrl` and fail
-    /// to resolve its aliases at runtime.
-    ///
-    /// But "is this file an input to the TypeScript program" is not the question
-    /// a loader is asking. The question is "which project does this file belong
-    /// to, for the purpose of module resolution", and a `.mjs` file sitting in
-    /// `src/` belongs to the same project as its `.ts` neighbours. So when
-    /// nothing claims a JavaScript file, ask again as if it were TypeScript.
-    ///
-    /// The probe path never has to exist: `claims_ownership_of` only matches
-    /// `files` / `include` / `exclude` globs and project references against the
-    /// string, and stats nothing but the candidate `tsconfig.json` files it
-    /// walks past. `exclude` therefore still wins — a directory the config
-    /// excludes stays unclaimed for JavaScript and TypeScript alike.
+    /// See [`Self::for_importer`], the sole caller, for why this exists.
     fn probe_as_typescript(path: &Path) -> Option<PathBuf> {
         let extension = path.extension()?.to_str()?;
         JS_EXTENSIONS.contains(&extension).then(|| path.with_extension("ts"))
@@ -672,7 +695,7 @@ pub fn create_resolve<'env>(
         // case (no parent URL, only a working directory) has no file to discover
         // from and still goes through `resolve`.
         (false, TsconfigSource::Auto, Some(parent_file)) => {
-            let tsconfig = tsconfig_source.for_path(resolver, parent_file);
+            let tsconfig = tsconfig_source.for_importer(resolver, parent_file);
             resolver.resolve_with_context(
                 directory,
                 &specifier,

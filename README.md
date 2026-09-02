@@ -81,9 +81,12 @@ By default, each file is governed by the nearest `tsconfig.json` in its own
 ancestor directories that claims it through `files`, `include`, `exclude` or a
 project reference — the same rule `tsc` follows. A file in a sub-project without
 its own `tsconfig.json` therefore inherits the workspace root one, and a file
-that no config claims is compiled with no options at all. A `.js`, `.jsx`,
-`.mjs` or `.cjs` file is matched against `include` and `exclude` as if it were
-TypeScript, so path aliases keep working from JavaScript without `allowJs`.
+that no config claims is compiled with no options at all.
+
+`include` only covers `.js`, `.jsx`, `.mjs` and `.cjs` files when `allowJs` is
+enabled, so by default no config claims them and they are compiled with no
+options. For **module resolution** they are matched as if they were TypeScript,
+which keeps path aliases working from JavaScript without `allowJs`.
 
 Set `OXC_TSCONFIG_PATH` to pin one config for every file instead. `TS_NODE_PROJECT`
 is also supported and takes precedence when both variables are set; an empty value
