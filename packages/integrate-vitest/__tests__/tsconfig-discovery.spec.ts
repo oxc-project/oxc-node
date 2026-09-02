@@ -274,3 +274,35 @@ test("the JavaScript probe does not resurrect a config that excludes the directo
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// The transform API takes a path and a working directory, and nothing says the
+// path has to be absolute — the sibling `index.spec.ts` passes `"foo.ts"`.
+// Discovery only accepts absolute paths, so a relative one has to be joined
+// against the transformer's own `cwd` before the lookup.
+const RELATIVE_VS_ABSOLUTE = `import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { OxcTransformer } from "@oxc-node/core";
+const source = readFileSync("entry.ts", "utf8");
+const transformer = new OxcTransformer(process.cwd());
+const applied = (path) => transformer.transform(path, source).source().includes("_decorate");
+console.log("relative:" + applied("entry.ts"));
+console.log("absolute:" + applied(resolve("entry.ts")));
+`;
+
+test("a relative path into the transform API finds the same tsconfig as an absolute one", () => {
+  const root = createProject({
+    "tsconfig.json": DECORATORS_TSCONFIG,
+    "entry.ts": DECORATED,
+    "relative-vs-absolute.mjs": RELATIVE_VS_ABSOLUTE,
+  });
+  try {
+    const ran = runNode(root, [join(root, "relative-vs-absolute.mjs")]);
+    expect(ran.stderr, "the driver should not fail").toBe("");
+    expect(ran.stdout.trim().split("\n"), "both spellings must get the option").toEqual([
+      "relative:true",
+      "absolute:true",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

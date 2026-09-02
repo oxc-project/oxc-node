@@ -202,6 +202,22 @@ impl TsconfigSource {
     }
 }
 
+/// The path to look a `tsconfig.json` up by, made absolute against `cwd`.
+///
+/// Discovery rejects relative paths outright — `find_tsconfig` bails out on
+/// anything that is not absolute — so a caller that hands the transform API a
+/// path like `"src/index.ts"` would silently get no compiler options at all.
+/// That is exactly what the public API invites: `OxcTransformer` is constructed
+/// with a working directory, and the repository's own tests call
+/// `transformAsync("foo.ts", ...)`.
+///
+/// Only the tsconfig lookup uses this. The caller's original path still reaches
+/// the parser, `SourceType` detection and the source map, so nothing else the
+/// caller can observe changes.
+fn tsconfig_lookup_path<'a>(cwd: &Path, path: &'a Path) -> Cow<'a, Path> {
+    if path.is_absolute() { Cow::Borrowed(path) } else { Cow::Owned(cwd.join(path)) }
+}
+
 static RESOLVER_AND_TSCONFIG: OnceLock<(Resolver, TsconfigSource)> = OnceLock::new();
 
 #[cfg(not(target_os = "windows"))]
@@ -298,9 +314,11 @@ impl Task for TransformTask {
     fn compute(&mut self) -> Result<Self::Output> {
         let src_path = Path::new(&self.path);
         let cwd = PathBuf::from(&self.cwd);
+        // Worked out before `cwd` is moved into the initialiser.
+        let lookup_path = tsconfig_lookup_path(&cwd, src_path).into_owned();
         let (resolver, tsconfig_source) =
             RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd, vec![]));
-        let resolved_tsconfig = tsconfig_source.for_path(resolver, src_path);
+        let resolved_tsconfig = tsconfig_source.for_path(resolver, &lookup_path);
         oxc_transform(
             src_path,
             &self.source,
@@ -340,10 +358,12 @@ impl OxcTransformer {
     #[napi]
     pub fn transform(&self, path: String, source: Either<String, &[u8]>) -> Result<Output> {
         let cwd = PathBuf::from(&self.cwd);
+        let src_path = Path::new(&path);
+        // Worked out before `cwd` is moved into the initialiser.
+        let lookup_path = tsconfig_lookup_path(&cwd, src_path).into_owned();
         let (resolver, tsconfig_source) =
             RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd, vec![]));
-        let src_path = Path::new(&path);
-        let resolved_tsconfig = tsconfig_source.for_path(resolver, src_path);
+        let resolved_tsconfig = tsconfig_source.for_path(resolver, &lookup_path);
         oxc_transform(
             src_path,
             &source,
