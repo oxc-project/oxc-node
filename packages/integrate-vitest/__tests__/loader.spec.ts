@@ -298,9 +298,28 @@ describe("JSON modules", () => {
   test.each(["default-import", "named-import", "dynamic-import", "with-attribute"])(
     "%s",
     (name) => {
-      expect(runOk(jsonFixture(), [`./${name}.ts`])).toContain("version: 9.9.9");
+      expect(reported(runOk(jsonFixture(), [`./${name}.ts`]), "version")).toBe("9.9.9");
     },
   );
+
+  // An array or a scalar has no keys to turn into named exports, but the format still has to
+  // match the one the resolve hook reported, or Node.js hands the generated source to
+  // `Module._extensions[".json"]` and `JSON.parse` chokes on the JavaScript.
+  test.each([
+    ["an array", '["one","two"]', "2"],
+    ["a number", "42", "42"],
+    ["a string", '"text"', "text"],
+  ])("%s still has a default export", (_name, json, expected) => {
+    const root = fixture({
+      "package.json": MODULE_PACKAGE,
+      "data.json": json,
+      "entry.ts": [
+        'import data from "./data.json";',
+        'console.log("value:", Array.isArray(data) ? data.length : data);',
+      ].join("\n"),
+    });
+    expect(reported(runOk(root, ["./entry.ts"]), "value")).toBe(expected);
+  });
 });
 
 describe("resolution", () => {

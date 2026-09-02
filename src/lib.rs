@@ -736,9 +736,14 @@ fn transform_output(
                         response_url: Some(url),
                     });
                 }
+                // Arrays and scalars have no keys to turn into named exports, but the
+                // format still has to be the one the resolve hook reported for a JSON
+                // module without an import attribute. Reporting `commonjs` here makes
+                // Node.js hand this source to `Module._extensions[".json"]`, which
+                // `JSON.parse`s it and chokes on the JavaScript.
                 return Ok(LoadFnOutput {
-                    format: "commonjs".to_owned(),
-                    source: Some(Either4::A(format!("module.exports = {source_str}"))),
+                    format: "module".to_owned(),
+                    source: Some(Either4::A(format!("export default {source_str}"))),
                     response_url: Some(url),
                 });
             }
