@@ -212,6 +212,9 @@ impl Task for TransformTask {
             resolved_tsconfig.as_ref().map(|t| &t.compiler_options),
             Some(Module::CommonJS),
             true,
+            // The `pirates` hook and this public API both target CommonJS, so keep letting
+            // the extension and the source decide.
+            false,
         )
     }
 
@@ -253,6 +256,7 @@ impl OxcTransformer {
             resolved_tsconfig.as_ref().map(|t| &t.compiler_options),
             Some(Module::CommonJS),
             true,
+            false,
         )
     }
 
@@ -272,9 +276,15 @@ fn oxc_transform<S: TryAsStr>(
     compiler_options: Option<&'static CompilerOptions>,
     module_target: Option<Module>,
     enable_top_level_await: bool,
+    is_es_module: bool,
 ) -> Result<Output> {
     let allocator = Allocator::default();
-    let source_type = SourceType::from_path(src_path).unwrap_or_default();
+    // `.js`, `.jsx`, `.ts` and `.tsx` are ambiguous: oxc decides between a script and an ES
+    // module by looking for `import`/`export` syntax, so a file that has none is treated as
+    // a script and the helper loader emits `require()` for the helpers it injects. Node.js
+    // decides from the nearest `package.json` instead and would then run that `require()` in
+    // an ES module. Only the caller knows which it is, so let it say.
+    let source_type = SourceType::from_path(src_path).unwrap_or_default().with_module(is_es_module);
     let source_str = code.try_as_str()?;
     let ParserReturn { mut program, diagnostics, .. } =
         Parser::new(&allocator, source_str, source_type).parse();
@@ -645,12 +655,14 @@ fn transform_output(
                 });
             }
 
+            let is_es_module = output.format == "module";
             let transform_output = oxc_transform(
                 src_path,
                 output.source.as_ref().unwrap(),
                 resolved_compiler_options,
                 Some(Module::Preserve),
-                output.format != "module",
+                !is_es_module,
+                is_es_module,
             )?;
             let output_code = transform_output
                 .map
