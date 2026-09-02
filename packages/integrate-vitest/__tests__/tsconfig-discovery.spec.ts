@@ -57,8 +57,25 @@ const createProject = (files: Record<string, string>) => {
   return root;
 };
 
-const runNode = (cwd: string, args: string[], env: Record<string, string | undefined> = {}) =>
-  spawnSync(process.execPath, args, {
+// Node itself writes to stderr for reasons that have nothing to do with the
+// scenario under test. The `test-wasi` CI job runs the whole suite with
+// `NAPI_RS_FORCE_WASI=true`, and loading the WASI binding makes every
+// subprocess print `ExperimentalWarning: WASI is an experimental feature`,
+// which would fail each `stderr` assertion below even though the run
+// succeeded. Drop Node's own warnings and keep everything else, so a real
+// error still fails the test. `stdin-tty.spec.ts` filters the same two lines.
+const stripNodeWarnings = (stderr: string) =>
+  stderr
+    .split("\n")
+    .filter(
+      (line) =>
+        !line.includes("ExperimentalWarning") && !line.includes("Use `node --trace-warnings"),
+    )
+    .join("\n")
+    .trim();
+
+const runNode = (cwd: string, args: string[], env: Record<string, string | undefined> = {}) => {
+  const result = spawnSync(process.execPath, args, {
     cwd,
     encoding: "utf8",
     env: {
@@ -71,6 +88,8 @@ const runNode = (cwd: string, args: string[], env: Record<string, string | undef
       ...env,
     },
   });
+  return { ...result, stderr: stripNodeWarnings(result.stderr) };
+};
 
 /** The code the transformer emits for `entry`, run from `cwd` inside `root`. */
 const emit = (root: string, cwd: string, entry: string, env?: Record<string, string | undefined>) =>
