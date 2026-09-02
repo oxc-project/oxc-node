@@ -88,6 +88,11 @@ enabled, so by default no config claims them and they are compiled with no
 options. For **module resolution** they are matched as if they were TypeScript,
 which keeps path aliases working from JavaScript without `allowJs`.
 
+A `tsconfig.json` that fails to parse stops the search: that file and every
+directory above it are skipped, and the file is compiled with no options.
+Comments and trailing commas are fine — only genuinely invalid JSON does this.
+Run with `OXC_LOG=debug` to see which config was picked for each file.
+
 Set `OXC_TSCONFIG_PATH` to pin one config for every file instead. `TS_NODE_PROJECT`
 is also supported and takes precedence when both variables are set; an empty value
 counts as unset. Naming a file that does not exist disables `tsconfig.json`
