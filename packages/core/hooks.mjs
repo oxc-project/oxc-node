@@ -97,7 +97,50 @@ function resolve(specifier, context, nextResolve) {
     // still prefers `foo.json` over `foo.ts`.
     return nextResolve(specifier, context);
   }
-  return createResolve(RESOLVE_OPTIONS, specifier, withArrayConditions(context), nextResolve);
+  return createResolve(
+    RESOLVE_OPTIONS,
+    specifier,
+    withArrayConditions(context),
+    withOriginalSpecifier(specifier, nextResolve),
+  );
+}
+
+/**
+ * Wrap `nextResolve` so the rest of the hook chain is asked about the specifier as it was
+ * written, not about the URL oxc-node resolved it to.
+ *
+ * The native resolver resolves the specifier itself and then calls `nextResolve` with the
+ * result, to have Node.js validate it and fill in the resolution metadata. Under
+ * `module.register()` that was invisible: oxc-node's hooks ran on a separate loader thread,
+ * after every in-thread hook, so those hooks always saw the original specifier. With
+ * `module.registerHooks()` there is a single chain and oxc-node runs first, so passing the
+ * resolved URL down would hide the specifier from module mocking and policy hooks.
+ *
+ * Node.js cannot resolve everything oxc-node can — tsconfig `paths` aliases, extensionless
+ * TypeScript — so when it fails, fall back to asking about the resolved URL.
+ *
+ * @param {string} specifier
+ * @param {import('node:module').ResolveHook} nextResolve
+ * @returns {import('node:module').ResolveHook}
+ */
+function withOriginalSpecifier(specifier, nextResolve) {
+  return (resolved, context) => {
+    if (resolved !== specifier) {
+      let output;
+      try {
+        output = nextResolve(specifier, context);
+      } catch {
+        // Only oxc-node can resolve this one.
+        return nextResolve(resolved, context);
+      }
+      // These hooks only ever run under the synchronous `module.registerHooks()`, but the
+      // hook signature allows a promise, and spreading one would silently produce garbage.
+      if (output !== null && typeof output === "object" && !("then" in output)) {
+        return { ...output, url: resolved };
+      }
+    }
+    return nextResolve(resolved, context);
+  };
 }
 
 /**

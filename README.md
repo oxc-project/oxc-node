@@ -87,10 +87,15 @@ Node.js v26.0.0; every version that emits that warning uses the synchronous hook
 instead, so the warning never appears.
 
 `module.registerHooks()` has a single hook chain and runs the most recently
-registered hook first. A hook registered _before_ `@oxc-node/core/register`
-therefore runs _after_ it and is handed the resolved `file:` URL instead of the
-original specifier. Register such hooks after oxc-node to see specifiers as they
-were written:
+registered hook first, so a hook registered _before_ `@oxc-node/core/register`
+runs _after_ it. oxc-node still asks the rest of the chain about each specifier
+as it was written, so those hooks observe every module under its original
+specifier.
+
+Replacing a module is the one thing that needs the other order: oxc-node
+resolves first, so its URL wins over a redirect from a hook that runs after it.
+Register hooks that rewrite specifiers — module mocking, import maps — after
+oxc-node:
 
 ```bash
 node --import @oxc-node/core/register --import ./my-hooks.mjs ./entry.ts

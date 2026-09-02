@@ -570,10 +570,11 @@ describe("hook chain", () => {
     expect(output).toContain("observed: ./dep.ts");
   });
 
-  test("a hook registered before oxc-node still observes every module", () => {
-    // `module.registerHooks()` has a single chain and runs the most recently registered
-    // hook first, so a hook registered *before* oxc-node now runs after it and is handed
-    // the resolved URL instead of the original specifier. It still sees every module.
+  test("a hook registered before oxc-node also sees the original specifier", () => {
+    // `module.registerHooks()` has a single chain and runs the most recently registered hook
+    // first, so a hook registered *before* oxc-node runs after it. oxc-node still asks the
+    // rest of the chain about the specifier as written, the way it looked when oxc-node's
+    // hooks ran on a separate loader thread.
     const root = fixture(HOOK_CHAIN);
     const { output, status } = spawn(root, [
       "--import",
@@ -584,7 +585,39 @@ describe("hook chain", () => {
     ]);
     expect(status, output).toBe(0);
     expect(output).toContain("dep: dep");
-    expect(output).toContain(USES_REGISTER_HOOKS ? "observed: url" : "observed: ./dep.ts");
+    expect(output).toContain("observed: ./dep.ts");
+  });
+
+  // The remaining difference from the `module.register()` loader, recorded rather than
+  // hidden. There, oxc-node's hooks ran on a separate loader thread after every in-thread
+  // hook, so short circuiting one replaced the module whichever order it was registered in.
+  // The synchronous hooks are a single chain in which oxc-node resolves first and its URL
+  // wins, so a hook that redirects a specifier has to be registered after oxc-node.
+  test("a redirect wins when the hook is registered after oxc-node", () => {
+    const root = fixture({
+      ...HOOK_CHAIN,
+      "mock.ts": 'export const dep = "mocked";\n',
+      "redirect.mjs": [
+        'import { registerHooks } from "node:module";',
+        "registerHooks({",
+        "  resolve(specifier, context, nextResolve) {",
+        '    if (specifier === "./dep.ts" || specifier.endsWith("/dep.ts")) {',
+        '      return { url: new URL("./mock.ts", import.meta.url).href, shortCircuit: true };',
+        "    }",
+        "    return nextResolve(specifier, context);",
+        "  },",
+        "});",
+      ].join("\n"),
+    });
+    const after = spawn(root, ["--import", REGISTER, "--import", "./redirect.mjs", "./entry.ts"]);
+    expect(after.status, after.output).toBe(0);
+    expect(after.output).toContain("dep: mocked");
+
+    const before = spawn(root, ["--import", "./redirect.mjs", "--import", REGISTER, "./entry.ts"]);
+    expect(before.status, before.output).toBe(0);
+    // Registered first means it runs last, so oxc-node's resolution wins — unlike under the
+    // `module.register()` loader, where the in-thread hook always ran first.
+    expect(before.output).toContain(USES_REGISTER_HOOKS ? "dep: dep" : "dep: mocked");
   });
 });
 
