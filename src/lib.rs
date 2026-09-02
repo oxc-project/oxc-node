@@ -232,6 +232,58 @@ const PATH_PREFIX: &str = "file://";
 #[cfg(target_os = "windows")]
 const PATH_PREFIX: &str = "file:///";
 
+/// Convert a `file://` URL into a filesystem path.
+///
+/// Node hands the loader hooks URLs, and a URL percent-encodes every character
+/// outside the unreserved set: a space arrives as `%20`, `õ` as `%C3%B5`.
+/// Slicing the scheme off without decoding leaves a string that still looks
+/// like a path but names a directory nobody has — so tsconfig discovery walks
+/// past the project and finds nothing, and relative specifiers resolve against
+/// a directory that does not exist.
+///
+/// The `file:///C:/…` form needs no special casing: [`PATH_PREFIX`] already
+/// carries the extra slash on Windows, so stripping it leaves the drive letter
+/// at the front where it belongs.
+///
+/// Returns `None` if `url` is not a `file://` URL, or if its escapes do not
+/// decode to valid UTF-8.
+fn file_url_to_path(url: &str) -> Option<PathBuf> {
+    let path = url.strip_prefix(PATH_PREFIX)?;
+    if !path.contains('%') {
+        return Some(PathBuf::from(path));
+    }
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        // A `%` that is not followed by two hex digits is not an escape. Node
+        // will not produce one, but a hand-written URL can, and copying it
+        // through verbatim beats refusing the whole path.
+        if bytes[index] == b'%'
+            && let Some(byte) = bytes
+                .get(index + 1)
+                .zip(bytes.get(index + 2))
+                .and_then(|(high, low)| Some(hex_digit(*high)? << 4 | hex_digit(*low)?))
+        {
+            decoded.push(byte);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok().map(PathBuf::from)
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 #[cfg(target_family = "wasm")]
 #[napi]
 pub fn init_tracing() {
@@ -586,14 +638,14 @@ pub fn create_resolve<'env>(
     // The importing file itself, when the parent URL is a file URL. Discovery
     // needs the file rather than its directory, because `TsconfigDiscovery::Auto`
     // matches a config's `files` / `include` / `exclude` against the file path.
-    let parent_file = match context.parent_url.as_deref() {
-        Some(parent) => {
-            Some(parent.strip_prefix(PATH_PREFIX).map(Path::new).ok_or_else(|| {
+    let parent_file =
+        match context.parent_url.as_deref() {
+            Some(parent) => Some(file_url_to_path(parent).ok_or_else(|| {
                 Error::new(Status::GenericFailure, "Parent URL is not a file URL")
-            })?)
-        }
-        None => None,
-    };
+            })?),
+            None => None,
+        };
+    let parent_file = parent_file.as_deref();
 
     let directory = match parent_file {
         Some(parent_file) => parent_file
@@ -605,7 +657,9 @@ pub fn create_resolve<'env>(
 
     let resolution = match (is_absolute_path, tsconfig_source, parent_file) {
         (true, ..) => {
-            resolver.resolve(Path::new("/"), specifier.strip_prefix(PATH_PREFIX).unwrap())
+            let specifier_path = file_url_to_path(&specifier)
+                .ok_or_else(|| Error::new(Status::GenericFailure, "Specifier is not a file URL"))?;
+            resolver.resolve(Path::new("/"), &specifier_path.to_string_lossy())
         }
         // `Resolver::resolve` only ever consults a *manually* configured tsconfig,
         // so under `TsconfigDiscovery::Auto` it would silently ignore `paths` and
@@ -733,8 +787,9 @@ pub fn load<'env>(
     // `url` is a `file://` URL here. Auto discovery needs the plain absolute
     // path: `find_tsconfig` bails out on anything that is not absolute, so
     // handing it the URL would silently yield no config for every file.
+    let source_path = file_url_to_path(&url);
     let tsconfig = tsconfig_source
-        .for_path(resolver, Path::new(url.strip_prefix(PATH_PREFIX).unwrap_or(url.as_str())));
+        .for_path(resolver, source_path.as_deref().unwrap_or_else(|| Path::new(url.as_str())));
 
     match loaded {
         Either::A(output) => Ok(Either::A(transform_output(

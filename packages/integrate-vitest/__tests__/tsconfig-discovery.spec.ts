@@ -306,3 +306,41 @@ test("a relative path into the transform API finds the same tsconfig as an absol
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Node hands the hooks percent-encoded URLs, so a directory name with a space
+// or a non-ASCII character reaches us as `My%20Pr%C3%B5ject`. Slicing off the
+// `file://` scheme without decoding names a directory that does not exist.
+test("a project directory with a space and non-ASCII characters still resolves", () => {
+  const project = "My Prõject";
+  const files = (dir: string) => ({
+    [`${dir}/package.json`]: JSON.stringify({ type: "module" }),
+    [`${dir}/tsconfig.json`]: JSON.stringify({
+      compilerOptions: {
+        target: "ES2022",
+        experimentalDecorators: true,
+        paths: { "@sub/*": ["./src/subdirectory/*"] },
+      },
+      include: ["src"],
+    }),
+    [`${dir}/src/subdirectory/bar.mts`]: 'export const bar = () => "bar";\n',
+    [`${dir}/src/entry.ts`]:
+      'import { bar } from "@sub/bar.mts";\nconsole.log("alias:" + bar());\n',
+    [`${dir}/src/decorated.ts`]: DECORATED,
+  });
+  const root = createProject({ ...files(project), ...files("plain") });
+  try {
+    // The ASCII-named copy is the control: both must behave identically.
+    for (const dir of [project, "plain"]) {
+      const source = join(root, dir, "src");
+
+      const ran = runWithHooks(source, "./entry.ts");
+      expect(ran.stderr, `${dir}: the paths alias should resolve`).toBe("");
+      expect(ran.stdout.trim(), `${dir}: the paths alias should resolve`).toBe("alias:bar");
+
+      const emitted = emit(root, source, "./decorated.ts");
+      expect(emitted.stdout, `${dir}: compiler options should apply`).toContain("_decorate");
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
