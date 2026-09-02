@@ -8,6 +8,14 @@ allowBuilds:
   nx: true
 
 catalog:
-  "@napi-rs/cli": 3.7.1
+  "@napi-rs/cli": 3.8.6
+  vite-plus: 0.3.0
+
+overrides:
+  "@emnapi/core": ^2.0.0-alpha.4
+  "@emnapi/runtime": ^2.0.0-alpha.4
 
 verifyDepsBeforeRun: install
+
+minimumReleaseAgeExclude:
+  - "@oxc-project/*"

@@ -4,37 +4,23 @@
   "private": true,
   "scripts": {
     "bench": "pnpm --filter=bench bench",
-    "fmt": "oxfmt && cargo fmt",
-    "lint": "oxlint",
+    "fmt": "vp fmt && cargo fmt",
+    "lint": "vp lint",
     "test": "pnpm --sequential --filter=integrate* run test",
-    "prepare": "husky"
+    "prepare": "vp config || exit 0"
   },
   "devDependencies": {
+    "@emnapi/runtime": "^2.0.0-alpha.4",
     "@napi-rs/cli": "catalog:",
-    "@napi-rs/wasm-runtime": "^1.0.1",
+    "@napi-rs/wasm-runtime": "^1.2.3",
     "@oxc-node/cli": "workspace:*",
     "@oxc-node/core": "workspace:*",
-    "@oxc-project/runtime": "^0.132.0",
-    "@types/node": "^25.0.0",
-    "ava": "^8.0.0",
-    "cross-env": "^10.0.0",
-    "emnapi": "^1.4.5",
-    "husky": "^9.1.7",
-    "lerna": "^9.0.0",
-    "lint-staged": "^17.0.0",
-    "npm-run-all2": "^9.0.0",
-    "oxfmt": "^0.54.0",
-    "oxlint": "^1.51.0",
-    "oxlint-tsgolint": "^0.23.0",
-    "typescript": "^6.0.0"
+    "@oxc-project/runtime": "^0.148.0",
+    "@types/node": "^26.4.0",
+    "emnapi": "^2.0.0-alpha.4",
+    "lerna": "^10.0.1",
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:"
   },
-  "lint-staged": {
-    "*": [
-      "oxfmt --no-error-on-unmatched-pattern"
-    ],
-    "*.@(js|ts|tsx)": [
-      "oxlint --fix"
-    ]
-  },
-  "packageManager": "pnpm@11.4.0"
+  "packageManager": "pnpm@11.25.0"
 }

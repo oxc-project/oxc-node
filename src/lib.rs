@@ -26,6 +26,7 @@ use oxc_resolver::{
     CompilerOptions, EnforceExtension, ModuleType, Resolution, ResolveOptions, Resolver, TsConfig,
     TsconfigDiscovery, TsconfigOptions, TsconfigReferences,
 };
+use oxc_sourcemap::SourceMap;
 use phf::Set;
 
 #[cfg(all(
@@ -152,7 +153,10 @@ fn init() {
 }
 
 #[napi]
-pub struct Output(CodegenReturn);
+pub struct Output {
+    code: String,
+    map: Option<SourceMap<'static>>,
+}
 
 #[napi]
 impl Output {
@@ -160,14 +164,14 @@ impl Output {
     /// Returns the generated code
     /// Cache the result of this function if you need to use it multiple times
     pub fn source(&self) -> String {
-        self.0.code.clone()
+        self.code.clone()
     }
 
     #[napi]
     /// Returns the source map as a JSON string
     /// Cache the result of this function if you need to use it multiple times
     pub fn source_map(&self) -> Option<String> {
-        self.0.map.clone().map(|s| s.to_json_string())
+        self.map.as_ref().map(|source_map| source_map.to_json_string())
     }
 }
 
@@ -233,9 +237,7 @@ impl OxcTransformer {
         Self {
             cwd: match cwd {
                 Some(cwd) => cwd,
-                None => env::current_dir()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap(),
+                None => env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap(),
             },
         }
     }
@@ -260,11 +262,7 @@ impl OxcTransformer {
         path: String,
         source: Either3<String, Uint8Array, Buffer>,
     ) -> AsyncTask<TransformTask> {
-        AsyncTask::new(TransformTask {
-            path,
-            source,
-            cwd: self.cwd.clone(),
-        })
+        AsyncTask::new(TransformTask { path, source, cwd: self.cwd.clone() })
     }
 }
 
@@ -278,27 +276,20 @@ fn oxc_transform<S: TryAsStr>(
     let allocator = Allocator::default();
     let source_type = SourceType::from_path(src_path).unwrap_or_default();
     let source_str = code.try_as_str()?;
-    let ParserReturn {
-        mut program,
-        errors,
-        ..
-    } = Parser::new(&allocator, source_str, source_type).parse();
-    if !errors.is_empty() {
-        let msg = join_errors(errors, source_str);
+    let ParserReturn { mut program, diagnostics, .. } =
+        Parser::new(&allocator, source_str, source_type).parse();
+    if !diagnostics.is_empty() {
+        let msg = join_errors(diagnostics.into_vec(), source_str);
         return Err(Error::new(
             Status::GenericFailure,
             format!("Failed to parse {}: {}", src_path.display(), msg),
         ));
     }
-    let scoping = SemanticBuilder::new()
-        .build(&program)
-        .semantic
-        .into_scoping();
+    let scoping = SemanticBuilder::new().build(&program).semantic.into_scoping();
 
-    let use_define_for_class_fields = compiler_options
-        .and_then(|c| c.use_define_for_class_fields)
-        .unwrap_or_default();
-    let TransformerReturn { errors, .. } = Transformer::new(
+    let use_define_for_class_fields =
+        compiler_options.and_then(|c| c.use_define_for_class_fields).unwrap_or_default();
+    let TransformerReturn { diagnostics, .. } = Transformer::new(
         &allocator,
         src_path,
         &TransformOptions {
@@ -307,11 +298,12 @@ fn oxc_transform<S: TryAsStr>(
                 ..Default::default()
             },
             decorator: DecoratorOptions {
-                legacy: compiler_options
-                    .and_then(|c| c.experimental_decorators)
-                    .unwrap_or(false),
+                legacy: compiler_options.and_then(|c| c.experimental_decorators).unwrap_or(false),
                 emit_decorator_metadata: compiler_options
                     .and_then(|c| c.emit_decorator_metadata)
+                    .unwrap_or(false),
+                strict_null_checks: compiler_options
+                    .and_then(|c| c.strict_null_checks)
                     .unwrap_or(false),
             },
             jsx: JsxOptions {
@@ -354,9 +346,7 @@ fn oxc_transform<S: TryAsStr>(
                     // Turn this on would throw error for all top-level awaits.
                     top_level_await: enable_top_level_await,
                 },
-                es2026: ES2026Options {
-                    explicit_resource_management: true,
-                },
+                es2026: ES2026Options { explicit_resource_management: true },
                 ..Default::default()
             },
             proposals: ProposalOptions {},
@@ -369,22 +359,21 @@ fn oxc_transform<S: TryAsStr>(
     )
     .build_with_scoping(scoping, &mut program);
 
-    if !errors.is_empty() {
-        let msg = join_errors(errors, source_str);
+    if !diagnostics.is_empty() {
+        let msg = join_errors(diagnostics.into_vec(), source_str);
         return Err(Error::new(
             Status::GenericFailure,
             format!("Failed to transform {}: {}", src_path.display(), msg),
         ));
     }
 
-    Ok(Output(
-        Codegen::new()
-            .with_options(CodegenOptions {
-                source_map_path: Some(src_path.to_path_buf()),
-                ..Default::default()
-            })
-            .build(&program),
-    ))
+    let CodegenReturn { code, map, .. } = Codegen::new()
+        .with_options(CodegenOptions {
+            source_map_path: Some(src_path.to_path_buf()),
+            ..Default::default()
+        })
+        .build(&program);
+    Ok(Output { code, map: map.map(|source_map| source_map.into_owned()) })
 }
 
 #[napi(object)]
@@ -410,10 +399,7 @@ pub struct ResolveFnOutput {
     pub import_attributes: Option<Either<HashMap<String, String>, Null>>,
 }
 
-#[cfg_attr(
-    not(target_family = "wasm"),
-    napi(object, object_from_js = false, object_to_js = false)
-)]
+#[cfg_attr(not(target_family = "wasm"), napi(object, object_from_js = false, object_to_js = false))]
 #[cfg_attr(target_family = "wasm", napi(object, object_to_js = false))]
 pub struct OxcResolveOptions {
     pub get_current_directory: Option<FunctionRef<(), String>>,
@@ -422,9 +408,7 @@ pub struct OxcResolveOptions {
 #[cfg(not(target_family = "wasm"))]
 impl FromNapiValue for OxcResolveOptions {
     unsafe fn from_napi_value(_: sys::napi_env, _value: sys::napi_value) -> Result<Self> {
-        Ok(OxcResolveOptions {
-            get_current_directory: None,
-        })
+        Ok(OxcResolveOptions { get_current_directory: None })
     }
 }
 
@@ -488,17 +472,13 @@ pub fn create_resolve<'env>(
 
     let directory = {
         if let Some(parent) = context.parent_url.as_deref() {
-            if let Some(parent) = parent
-                .strip_prefix(PATH_PREFIX)
-                .and_then(|p| Path::new(p).parent())
+            if let Some(parent) =
+                parent.strip_prefix(PATH_PREFIX).and_then(|p| Path::new(p).parent())
             {
                 tracing::debug!(directory = ?parent);
                 Ok(parent)
             } else {
-                Err(Error::new(
-                    Status::GenericFailure,
-                    "Parent URL is not a file URL",
-                ))
+                Err(Error::new(Status::GenericFailure, "Parent URL is not a file URL"))
             }
         } else {
             Ok(cwd.as_path())
@@ -506,16 +486,8 @@ pub fn create_resolve<'env>(
     }?;
 
     let resolution = resolver.resolve(
-        if is_absolute_path {
-            Path::new("/")
-        } else {
-            directory
-        },
-        if is_absolute_path {
-            specifier.strip_prefix(PATH_PREFIX).unwrap()
-        } else {
-            &specifier
-        },
+        if is_absolute_path { Path::new("/") } else { directory },
+        if is_absolute_path { specifier.strip_prefix(PATH_PREFIX).unwrap() } else { &specifier },
     );
 
     // import attributes
@@ -536,11 +508,7 @@ pub fn create_resolve<'env>(
         tracing::debug!(resolution = ?resolution, "resolved");
         let p = resolution.path();
         let url = oxc_resolved_path_to_url(&resolution);
-        if !p
-            .to_str()
-            .map(|p| p.contains(NODE_MODULES_PATH))
-            .unwrap_or(false)
-        {
+        if !p.to_str().map(|p| p.contains(NODE_MODULES_PATH)).unwrap_or(false) {
             let format = {
                 let ext = p.extension().and_then(|ext| ext.to_str());
 
@@ -668,20 +636,15 @@ pub fn load<'env>(
     }
 
     let loaded = next_load.call((url.clone(), Some(context)).into())?;
-    let (_, tsconfig, _) = RESOLVER_AND_TSCONFIG.get().ok_or_else(|| {
-        Error::new(
-            Status::GenericFailure,
-            "Failed to get resolver and tsconfig",
-        )
-    })?;
+    let (_, tsconfig, _) = RESOLVER_AND_TSCONFIG
+        .get()
+        .ok_or_else(|| Error::new(Status::GenericFailure, "Failed to get resolver and tsconfig"))?;
 
     let resolved_compiler_options = tsconfig.as_ref().map(|tsconfig| &tsconfig.compiler_options);
     match loaded {
-        Either::A(output) => Ok(Either::A(transform_output(
-            url,
-            output,
-            resolved_compiler_options,
-        )?)),
+        Either::A(output) => {
+            Ok(Either::A(transform_output(url, output, resolved_compiler_options)?))
+        }
         Either::B(promise) => promise
             .then(move |ctx| transform_output(url, ctx.value, resolved_compiler_options))
             .map(Either::B),
@@ -696,11 +659,7 @@ fn transform_output(
     match &output.source {
         Some(Either4::D(_)) | None => {
             tracing::debug!("No source code to transform {}", url);
-            Ok(LoadFnOutput {
-                format: output.format,
-                source: None,
-                response_url: Some(url),
-            })
+            Ok(LoadFnOutput { format: output.format, source: None, response_url: Some(url) })
         }
         Some(Either4::A(_) | Either4::B(_) | Either4::C(_)) => {
             let src_path = Path::new(&url);
@@ -754,19 +713,18 @@ fn transform_output(
                 output.format != "module",
             )?;
             let output_code = transform_output
-                .0
                 .map
                 .map(|sm| {
                     let sm = sm.to_data_url();
                     const SOURCEMAP_PREFIX: &str = "\n//# sourceMappingURL=";
-                    let len = sm.len() + transform_output.0.code.len() + 22;
+                    let len = sm.len() + transform_output.code.len() + 22;
                     let mut output_code = String::with_capacity(len + 22);
-                    output_code.push_str(&transform_output.0.code);
+                    output_code.push_str(&transform_output.code);
                     output_code.push_str(SOURCEMAP_PREFIX);
                     output_code.push_str(sm.as_str());
                     output_code
                 })
-                .unwrap_or_else(|| transform_output.0.code);
+                .unwrap_or_else(|| transform_output.code);
             tracing::debug!("loaded {} format: {}", url, output.format);
             Ok(LoadFnOutput {
                 format: output.format,
@@ -800,16 +758,10 @@ impl TryAsStr for Either3<String, Uint8Array, Buffer> {
         match self {
             Either3::A(s) => Ok(s),
             Either3::B(arr) => std::str::from_utf8(arr).map_err(|_| {
-                Error::new(
-                    Status::GenericFailure,
-                    "Failed to convert Uint8Array to Vec<u8>",
-                )
+                Error::new(Status::GenericFailure, "Failed to convert Uint8Array to Vec<u8>")
             }),
             Either3::C(buf) => std::str::from_utf8(buf).map_err(|_| {
-                Error::new(
-                    Status::GenericFailure,
-                    "Failed to convert Buffer to Vec<u8>",
-                )
+                Error::new(Status::GenericFailure, "Failed to convert Buffer to Vec<u8>")
             }),
         }
     }
@@ -820,21 +772,14 @@ impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
         match self {
             Either4::A(s) => Ok(s),
             Either4::B(arr) => std::str::from_utf8(arr).map_err(|_| {
-                Error::new(
-                    Status::GenericFailure,
-                    "Failed to convert Uint8Array to Vec<u8>",
-                )
+                Error::new(Status::GenericFailure, "Failed to convert Uint8Array to Vec<u8>")
             }),
             Either4::C(buf) => std::str::from_utf8(buf).map_err(|_| {
-                Error::new(
-                    Status::GenericFailure,
-                    "Failed to convert Buffer to Vec<u8>",
-                )
+                Error::new(Status::GenericFailure, "Failed to convert Buffer to Vec<u8>")
             }),
-            Either4::D(_) => Err(Error::new(
-                Status::InvalidArg,
-                "Invalid value type in LoadFnOutput::source",
-            )),
+            Either4::D(_) => {
+                Err(Error::new(Status::InvalidArg, "Invalid value type in LoadFnOutput::source"))
+            }
         }
     }
 }
@@ -854,29 +799,19 @@ fn init_resolver(
         PathBuf::from(&*tsconfig)
     };
     tracing::debug!(tsconfig_full_path = ?tsconfig_full_path);
-    let tsconfig =
-        fs::exists(&tsconfig_full_path)
-            .unwrap_or(false)
-            .then_some(TsconfigDiscovery::Manual(TsconfigOptions {
-                config_file: tsconfig_full_path.clone(),
-                references: TsconfigReferences::Auto,
-            }));
+    let tsconfig = fs::exists(&tsconfig_full_path).unwrap_or(false).then_some(
+        TsconfigDiscovery::Manual(TsconfigOptions {
+            config_file: tsconfig_full_path.clone(),
+            references: TsconfigReferences::Auto,
+        }),
+    );
     let resolver = Resolver::new(ResolveOptions {
         tsconfig,
         condition_names: conditions,
         extension_alias: vec![
-            (
-                ".js".to_owned(),
-                vec![".js".to_owned(), ".ts".to_owned(), ".tsx".to_owned()],
-            ),
-            (
-                ".mjs".to_owned(),
-                vec![".mjs".to_owned(), ".mts".to_owned()],
-            ),
-            (
-                ".cjs".to_owned(),
-                vec![".cjs".to_owned(), ".cts".to_owned()],
-            ),
+            (".js".to_owned(), vec![".js".to_owned(), ".ts".to_owned(), ".tsx".to_owned()]),
+            (".mjs".to_owned(), vec![".mjs".to_owned(), ".mts".to_owned()]),
+            (".cjs".to_owned(), vec![".cjs".to_owned(), ".cts".to_owned()]),
         ],
         enforce_extension: EnforceExtension::Auto,
         extensions: vec![
@@ -901,12 +836,7 @@ fn init_resolver(
 
     let default_module_resolved_from_tsconfig = if let Some(tsconfig) = tsconfig.as_ref() {
         if matches!(
-            tsconfig
-                .compiler_options
-                .module
-                .as_deref()
-                .map(|m| m.to_ascii_lowercase())
-                .as_deref(),
+            tsconfig.compiler_options.module.as_deref().map(|m| m.to_ascii_lowercase()).as_deref(),
             Some("nodenext")
                 | Some("node16")
                 | Some("node18")
