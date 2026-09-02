@@ -74,19 +74,19 @@ describe("supportsRegisterHooks", () => {
   // `import` conditions, which a loader cannot tell apart from a real `import`.
   test.each([
     ["20.19.0", false],
+    ["21.7.3", false],
     ["22.15.0", false],
     ["22.19.0", false],
-    ["22.23.2", false],
+    ["22.22.2", false],
+    ["22.22.3", true],
+    ["22.23.2", true],
     ["23.11.0", false],
     ["24.0.0", false],
-    ["24.5.0", false],
-    ["24.17.9", false],
-    ["24.18.0", true],
+    ["24.7.0", false],
+    ["24.8.0", true],
     ["24.20.0", true],
-    ["25.9.0", false],
-    ["26.0.0", false],
-    ["26.1.9", false],
-    ["26.2.0", true],
+    ["25.9.0", true],
+    ["26.0.0", true],
     ["26.8.1", true],
     ["27.0.0", true],
   ])("%s -> %s", (version, expected) => {
@@ -128,6 +128,59 @@ describe("CommonJS require()", () => {
 
   test("resolves and transpiles every extension oxc-node owns", () => {
     expect(runOk(fixture(REQUIRE_FIXTURE), ["./entry.cjs"])).toContain("ok");
+  });
+
+  // The route that differs most between Node.js versions: `require()` of a TypeScript file
+  // from a CommonJS module that Node.js itself loaded through the ESM CommonJS translator.
+  // Before v24.18.0 / v26.2.0 that `require()` was resolved with the `import` conditions,
+  // which is what `supportsRegisterHooks` gates on. `enum` also proves the file went
+  // through oxc-node rather than Node.js' own type stripping, which rejects it.
+  test("require() of a TypeScript file with syntax only oxc-node can lower", () => {
+    const root = fixture({
+      "package.json": MODULE_PACKAGE,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { module: "ESNext", target: "ES2022" } }),
+      "dep/package.json": COMMONJS_PACKAGE,
+      "dep/mod.ts": ["export enum E {", "  A = 1,", "}", "export const v: number = E.A;"].join(
+        "\n",
+      ),
+      "entry.cjs": [
+        'const assert = require("node:assert/strict");',
+        'assert.equal(require("./dep/mod.ts").v, 1);',
+        'console.log("ok");',
+      ].join("\n"),
+      // …and the same file reached through an `import` instead.
+      "entry.mts": [
+        'import assert from "node:assert/strict";',
+        'import { v } from "./dep/mod.ts";',
+        "assert.equal(v, 1);",
+        'console.log("ok");',
+      ].join("\n"),
+    });
+    expect(runOk(root, ["./entry.cjs"])).toContain("ok");
+    expect(runOk(root, ["./entry.mts"])).toContain("ok");
+  });
+
+  test("a .ts stack trace in a commonjs package points at the original source", () => {
+    const root = fixture({
+      "package.json": COMMONJS_PACKAGE,
+      // `new Error(message)` is on line 3, column 9.
+      "throws.ts": [
+        "export function boom(): never {",
+        '  const message: string = "boom";',
+        "  throw new Error(message);",
+        "}",
+      ].join("\n"),
+      "entry.cjs": [
+        'const { boom } = require("./throws");',
+        "try {",
+        "  boom();",
+        "} catch (error) {",
+        '  const frame = error.stack.split("\\n").find((line) => line.includes("throws.ts"));',
+        "  console.log(frame.trim());",
+        "}",
+      ].join("\n"),
+    });
+    expect(runOk(root, ["./entry.cjs"])).toMatch(/throws\.ts:3:9/);
   });
 
   // The `module.register()` fallback cannot serve `node -r`: `require()`ing the entry point
@@ -297,6 +350,36 @@ describe("resolution", () => {
 });
 
 describe("transforms", () => {
+  // Oxc does not lower ES modules to CommonJS, so a module Node.js classified as CommonJS
+  // can come out of the transform as an ES module — a `.ts` file in a `"type": "commonjs"`
+  // package, a `.cts` file, a `.es6` file (which has no module type at all), or any file
+  // that needed a transform helper. The loader reports the format that matches the code it
+  // hands back, so those modules load and keep their named exports.
+  //
+  // Only the synchronous hooks can do this: Node.js hands a CommonJS-classified module
+  // straight to the CommonJS loader without ever asking the asynchronous
+  // `module.register()` loader, which is why these imports fail on the fallback.
+  test.skipIf(!USES_REGISTER_HOOKS)(
+    "a CommonJS-classified module whose output is an ES module keeps its exports",
+    () => {
+      const root = fixture({
+        "package.json": MODULE_PACKAGE,
+        "legacy.es6": 'export const value = "es6";\n',
+        "dep/package.json": COMMONJS_PACKAGE,
+        "dep/mod.ts": 'export const value: string = "cjs-scoped-ts";\n',
+        "entry.ts": [
+          'import assert from "node:assert/strict";',
+          'import { value as legacy } from "./legacy.es6";',
+          'import { value as scoped } from "./dep/mod.ts";',
+          'assert.equal(legacy, "es6");',
+          'assert.equal(scoped, "cjs-scoped-ts");',
+          'console.log("ok");',
+        ].join("\n"),
+      });
+      expect(runOk(root, ["./entry.ts"])).toContain("ok");
+    },
+  );
+
   // A plain `.js` file is oxc-node's too. Whether a public class field is initialised with
   // `[[Set]]` or `[[Define]]` semantics is observable, and `useDefineForClassFields`
   // selects between them — so running the same file under both settings and getting

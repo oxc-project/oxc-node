@@ -77,13 +77,11 @@ transform hook.
 
 ### Loader implementation
 
-On Node.js v24.18.0 and later, and v26.2.0 and later, the hooks are installed
-with the synchronous, in-thread [`module.registerHooks()`][registerHooks].
-Everywhere else `register.mjs` falls back to [`module.register()`][register],
-which runs the hooks on a dedicated loader thread. `module.register()` has been
-runtime deprecated as DEP0205 since Node.js v26.0.0, so on v26.0.x and v26.1.x —
-which are missing the `require()` fix the synchronous hooks need — the
-deprecation warning is still emitted.
+On Node.js v22.22.3 and later, and v24.8.0 and later, the hooks are installed
+with the synchronous, in-thread [`module.registerHooks()`][registerHooks]. Older
+releases fall back to [`module.register()`][register], which runs the hooks on a
+dedicated loader thread; it is runtime deprecated as DEP0205 from Node.js v26.0.0,
+and every version that emits that warning uses the synchronous hooks instead.
 
 `module.registerHooks()` has a single hook chain and runs the most recently
 registered hook first. A hook registered _before_ `@oxc-node/core/register`

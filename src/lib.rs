@@ -10,6 +10,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use oxc::{
     allocator::Allocator,
+    ast::{ast::Statement, match_module_declaration},
     codegen::{Codegen, CodegenOptions, CodegenReturn},
     diagnostics::OxcDiagnostic,
     parser::{Parser, ParserReturn},
@@ -223,6 +224,10 @@ fn init() {
 pub struct Output {
     code: String,
     map: Option<SourceMap<'static>>,
+    /// Whether the generated code has to be executed as an ES module. Not exposed to
+    /// JavaScript: the `load` hook uses it to report the format that matches the code it
+    /// hands back to Node.js. See [`has_module_syntax`].
+    module: bool,
 }
 
 #[napi]
@@ -339,7 +344,7 @@ fn oxc_transform<S: TryAsStr>(
     let allocator = Allocator::default();
     let source_type = SourceType::from_path(src_path).unwrap_or_default();
     let source_str = code.try_as_str()?;
-    let ParserReturn { mut program, diagnostics, .. } =
+    let ParserReturn { mut program, diagnostics, module_record, .. } =
         Parser::new(&allocator, source_str, source_type).parse();
     if !diagnostics.is_empty() {
         let msg = join_errors(diagnostics.into_vec(), source_str);
@@ -348,6 +353,11 @@ fn oxc_transform<S: TryAsStr>(
             format!("Failed to parse {}: {}", src_path.display(), msg),
         ));
     }
+    // `import.meta` and top-level `await` also make a module an ES module, and the
+    // transformer preserves both, so take the parser's verdict on the input and add
+    // whatever module syntax the transform introduces (the helper loader emits `import`
+    // declarations).
+    let input_has_module_syntax = module_record.has_module_syntax;
     let scoping = SemanticBuilder::new().build(&program).semantic.into_scoping();
 
     let use_define_for_class_fields =
@@ -430,13 +440,20 @@ fn oxc_transform<S: TryAsStr>(
         ));
     }
 
+    let module = input_has_module_syntax || has_module_declaration(&program);
+
     let CodegenReturn { code, map, .. } = Codegen::new()
         .with_options(CodegenOptions {
             source_map_path: Some(src_path.to_path_buf()),
             ..Default::default()
         })
         .build(&program);
-    Ok(Output { code, map: map.map(|source_map| source_map.into_owned()) })
+    Ok(Output { code, map: map.map(|source_map| source_map.into_owned()), module })
+}
+
+/// Whether the program contains a top level `import` or `export` declaration.
+fn has_module_declaration(program: &oxc::ast::ast::Program<'_>) -> bool {
+    program.body.iter().any(|statement| matches!(statement, match_module_declaration!(Statement)))
 }
 
 #[napi(object)]
@@ -730,6 +747,21 @@ fn transform_output(
                 Some(Module::Preserve),
                 output.format != "module",
             )?;
+            // Oxc does not lower ES modules to CommonJS, and the helper loader emits
+            // `import` declarations, so the generated code can be an ES module even when
+            // Node.js classified the input as CommonJS (a `.ts` file in a `"type":
+            // "commonjs"` package, a `.cts` file, a `.js` file that needed a helper, …).
+            // Reporting `commonjs` for that code only works where Node.js happens to
+            // re-detect the module syntax while compiling it; on the CommonJS paths of the
+            // synchronous loader it does not, and the module fails with
+            // `SyntaxError: Unexpected token 'export'`. Report the format that matches the
+            // code actually being handed back.
+            let format = if transform_output.module && output.format.starts_with("commonjs") {
+                tracing::debug!("{} generated ES module syntax, reporting format: module", url);
+                "module".to_owned()
+            } else {
+                output.format
+            };
             let output_code = transform_output
                 .map
                 .map(|sm| {
@@ -743,9 +775,9 @@ fn transform_output(
                     output_code
                 })
                 .unwrap_or_else(|| transform_output.code);
-            tracing::debug!("loaded {} format: {}", url, output.format);
+            tracing::debug!("loaded {} format: {}", url, format);
             Ok(LoadFnOutput {
-                format: output.format,
+                format,
                 source: Some(Either4::B(Uint8Array::from_string(output_code))),
                 response_url: Some(url),
             })

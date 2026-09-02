@@ -8,8 +8,5 @@ import type { LoadHook, ResolveHook } from "node:module";
  */
 export declare function supportsRegisterHooks(version: string | undefined): boolean;
 
-/** The extensions the `pirates` hook installed by `register.mjs` claims. */
-export declare const DEFAULT_EXTENSIONS: readonly string[];
-
 export declare const resolve: ResolveHook;
 export declare const load: LoadHook;

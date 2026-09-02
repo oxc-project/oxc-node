@@ -85,12 +85,15 @@ test("CLI properly handles stdin piping", async () => {
     child.on("exit", resolve);
   });
 
-  // Filter out experimental warnings from stderr (e.g., WASI warnings)
+  // Filter out Node.js process warnings from stderr: WASI is experimental, and
+  // `module.register()` — which `register.mjs` falls back to on Node.js versions whose
+  // synchronous hooks cannot serve `require()` — is runtime deprecated as DEP0205.
   const stderrLines = stderr
     .split("\n")
     .filter(
       (line) =>
         !line.includes("ExperimentalWarning") &&
+        !line.includes("DeprecationWarning") &&
         !line.includes("Use `node --trace-warnings") &&
         line.trim().length > 0,
     );

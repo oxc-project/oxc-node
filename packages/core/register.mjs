@@ -2,11 +2,24 @@ import * as NodeModule from "node:module";
 
 import { addHook } from "pirates";
 
-import { DEFAULT_EXTENSIONS, load, resolve, supportsRegisterHooks } from "./hooks.mjs";
+import { load, resolve, supportsRegisterHooks } from "./hooks.mjs";
 import { initTracing, OxcTransformer } from "./index.js";
 
 // Destructure from NodeModule namespace to support older Node.js versions
 const { register, registerHooks, setSourceMapsSupport } = NodeModule;
+
+const DEFAULT_EXTENSIONS = [
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".mjs",
+  ".mts",
+  ".cjs",
+  ".cts",
+  ".es6",
+  ".es",
+];
 
 // Prefer the synchronous, in-thread `module.registerHooks()`: `module.register()` has been
 // runtime deprecated as DEP0205 since Node.js v26.0.0 and emits a warning on every

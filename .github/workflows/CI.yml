@@ -455,16 +455,26 @@ jobs:
         run: pnpm test
         env:
           NAPI_RS_FORCE_WASI: "true"
-  # `register.mjs` only uses `module.registerHooks()` from Node.js v24.18.0 / v26.2.0 and
-  # falls back to `module.register()` everywhere else. Every other test job pins
+  # `register.mjs` only uses `module.registerHooks()` from Node.js v22.22.3 / v24.8.0 and
+  # falls back to `module.register()` below that. Every other test job pins
   # `check-latest`/`node:<major>-slim`, so without this job the `module.register()` fallback
-  # and `esm.mjs` would not be exercised at all. v22.18.0 is also the oldest release the
-  # dev toolchain supports.
+  # and `esm.mjs` would not be exercised at all.
+  #
+  # * 22.18.0 is the oldest release the dev toolchain supports.
+  # * 24.7.0 is the last release in the 24 line that still needs the fallback, so this pins
+  #   the lower side of the version gate; the `node@22`/`node@24` jobs above run 22.22.3 and
+  #   24.8.0 or later and therefore pin the upper side.
   test-register-fallback:
-    name: Test module.register() fallback - node@22.18.0
+    name: Test module.register() fallback - node@${{ matrix.node }}
     needs:
       - build
       - build-cli
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - "22.18.0"
+          - "24.7.0"
     runs-on: ubuntu-latest
     steps:
       - uses: taiki-e/checkout-action@7d1e50e93dc4fb3bba58f85018fadf77898aee8b # v1.4.2
@@ -473,7 +483,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.18.0
+          node-version: ${{ matrix.node }}
           package-manager-cache: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
