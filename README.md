@@ -75,6 +75,29 @@ node --import @oxc-node/core/register --test
 The register entry point installs both the ESM loader hooks and a CommonJS
 transform hook.
 
+### Loader implementation
+
+On Node.js v24.18.0 and later, and v26.2.0 and later, the hooks are installed
+with the synchronous, in-thread [`module.registerHooks()`][registerHooks].
+Everywhere else `register.mjs` falls back to [`module.register()`][register],
+which runs the hooks on a dedicated loader thread. `module.register()` has been
+runtime deprecated as DEP0205 since Node.js v26.0.0, so on v26.0.x and v26.1.x —
+which are missing the `require()` fix the synchronous hooks need — the
+deprecation warning is still emitted.
+
+`module.registerHooks()` has a single hook chain and runs the most recently
+registered hook first. A hook registered _before_ `@oxc-node/core/register`
+therefore runs _after_ it and is handed the resolved `file:` URL instead of the
+original specifier. Register such hooks after oxc-node to see specifiers as they
+were written:
+
+```bash
+node --import @oxc-node/core/register --import ./my-hooks.mjs ./entry.ts
+```
+
+[registerHooks]: https://nodejs.org/api/module.html#moduleregisterhooksoptions
+[register]: https://nodejs.org/api/module.html#moduleregisterspecifier-parenturl-options
+
 ## Configuration
 
 By default, `oxc-node` reads `tsconfig.json` from the current working directory.

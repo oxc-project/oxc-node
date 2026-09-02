@@ -190,6 +190,27 @@ jobs:
       - name: Build
         run: ${{ matrix.settings.build }}
         shell: bash
+      # The napi-rs generated JS/TS bindings are committed. Only the wasm target
+      # regenerates all of them (the native targets reuse the export list recorded in
+      # `oxc-node.wasi.cjs`), so this is the one job that can detect drift.
+      - name: Check the committed napi bindings are up to date
+        if: matrix.settings.target == 'wasm32-wasip1-threads'
+        shell: bash
+        run: |
+          # napi-rs emits unformatted code; the repository stores it formatted.
+          pnpm fmt
+          git diff --exit-code -- \
+            packages/core/browser.js \
+            packages/core/index.d.ts \
+            packages/core/index.js \
+            packages/core/oxc-node.wasi-browser.js \
+            packages/core/oxc-node.wasi.cjs \
+            packages/core/oxc-node.wasi.d.cts \
+            packages/core/wasi-worker-browser.mjs \
+            packages/core/wasi-worker.mjs || {
+            echo "::error::The committed napi bindings are stale. Run \`just build\` and \`pnpm fmt\`, then commit the result."
+            exit 1
+          }
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -434,6 +455,48 @@ jobs:
         run: pnpm test
         env:
           NAPI_RS_FORCE_WASI: "true"
+  # `register.mjs` only uses `module.registerHooks()` from Node.js v24.18.0 / v26.2.0 and
+  # falls back to `module.register()` everywhere else. Every other test job pins
+  # `check-latest`/`node:<major>-slim`, so without this job the `module.register()` fallback
+  # and `esm.mjs` would not be exercised at all. v22.18.0 is also the oldest release the
+  # dev toolchain supports.
+  test-register-fallback:
+    name: Test module.register() fallback - node@22.18.0
+    needs:
+      - build
+      - build-cli
+    runs-on: ubuntu-latest
+    steps:
+      - uses: taiki-e/checkout-action@7d1e50e93dc4fb3bba58f85018fadf77898aee8b # v1.4.2
+      - name: setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - name: Setup node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.18.0
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli
+          path: ./packages/cli/dist
+      - name: Install dependencies
+        run: pnpm install
+      - name: Download artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bindings-x86_64-unknown-linux-gnu
+          path: ./packages/core
+      - name: Copy OXC Runtime
+        run: pnpm --filter=@oxc-node/core export-oxc-runtime
+      - name: Assert the fallback is the loader under test
+        run: |
+          node --input-type=module -e "
+            import assert from 'node:assert/strict';
+            import { supportsRegisterHooks } from './packages/core/hooks.mjs';
+            assert.equal(supportsRegisterHooks(process.versions.node), false);
+          "
+      - name: Test bindings
+        run: pnpm test
   publish:
     name: Publish
     runs-on: ubuntu-latest
@@ -443,6 +506,7 @@ jobs:
       - test-linux-binding
       - build-freebsd
       - test-wasi
+      - test-register-fallback
     permissions:
       contents: write
       id-token: write

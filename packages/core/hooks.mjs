@@ -1,122 +1,156 @@
-import { createRequire } from "node:module";
-import { extname } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { createResolve, load as oxcLoad } from "./index.js";
 
-// `index.js` is CommonJS. Load it with `createRequire` rather than a named ESM import:
-// its native exports are only statically detectable once oxc-node's own hooks are active,
-// so a top-level `import { … } from "./index.js"` can fail to resolve freshly added
-// exports in some bootstrap scenarios (e.g. `--eval` entrypoints).
-const {
-  createResolve,
-  initTracing,
-  load: oxcLoad,
-  resolveCjsSpecifier,
-} = createRequire(import.meta.url)("./index.js");
-
-initTracing();
-
-// File extensions oxc-node is responsible for transforming (TypeScript / JSX / etc.).
-// Anything resolving to a different kind of file (plain `.js`, `.cjs`, `.json`, native
-// addons, …) is handed straight back to Node.js untouched. This matters for the
-// synchronous `module.registerHooks()` loader: when a CommonJS module is resolved and
-// loaded through a customization hook, Node.js can no longer follow transitive
-// `require()` re-exports (e.g. `__export(require("./src"))`) while detecting named
-// exports, so `import { foo } from "cjs-pkg"` would fail. The legacy `module.register()`
-// worker-thread loader did not have this limitation. By leaving such modules entirely to
-// Node.js, its built-in CommonJS named-export detection keeps working.
-// Extensions oxc-node actually transforms. Matched against the raw resolved string
-// (no `new URL()` allocation, which dominated the hot path) — extension characters are
-// never percent-encoded, so a substring match is safe.
-const TRANSFORM_EXTENSION = /\.(?:[mc]?tsx?|jsx|es6?|es)(?:[?#]|$)/;
-
-// Whether a resolved URL/path points at a file oxc-node must transform.
-function needsTransform(url) {
-  return typeof url === "string" && TRANSFORM_EXTENSION.test(url);
+/**
+ * Whether `module.registerHooks()` can be used on this Node.js version.
+ *
+ * This is deliberately a version check and not a feature check: `registerHooks` itself
+ * exists from v22.15.0 / v23.5.0, long before the synchronous hook API became usable as a
+ * loader.
+ *
+ * Until v24.18.0 / v26.2.0, a `require()` made from a CommonJS module that Node.js itself
+ * loaded through the ESM CommonJS translator was routed through the *ESM* resolver: the
+ * `resolve` hook was handed the already resolved URL together with the **`import`**
+ * condition set, and the module was then loaded as ESM. A loader cannot tell such a
+ * `require()` apart from an `import`, so it hands the CommonJS loader an ES module and the
+ * `require()` fails (`SyntaxError: Unexpected token 'export'`, or
+ * `TypeError: Cannot read properties of undefined (reading 'exports')`). From v24.18.0 /
+ * v26.2.0 the hook receives the original specifier with the `require` conditions and the
+ * module is compiled through `Module._extensions`, where `register.mjs` installs `pirates`.
+ *
+ * Earlier versions have a second problem: until v22.19.0 / v24.5.0 the export conditions
+ * were passed to hooks as a `SafeSet` rather than an array (`getCjsConditionsArray()`), so
+ * `conditions.includes("require")` could not detect the CommonJS branch at all.
+ *
+ * Node.js 22, 23 and 25 never received the v24.18.0 fix and keep using
+ * `module.register()`. Only v26.0.x and v26.1.x are both excluded here and
+ * runtime-deprecating `module.register()` (DEP0205, from v26.0.0).
+ *
+ * @param {string | undefined} version the `x.y.z` version, e.g. `process.versions.node`
+ * @returns {boolean}
+ */
+export function supportsRegisterHooks(version) {
+  const parsed = /^v?(\d+)\.(\d+)\./.exec(version ?? "");
+  if (parsed === null) {
+    return false;
+  }
+  const major = Number(parsed[1]);
+  const minor = Number(parsed[2]);
+  if (major === 24) {
+    return minor >= 18;
+  }
+  if (major === 26) {
+    return minor >= 2;
+  }
+  // Node.js 22, 23 and 25 are excluded; 27 and later inherit the fix from main.
+  return major >= 27;
 }
 
-// Complete an extensionless CommonJS `require()` specifier that points at a file oxc-node
-// transforms, using oxc-node's own resolver (which honours tsconfig `paths`, package
-// `exports`, conditions and symlinks). Under `module.registerHooks()`, CommonJS
-// `require()` is routed through this ESM-style resolve hook, whose `nextResolve` does not
-// consult `Module._extensions` (where `pirates` installs its TypeScript handler).
-// Returning a concrete `file:` URL lets the CommonJS loader find the file and `pirates`
-// transpile it, matching the legacy `module.register()` worker-thread loader.
-function completeCommonJsTypeScript(specifier, parentURL) {
-  if (extname(specifier) !== "") {
-    return undefined;
+/** The extensions the `pirates` hook installed by `register.mjs` claims. */
+export const DEFAULT_EXTENSIONS = [
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".mjs",
+  ".mts",
+  ".cjs",
+  ".cts",
+  ".es6",
+  ".es",
+];
+
+const PIRATES_EXTENSIONS = new Set(DEFAULT_EXTENSIONS);
+
+/**
+ * Whether `pirates` will transpile this module, in which case the `load` hook must leave
+ * it alone: transforming it here as well would register a second, conflicting source map
+ * for the same file and report generated positions in stack traces.
+ *
+ * `pirates` only sees modules Node.js compiles through `Module._extensions`, which is
+ * every module it classified as CommonJS, and it ignores `node_modules` — where the ESM
+ * `load` binding still applies `OXC_TRANSFORM_ALL`.
+ *
+ * @param {string} url
+ * @param {string | null | undefined} format
+ * @returns {boolean}
+ */
+function isTranspiledByPirates(url, format) {
+  if (typeof format !== "string" || !format.startsWith("commonjs") || !url.startsWith("file:")) {
+    return false;
   }
-  let parentPath;
-  if (typeof parentURL === "string") {
-    try {
-      parentPath = fileURLToPath(parentURL);
-    } catch {
-      parentPath = undefined;
-    }
+  // Match on `pathname` so that a `?query` or `#fragment` cannot be mistaken for an
+  // extension, and so percent-encoded path segments are handled.
+  const { pathname } = new URL(url);
+  const dot = pathname.lastIndexOf(".");
+  if (dot === -1 || !PIRATES_EXTENSIONS.has(pathname.slice(dot).toLowerCase())) {
+    return false;
   }
-  const resolved = resolveCjsSpecifier(specifier, parentPath);
-  if (needsTransform(resolved)) {
-    return pathToFileURL(resolved).href;
-  }
-  return undefined;
+  return !pathname.includes("/node_modules/");
 }
+
+/**
+ * Whether the hook was called for a CommonJS `require()` rather than an `import`.
+ *
+ * A `Set` is still accepted even though {@link supportsRegisterHooks} keeps us off the
+ * versions that pass one, so that a mistake there cannot silently turn every `require()`
+ * into an `import`.
+ *
+ * @param {readonly string[] | Set<string> | undefined} conditions
+ * @returns {boolean}
+ */
+function isCommonJs(conditions) {
+  if (Array.isArray(conditions)) {
+    return conditions.includes("require");
+  }
+  return typeof conditions?.has === "function" && conditions.has("require");
+}
+
+/**
+ * The native binding types `conditions` as an array. See {@link isCommonJs} for why a
+ * `Set` may still turn up.
+ *
+ * @template {{ conditions?: readonly string[] | Set<string> }} T
+ * @param {T} context
+ * @returns {T}
+ */
+function withArrayConditions(context) {
+  const { conditions } = context;
+  if (conditions === undefined || Array.isArray(conditions)) {
+    return context;
+  }
+  return { ...context, conditions: Array.from(conditions) };
+}
+
+function getCurrentDirectory() {
+  return process.cwd();
+}
+
+const RESOLVE_OPTIONS = { getCurrentDirectory };
 
 /**
  * @type {import('node:module').ResolveHook}
  */
 function resolve(specifier, context, nextResolve) {
-  // CommonJS `require()` (only reachable under `module.registerHooks()`). Keep these on
-  // Node's built-in CommonJS resolution + `pirates` transpilation instead of oxc-node's
-  // ESM resolver, which would hand the CommonJS loader an ESM `file:` URL it cannot load.
-  // We only step in to complete an extensionless TypeScript/JSX specifier Node would reject.
-  if (context?.conditions?.includes("require")) {
-    const completed = completeCommonJsTypeScript(specifier, context.parentURL);
-    return completed !== undefined
-      ? { url: completed, shortCircuit: true }
-      : nextResolve(specifier, context);
+  if (isCommonJs(context.conditions)) {
+    // Leave the whole CommonJS `require()` path to Node.js, which is where the
+    // asynchronous `module.register()` loader left it too: its hooks cannot serve a
+    // synchronous `require()`, so `require()` never reached them. Node.js' CommonJS
+    // resolution honours `Module._extensions`, where the `pirates` hook installed by
+    // `register.mjs` registers every extension oxc-node transpiles, so `require("./foo")`
+    // still finds `foo.ts` — and still prefers `foo.json` over `foo.ts`.
+    return nextResolve(specifier, context);
   }
-
-  // Fast path: a specifier that already carries a transformable extension (e.g.
-  // `./foo.ts`) is unconditionally oxc-node's to resolve, so skip the speculative
-  // `nextResolve` below (whose result would only be discarded). This avoids resolving
-  // every relative TypeScript import twice.
-  if (needsTransform(specifier)) {
-    return createResolve({ getCurrentDirectory: getCwd }, specifier, context, nextResolve);
-  }
-
-  // Otherwise let Node.js resolve first. If the target is not something oxc-node
-  // transforms, return Node's own result verbatim — preserving the resolution metadata
-  // Node relies on (notably for CommonJS named-export detection) instead of round-tripping
-  // it through the native binding. Node's resolver cannot handle TypeScript-only constructs
-  // (tsconfig `paths`, extensionless `.ts`, …), so a failure simply means oxc-node must
-  // resolve it.
-  try {
-    const nodeResolved = nextResolve(specifier, context);
-    if (nodeResolved !== undefined && !needsTransform(nodeResolved.url)) {
-      return nodeResolved;
-    }
-  } catch {
-    // Fall through to oxc-node's resolver below.
-  }
-  return createResolve({ getCurrentDirectory: getCwd }, specifier, context, nextResolve);
-}
-
-function getCwd() {
-  return process.cwd();
+  return createResolve(RESOLVE_OPTIONS, specifier, withArrayConditions(context), nextResolve);
 }
 
 /**
  * @type {import('node:module').LoadHook}
  */
 function load(url, context, nextLoad) {
-  // Cheap checks first: only transform when Node classified the module as ESM ("module")
-  // and it is a file oxc-node owns. CommonJS sources (`.cts`, or `.ts` in a
-  // `"type": "commonjs"` scope) are transpiled by the `pirates` CommonJS hook installed in
-  // `register.mjs`, which emits CommonJS output with an accurate inline source map; routing
-  // them through the ESM `load` binding would yield ESM output and a mismatched source map.
-  if (context?.format === "commonjs" || !needsTransform(url)) {
+  if (isCommonJs(context.conditions) || isTranspiledByPirates(url, context.format)) {
     return nextLoad(url, context);
   }
-  return oxcLoad(url, context, nextLoad);
+  return oxcLoad(url, withArrayConditions(context), nextLoad);
 }
 
 export { load, resolve };

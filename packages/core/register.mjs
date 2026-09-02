@@ -2,29 +2,18 @@ import * as NodeModule from "node:module";
 
 import { addHook } from "pirates";
 
-import { OxcTransformer } from "./index.js";
+import { DEFAULT_EXTENSIONS, load, resolve, supportsRegisterHooks } from "./hooks.mjs";
+import { initTracing, OxcTransformer } from "./index.js";
 
 // Destructure from NodeModule namespace to support older Node.js versions
 const { register, registerHooks, setSourceMapsSupport } = NodeModule;
 
-const DEFAULT_EXTENSIONS = new Set([
-  ".js",
-  ".jsx",
-  ".ts",
-  ".tsx",
-  ".mjs",
-  ".mts",
-  ".cjs",
-  ".cts",
-  ".es6",
-  ".es",
-]);
-
-// Prefer the synchronous, in-thread `module.registerHooks()` (Node.js >= 23.5.0 / 22.15.0).
-// It avoids the DEP0205 deprecation warning emitted by `module.register()`, which has been
-// runtime-deprecated since Node.js v25.9.0. Fall back to `module.register()` on older runtimes.
-if (typeof registerHooks === "function") {
-  const { load, resolve } = await import("./hooks.mjs");
+// Prefer the synchronous, in-thread `module.registerHooks()`: `module.register()` has been
+// runtime deprecated as DEP0205 since Node.js v26.0.0 and emits a warning on every
+// invocation. `supportsRegisterHooks` is a version check rather than a feature check —
+// see its doc comment for the Node.js bug that makes older versions unusable.
+if (typeof registerHooks === "function" && supportsRegisterHooks(process.versions.node)) {
+  initTracing();
   registerHooks({ load, resolve });
 } else {
   register("@oxc-node/core/esm", import.meta.url);
@@ -54,6 +43,6 @@ addHook(
     return transformed;
   },
   {
-    ext: Array.from(DEFAULT_EXTENSIONS),
+    ext: DEFAULT_EXTENSIONS,
   },
 );

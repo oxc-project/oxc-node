@@ -43,10 +43,17 @@ export declare function load(
 export interface LoadContext {
   /** Export conditions of the relevant `package.json` */
   conditions?: Array<string>;
-  /** The format optionally supplied by the `resolve` hook chain */
-  format: string | null;
-  /** An object whose key-value pairs represent the assertions for the module to import */
-  importAttributes: Record<string, string>;
+  /**
+   * The format optionally supplied by the `resolve` hook chain.
+   * Optional because the CommonJS `require()` path of the synchronous
+   * `module.registerHooks()` loader does not always provide it.
+   */
+  format?: string | null;
+  /**
+   * An object whose key-value pairs represent the assertions for the module to import.
+   * Optional for the same reason as `format`.
+   */
+  importAttributes?: Record<string, string>;
 }
 
 export interface LoadFnOutput {
@@ -60,10 +67,17 @@ export interface OxcResolveOptions {
 }
 
 export interface ResolveContext {
-  /** Export conditions of the relevant `package.json` */
-  conditions: Array<string>;
-  /** An object whose key-value pairs represent the assertions for the module to import */
-  importAttributes: Record<string, string>;
+  /**
+   * Export conditions of the relevant `package.json`.
+   * Optional because the CommonJS `require()` path of the synchronous
+   * `module.registerHooks()` loader does not always provide it.
+   */
+  conditions?: Array<string>;
+  /**
+   * An object whose key-value pairs represent the assertions for the module to import.
+   * Optional for the same reason as `conditions`.
+   */
+  importAttributes?: Record<string, string>;
   parentURL?: string;
 }
 

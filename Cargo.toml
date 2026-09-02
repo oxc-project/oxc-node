@@ -20,6 +20,7 @@ oxc = { version = "0.148.0", features = [
 ] }
 oxc_resolver = { version = "11.24.3" }
 oxc_sourcemap = "8"
+percent-encoding = "2"
 phf = { version = "0.14", features = ["macros"] }
 serde_json = "1"
 tracing = "0.1"

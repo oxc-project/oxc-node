@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     env, fs, mem,
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, RwLock},
 };
 
 use napi::bindgen_prelude::*;
@@ -27,6 +27,7 @@ use oxc_resolver::{
     TsconfigDiscovery, TsconfigOptions, TsconfigReferences,
 };
 use oxc_sourcemap::SourceMap;
+use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
 use phf::Set;
 
 #[cfg(all(
@@ -106,9 +107,59 @@ const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
     "zlib",
 };
 
-#[allow(clippy::type_complexity)]
-static RESOLVER_AND_TSCONFIG: OnceLock<(Resolver, Option<Arc<TsConfig>>, Option<&'static str>)> =
-    OnceLock::new();
+static RESOLVERS: OnceLock<Resolvers> = OnceLock::new();
+
+/// Everything that is derived from the working directory once per process.
+///
+/// `module.registerHooks()` routes both `import` and CommonJS `require()` through the
+/// same hooks, so a single process observes more than one export-condition set. A
+/// first-writer-wins resolver would answer every later condition set with the branch
+/// picked for the first one (e.g. handing `require()` the `import` branch of an
+/// `exports` map), so resolvers are cached per condition set instead. They are cloned
+/// from `base` with [`Resolver::clone_with_options`], which shares its file system
+/// cache and its resolved tsconfig.
+struct Resolvers {
+    base: Resolver,
+    /// The options `base` was built with, without `condition_names`.
+    options: ResolveOptions,
+    tsconfig: Option<Arc<TsConfig>>,
+    default_module_resolved_from_tsconfig: Option<&'static str>,
+    by_conditions: RwLock<HashMap<Vec<String>, &'static Resolver>>,
+}
+
+impl Resolvers {
+    fn get(cwd: &Path) -> &'static Self {
+        RESOLVERS.get_or_init(|| init_resolvers(cwd))
+    }
+
+    /// The resolver for `conditions`, creating it on first use.
+    fn resolver(&'static self, conditions: &[String]) -> &'static Resolver {
+        if conditions.is_empty() {
+            return &self.base;
+        }
+        if let Some(resolver) =
+            self.by_conditions.read().expect("resolver cache is poisoned").get(conditions)
+        {
+            return resolver;
+        }
+        let mut cache = self.by_conditions.write().expect("resolver cache is poisoned");
+        if let Some(resolver) = cache.get(conditions) {
+            return resolver;
+        }
+        let options =
+            ResolveOptions { condition_names: conditions.to_vec(), ..self.options.clone() };
+        // Leaked on purpose: resolvers live for the lifetime of the process and there is
+        // at most one per condition set (in practice two: `import` and `require`).
+        let resolver: &'static Resolver =
+            Box::leak(Box::new(self.base.clone_with_options(options)));
+        cache.insert(conditions.to_vec(), resolver);
+        resolver
+    }
+
+    fn compiler_options(&'static self) -> Option<&'static CompilerOptions> {
+        self.tsconfig.as_ref().map(|tsconfig| &tsconfig.compiler_options)
+    }
+}
 
 #[cfg(not(target_os = "windows"))]
 const NODE_MODULES_PATH: &str = "/node_modules/";
@@ -121,6 +172,22 @@ const PATH_PREFIX: &str = "file://";
 
 #[cfg(target_os = "windows")]
 const PATH_PREFIX: &str = "file:///";
+
+/// The WHATWG [path percent-encode set], i.e. exactly the characters `new URL()` would
+/// escape when turning a file path into a `file:` URL. Bytes outside ASCII are always
+/// percent-encoded by [`utf8_percent_encode`].
+///
+/// [path percent-encode set]: https://url.spec.whatwg.org/#path-percent-encode-set
+const PATH_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'`')
+    .add(b'{')
+    .add(b'}');
 
 #[cfg(target_family = "wasm")]
 #[napi]
@@ -204,12 +271,10 @@ impl Task for TransformTask {
     fn compute(&mut self) -> Result<Self::Output> {
         let src_path = Path::new(&self.path);
         let cwd = PathBuf::from(&self.cwd);
-        let (_, resolved_tsconfig, _) =
-            RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd, vec![]));
         oxc_transform(
             src_path,
             &self.source,
-            resolved_tsconfig.as_ref().map(|t| &t.compiler_options),
+            Resolvers::get(&cwd).compiler_options(),
             Some(Module::CommonJS),
             true,
         )
@@ -245,12 +310,10 @@ impl OxcTransformer {
     #[napi]
     pub fn transform(&self, path: String, source: Either<String, &[u8]>) -> Result<Output> {
         let cwd = PathBuf::from(&self.cwd);
-        let (_, resolved_tsconfig, _) =
-            RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd, vec![]));
         oxc_transform(
             Path::new(&path),
             &source,
-            resolved_tsconfig.as_ref().map(|t| &t.compiler_options),
+            Resolvers::get(&cwd).compiler_options(),
             Some(Module::CommonJS),
             true,
         )
@@ -441,11 +504,7 @@ pub fn create_resolve<'env>(
     }
     if specifier.ends_with(".json") {
         tracing::debug!("short-circuiting JSON resolve: {}", specifier);
-        if context
-            .import_attributes
-            .as_ref()
-            .is_some_and(|attrs| attrs.contains_key("type"))
-        {
+        if context.import_attributes.as_ref().is_some_and(|attrs| attrs.contains_key("type")) {
             return add_short_circuit(specifier, Some("json"), context, next_resolve);
         }
         return add_short_circuit(specifier, Some("module"), context, next_resolve);
@@ -465,37 +524,36 @@ pub fn create_resolve<'env>(
 
     let conditions = context.conditions.as_deref().unwrap_or(&[]);
 
-    let (resolver, tsconfig, default_module_resolved_from_tsconfig) =
-        RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone(), conditions.to_vec()));
+    let resolvers = Resolvers::get(&cwd);
+    let resolver = resolvers.resolver(conditions);
+    let default_module_resolved_from_tsconfig = resolvers.default_module_resolved_from_tsconfig;
 
-    let is_absolute_path = specifier.starts_with(PATH_PREFIX);
+    // `file:` specifiers and parent URLs are percent-encoded URLs, the resolver needs
+    // real paths.
+    let absolute_specifier = file_url_to_path(&specifier);
+    let parent_path =
+        match context.parent_url.as_deref() {
+            Some(parent) => Some(file_url_to_path(parent).ok_or_else(|| {
+                Error::new(Status::GenericFailure, "Parent URL is not a file URL")
+            })?),
+            None => None,
+        };
 
-    let directory = {
-        if let Some(parent) = context.parent_url.as_deref() {
-            if let Some(parent) =
-                parent.strip_prefix(PATH_PREFIX).and_then(|p| Path::new(p).parent())
-            {
-                tracing::debug!(directory = ?parent);
-                Ok(parent)
-            } else {
-                Err(Error::new(Status::GenericFailure, "Parent URL is not a file URL"))
-            }
-        } else {
-            Ok(cwd.as_path())
-        }
-    }?;
+    let directory = match parent_path.as_deref() {
+        Some(parent) => Path::new(parent)
+            .parent()
+            .ok_or_else(|| Error::new(Status::GenericFailure, "Parent URL is not a file URL"))?,
+        None => cwd.as_path(),
+    };
+    tracing::debug!(directory = ?directory);
 
-    let resolution = resolver.resolve(
-        if is_absolute_path { Path::new("/") } else { directory },
-        if is_absolute_path { specifier.strip_prefix(PATH_PREFIX).unwrap() } else { &specifier },
-    );
+    let resolution = match absolute_specifier.as_deref() {
+        Some(path) => resolver.resolve(Path::new("/"), path),
+        None => resolver.resolve(directory, &specifier),
+    };
 
     // import attributes
-    if context
-        .import_attributes
-        .as_ref()
-        .is_some_and(|attrs| !attrs.is_empty())
-    {
+    if context.import_attributes.as_ref().is_some_and(|attrs| !attrs.is_empty()) {
         tracing::debug!(
             "short-circuiting import attributes resolve: {}, attributes: {:?}",
             specifier,
@@ -534,18 +592,7 @@ pub fn create_resolve<'env>(
                 tracing::debug!(path = ?p, format = ?format);
                 format
             };
-            // oxc-node has fully resolved this module (URL + format), so return the
-            // output directly instead of calling `next_resolve`. Re-resolving the already
-            // resolved URL through Node would redundantly re-read `package.json` and `stat`
-            // the file. This is only done for files oxc-node transforms (outside
-            // `node_modules`); `node_modules` modules still defer to Node below so its
-            // CommonJS named-export detection keeps working.
-            return Ok(Either::A(ResolveFnOutput {
-                format: Some(Either::A(format.to_owned())),
-                short_circuit: Some(true),
-                url,
-                import_attributes: context.import_attributes.map(Either::A),
-            }));
+            return add_short_circuit(url, Some(format), context, next_resolve);
         } else {
             return add_short_circuit(url, None, context, next_resolve);
         }
@@ -556,52 +603,17 @@ pub fn create_resolve<'env>(
     add_short_circuit(specifier, None, context, next_resolve)
 }
 
-/// Resolve a CommonJS `require()` specifier to an absolute file path using oxc-node's
-/// resolver (which honours tsconfig `paths`, package `exports`, conditions, symlinks, …).
-///
-/// This exists for the synchronous `module.registerHooks()` loader: CommonJS `require()`
-/// calls are routed through the ESM-style `resolve` hook, whose `nextResolve` does not
-/// consult `Module._extensions` (where `pirates` installs its TypeScript handler). The
-/// hook uses this to complete an extensionless specifier to a concrete file path that the
-/// CommonJS loader can then hand to `pirates` for transpilation. Returns `None` when the
-/// specifier cannot be resolved (so the caller can defer to Node.js' own resolver).
-#[napi]
-#[cfg_attr(target_family = "wasm", allow(unused_variables))]
-pub fn resolve_cjs_specifier(specifier: String, parent_path: Option<String>) -> Option<String> {
-    #[cfg(target_family = "wasm")]
-    {
-        None
-    }
-
-    #[cfg(not(target_family = "wasm"))]
-    {
-        let cwd = env::current_dir().ok()?;
-        let (resolver, _, _) = RESOLVER_AND_TSCONFIG.get_or_init(|| {
-            init_resolver(cwd.clone(), vec!["require".to_owned(), "node".to_owned()])
-        });
-
-        let directory = parent_path
-            .as_deref()
-            .and_then(|parent| Path::new(parent).parent())
-            .unwrap_or(cwd.as_path());
-
-        resolver
-            .resolve(directory, &specifier)
-            .ok()
-            .map(|resolution| resolution.full_path().to_string_lossy().into_owned())
-    }
-}
-
 #[napi(object)]
 #[derive(Debug)]
 pub struct LoadContext {
     /// Export conditions of the relevant `package.json`
     pub conditions: Option<Vec<String>>,
-    /// The format optionally supplied by the `resolve` hook chain
-    pub format: Either<String, Null>,
-    /// An object whose key-value pairs represent the assertions for the module to import.
+    /// The format optionally supplied by the `resolve` hook chain.
     /// Optional because the CommonJS `require()` path of the synchronous
     /// `module.registerHooks()` loader does not always provide it.
+    pub format: Option<Either<String, Null>>,
+    /// An object whose key-value pairs represent the assertions for the module to import.
+    /// Optional for the same reason as `format`.
     pub import_attributes: Option<HashMap<String, String>>,
 }
 
@@ -627,7 +639,13 @@ pub fn load<'env>(
     tracing::debug!(url = ?url, context = ?context, "load");
     if url.starts_with("data:") || {
         match context.format {
-            Either::A(ref format) => format == "builtin" || format == "json" || format == "wasm",
+            Some(Either::A(ref format)) => {
+                format == "builtin" || format == "json" || format == "wasm"
+            }
+            // No format at all means Node.js is loading the module through a path that
+            // does not report one (the CommonJS `require()` path of the synchronous
+            // `module.registerHooks()` loader): leave it to Node.js and the `pirates`
+            // hook installed by `register.mjs`.
             _ => true,
         }
     } {
@@ -636,11 +654,11 @@ pub fn load<'env>(
     }
 
     let loaded = next_load.call((url.clone(), Some(context)).into())?;
-    let (_, tsconfig, _) = RESOLVER_AND_TSCONFIG
+    let resolved_compiler_options = RESOLVERS
         .get()
-        .ok_or_else(|| Error::new(Status::GenericFailure, "Failed to get resolver and tsconfig"))?;
+        .ok_or_else(|| Error::new(Status::GenericFailure, "Failed to get resolver and tsconfig"))?
+        .compiler_options();
 
-    let resolved_compiler_options = tsconfig.as_ref().map(|tsconfig| &tsconfig.compiler_options);
     match loaded {
         Either::A(output) => {
             Ok(Either::A(transform_output(url, output, resolved_compiler_options)?))
@@ -784,10 +802,7 @@ impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
     }
 }
 
-fn init_resolver(
-    cwd: PathBuf,
-    conditions: Vec<String>,
-) -> (Resolver, Option<Arc<TsConfig>>, Option<&'static str>) {
+fn init_resolvers(cwd: &Path) -> Resolvers {
     let tsconfig = env::var("TS_NODE_PROJECT")
         .or_else(|_| env::var("OXC_TSCONFIG_PATH"))
         .map(Cow::Owned)
@@ -805,9 +820,8 @@ fn init_resolver(
             references: TsconfigReferences::Auto,
         }),
     );
-    let resolver = Resolver::new(ResolveOptions {
+    let resolve_options = ResolveOptions {
         tsconfig,
-        condition_names: conditions,
         extension_alias: vec![
             (".js".to_owned(), vec![".js".to_owned(), ".ts".to_owned(), ".tsx".to_owned()]),
             (".mjs".to_owned(), vec![".mjs".to_owned(), ".mts".to_owned()]),
@@ -828,7 +842,8 @@ fn init_resolver(
         ],
         module_type: true,
         ..Default::default()
-    });
+    };
+    let resolver = Resolver::new(resolve_options.clone());
 
     let tsconfig = resolver.resolve_tsconfig(tsconfig_full_path).ok();
 
@@ -854,7 +869,13 @@ fn init_resolver(
         None
     };
 
-    (resolver, tsconfig, default_module_resolved_from_tsconfig)
+    Resolvers {
+        base: resolver,
+        options: resolve_options,
+        tsconfig,
+        default_module_resolved_from_tsconfig,
+        by_conditions: RwLock::new(HashMap::new()),
+    }
 }
 
 fn join_errors(errors: Vec<OxcDiagnostic>, source_str: &str) -> String {
@@ -898,16 +919,37 @@ fn add_short_circuit<'env>(
     }
 }
 
+/// Turn an oxc-resolver [`Resolution`] into a `file:` URL.
+///
+/// The path is percent-encoded so that the result is a real URL: paths containing a
+/// space, a `#`, or any non-ASCII character would otherwise be re-parsed by Node.js as a
+/// different (or invalid) URL, splitting the module identity or losing part of the path.
+/// The `?query` and `#fragment` oxc-resolver parsed out of the specifier are appended
+/// verbatim, because they are already URL syntax.
 fn oxc_resolved_path_to_url(resolution: &Resolution) -> String {
     #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
-    let mut url = if resolution.query().is_some() || resolution.fragment().is_some() {
-        format!("{PATH_PREFIX}{}", resolution.full_path().to_string_lossy())
-    } else {
-        format!("{PATH_PREFIX}{}", resolution.path().to_string_lossy())
-    };
+    let mut path = resolution.path().to_string_lossy().into_owned();
     #[cfg(target_os = "windows")]
     {
-        url = url.replace("\\", "/");
+        path = path.replace("\\", "/");
+    }
+    let mut url = String::with_capacity(PATH_PREFIX.len() + path.len() + 16);
+    url.push_str(PATH_PREFIX);
+    url.extend(utf8_percent_encode(&path, PATH_ENCODE_SET));
+    if let Some(query) = resolution.query() {
+        url.push_str(query);
+    }
+    if let Some(fragment) = resolution.fragment() {
+        url.push_str(fragment);
     }
     url
+}
+
+/// Percent-decode a `file:` URL into a path the resolver can use, or `None` when the
+/// string is not a `file:` URL (a bare specifier, a `data:` URL, …).
+fn file_url_to_path(url: &str) -> Option<Cow<'_, str>> {
+    let path = url.strip_prefix(PATH_PREFIX)?;
+    // An invalid escape sequence is not something to fail resolution over: hand the raw
+    // path to the resolver and let it report "not found".
+    Some(percent_decode_str(path).decode_utf8().unwrap_or(Cow::Borrowed(path)))
 }
