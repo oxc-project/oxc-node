@@ -53,8 +53,15 @@ function spawn(cwd: string, args: string[], extraEnv: NodeJS.ProcessEnv = {}) {
     cwd,
     encoding: "utf8",
     env: { ...process.env, NODE_OPTIONS: undefined, ...extraEnv },
+    // `spawnSync` blocks the event loop, so Vitest's own timeout cannot interrupt it. A
+    // regression that keeps the loader thread — and therefore the child — alive would
+    // otherwise hang the run until the CI job times out.
+    timeout: 30_000,
   });
   expect(result.error, result.error?.message).toBeFalsy();
+  expect(result.signal, `child was killed with ${result.signal}, it probably did not exit`).toBe(
+    null,
+  );
   return { output: `${result.stdout}${result.stderr}`, status: result.status };
 }
 
@@ -63,6 +70,17 @@ function runOk(cwd: string, args: string[], extraEnv?: NodeJS.ProcessEnv): strin
   const { output, status } = spawn(cwd, ["--import", REGISTER, ...args], extraEnv);
   expect(status, output).toBe(0);
   return output;
+}
+
+/**
+ * The value the fixture printed as `<name>: <value>`. Asserting on a parsed value rather
+ * than on the whole output keeps temporary paths and `OXC_LOG`/`DEBUG` noise — both of
+ * which CI enables — from deciding whether a test passes.
+ */
+function reported(output: string, name: string): string {
+  const match = new RegExp(`^${name}: (.*)$`, "m").exec(output);
+  expect(match, `expected the fixture to report "${name}:" in:\n${output}`).toBeTruthy();
+  return match![1]!.trim();
 }
 
 const MODULE_PACKAGE = JSON.stringify({ name: "fx", private: true, type: "module" });
@@ -345,7 +363,34 @@ describe("resolution", () => {
         'console.log("tag:", m.default.tag);',
       ].join("\n"),
     });
-    expect(runOk(root, ["./entry.ts"])).toContain("tag: cjs");
+    expect(reported(runOk(root, ["./entry.ts"]), "tag")).toBe("cjs");
+  });
+
+  // The extension has to be read from the URL's path: `Path::extension()` on the whole URL
+  // reports `json?v=1`, which sent the JSON straight to the JavaScript parser.
+  test.each(["?v=1", "#fragment"])("a JSON module keeps working with %s", (suffix) => {
+    const root = fixture({
+      "package.json": MODULE_PACKAGE,
+      "data.json": JSON.stringify({ version: "1.2.3" }),
+      "entry.ts": [
+        `const data = await import("./data.json${suffix}");`,
+        'console.log("version:", data.default.version);',
+      ].join("\n"),
+    });
+    expect(reported(runOk(root, ["./entry.ts"]), "version")).toBe("1.2.3");
+  });
+
+  // `%` is the escape character, so a path that really contains one has to be escaped as
+  // `%25` or Node.js decodes the URL back into a different path — or rejects it outright.
+  test("a path containing a literal % resolves", () => {
+    const root = fixture({
+      "package.json": MODULE_PACKAGE,
+      "100%.ts": 'export const value = "percent";\n',
+      "entry.ts": ['import { value } from "./100%.ts";', 'console.log("value:", value);'].join(
+        "\n",
+      ),
+    });
+    expect(reported(runOk(root, ["./entry.ts"]), "value")).toBe("percent");
   });
 });
 
@@ -416,10 +461,15 @@ describe("transforms", () => {
   }
 
   test("plain .js files are still transformed with the project tsconfig", () => {
-    const withDefine = runOk(classFieldsFixture(true), ["./entry.ts"]);
-    const withoutDefine = runOk(classFieldsFixture(false), ["./entry.ts"]);
-    expect(withDefine).toMatch(/setterCalled: (true|false)/);
-    expect(withDefine).not.toEqual(withoutDefine);
+    const withDefine = reported(runOk(classFieldsFixture(true), ["./entry.ts"]), "setterCalled");
+    const withoutDefine = reported(
+      runOk(classFieldsFixture(false), ["./entry.ts"]),
+      "setterCalled",
+    );
+    // One of the two is the native `[[Define]]` behaviour and the other is oxc-node's
+    // `[[Set]]` lowering; which is which is not this test's business, only that the tsconfig
+    // reached the `.js` file at all.
+    expect([withDefine, withoutDefine].sort()).toEqual(["false", "true"]);
   });
 
   test("OXC_TRANSFORM_ALL still reaches .js files inside node_modules", () => {
@@ -436,13 +486,17 @@ describe("transforms", () => {
         'console.log("setterCalled:", setterCalled);',
       ].join("\n"),
     };
-    const transformAll = runOk(classFieldsFixture(true, dependency), ["./entry.ts"], {
-      OXC_TRANSFORM_ALL: "1",
-    });
-    const untouched = runOk(classFieldsFixture(true, dependency), ["./entry.ts"], {
-      OXC_TRANSFORM_ALL: "",
-    });
-    expect(transformAll).not.toEqual(untouched);
+    const transformAll = reported(
+      runOk(classFieldsFixture(true, dependency), ["./entry.ts"], { OXC_TRANSFORM_ALL: "1" }),
+      "setterCalled",
+    );
+    const untouched = reported(
+      runOk(classFieldsFixture(true, dependency), ["./entry.ts"], { OXC_TRANSFORM_ALL: "" }),
+      "setterCalled",
+    );
+    // Untransformed is the native `[[Define]]` behaviour, so the setter never runs.
+    expect(untouched).toBe("false");
+    expect(transformAll).toBe("true");
   });
 
   test("a CommonJS .cts stack trace points at the original source", () => {

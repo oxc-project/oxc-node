@@ -19,7 +19,6 @@
   "files": [
     "browser.js",
     "esm.mjs",
-    "hooks.d.mts",
     "hooks.mjs",
     "index.d.ts",
     "index.js",

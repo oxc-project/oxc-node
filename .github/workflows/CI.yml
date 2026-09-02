@@ -197,20 +197,30 @@ jobs:
         if: matrix.settings.target == 'wasm32-wasip1-threads'
         shell: bash
         run: |
+          BINDINGS="packages/core/browser.js
+          packages/core/index.d.ts
+          packages/core/index.js
+          packages/core/oxc-node.wasi-browser.js
+          packages/core/oxc-node.wasi.cjs
+          packages/core/oxc-node.wasi.d.cts
+          packages/core/wasi-worker-browser.mjs
+          packages/core/wasi-worker.mjs"
           # napi-rs emits unformatted code; the repository stores it formatted.
           pnpm fmt
-          git diff --exit-code -- \
-            packages/core/browser.js \
-            packages/core/index.d.ts \
-            packages/core/index.js \
-            packages/core/oxc-node.wasi-browser.js \
-            packages/core/oxc-node.wasi.cjs \
-            packages/core/oxc-node.wasi.d.cts \
-            packages/core/wasi-worker-browser.mjs \
-            packages/core/wasi-worker.mjs || {
+          FAILED=""
+          # shellcheck disable=SC2086
+          git diff --exit-code -- $BINDINGS || FAILED="stale"
+          # A new napi-rs release can add a generated file, which `git diff` cannot see.
+          UNTRACKED="$(git ls-files --others --exclude-standard -- packages/core)"
+          if [ -n "$UNTRACKED" ]; then
+            echo "generated but not committed:"
+            echo "$UNTRACKED"
+            FAILED="stale"
+          fi
+          if [ -n "$FAILED" ]; then
             echo "::error::The committed napi bindings are stale. Run \`just build\` and \`pnpm fmt\`, then commit the result."
             exit 1
-          }
+          fi
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -460,10 +470,9 @@ jobs:
   # `check-latest`/`node:<major>-slim`, so without this job the `module.register()` fallback
   # and `esm.mjs` would not be exercised at all.
   #
-  # * 22.18.0 is the oldest release the dev toolchain supports.
-  # * 24.7.0 is the last release in the 24 line that still needs the fallback, so this pins
-  #   the lower side of the version gate; the `node@22`/`node@24` jobs above run 22.22.3 and
-  #   24.8.0 or later and therefore pin the upper side.
+  # 22.18.0 and 24.7.0 are the last releases in their lines that still need the fallback,
+  # so they pin the lower side of the version gate; the `node@22`/`node@24` jobs above run
+  # 22.22.3 and 24.8.0 or later and therefore pin the upper side.
   test-register-fallback:
     name: Test module.register() fallback - node@${{ matrix.node }}
     needs:

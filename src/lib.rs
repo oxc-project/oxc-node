@@ -120,12 +120,12 @@ static RESOLVERS: OnceLock<Resolvers> = OnceLock::new();
 /// from `base` with [`Resolver::clone_with_options`], which shares its file system
 /// cache and its resolved tsconfig.
 struct Resolvers {
-    base: Resolver,
+    base: Arc<Resolver>,
     /// The options `base` was built with, without `condition_names`.
     options: ResolveOptions,
     tsconfig: Option<Arc<TsConfig>>,
     default_module_resolved_from_tsconfig: Option<&'static str>,
-    by_conditions: RwLock<HashMap<Vec<String>, &'static Resolver>>,
+    by_conditions: RwLock<HashMap<Vec<String>, Arc<Resolver>>>,
 }
 
 impl Resolvers {
@@ -134,26 +134,23 @@ impl Resolvers {
     }
 
     /// The resolver for `conditions`, creating it on first use.
-    fn resolver(&'static self, conditions: &[String]) -> &'static Resolver {
+    fn resolver(&self, conditions: &[String]) -> Arc<Resolver> {
         if conditions.is_empty() {
-            return &self.base;
+            return Arc::clone(&self.base);
         }
         if let Some(resolver) =
             self.by_conditions.read().expect("resolver cache is poisoned").get(conditions)
         {
-            return resolver;
+            return Arc::clone(resolver);
         }
         let mut cache = self.by_conditions.write().expect("resolver cache is poisoned");
         if let Some(resolver) = cache.get(conditions) {
-            return resolver;
+            return Arc::clone(resolver);
         }
         let options =
             ResolveOptions { condition_names: conditions.to_vec(), ..self.options.clone() };
-        // Leaked on purpose: resolvers live for the lifetime of the process and there is
-        // at most one per condition set (in practice two: `import` and `require`).
-        let resolver: &'static Resolver =
-            Box::leak(Box::new(self.base.clone_with_options(options)));
-        cache.insert(conditions.to_vec(), resolver);
+        let resolver = Arc::new(self.base.clone_with_options(options));
+        cache.insert(conditions.to_vec(), Arc::clone(&resolver));
         resolver
     }
 
@@ -174,15 +171,20 @@ const PATH_PREFIX: &str = "file://";
 #[cfg(target_os = "windows")]
 const PATH_PREFIX: &str = "file:///";
 
-/// The WHATWG [path percent-encode set], i.e. exactly the characters `new URL()` would
-/// escape when turning a file path into a `file:` URL. Bytes outside ASCII are always
-/// percent-encoded by [`utf8_percent_encode`].
+/// The WHATWG [path percent-encode set] plus `%` itself, i.e. exactly the characters
+/// `pathToFileURL()` escapes when turning a file path into a `file:` URL. Bytes outside
+/// ASCII are always percent-encoded by [`utf8_percent_encode`].
+///
+/// `%` has to be escaped as well: it is the escape character, so a path that really
+/// contains one would otherwise produce a URL Node.js decodes back into a different path,
+/// or rejects outright with `URI malformed`.
 ///
 /// [path percent-encode set]: https://url.spec.whatwg.org/#path-percent-encode-set
 const PATH_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b' ')
     .add(b'"')
     .add(b'#')
+    .add(b'%')
     .add(b'<')
     .add(b'>')
     .add(b'?')
@@ -519,7 +521,7 @@ pub fn create_resolve<'env>(
         tracing::debug!("short-circuiting data URL resolve: {}", specifier);
         return add_short_circuit(specifier, Some("builtin"), context, next_resolve);
     }
-    if specifier.ends_with(".json") {
+    if url_path(&specifier).ends_with(".json") {
         tracing::debug!("short-circuiting JSON resolve: {}", specifier);
         if context.import_attributes.as_ref().is_some_and(|attrs| attrs.contains_key("type")) {
             return add_short_circuit(specifier, Some("json"), context, next_resolve);
@@ -697,8 +699,9 @@ fn transform_output(
             Ok(LoadFnOutput { format: output.format, source: None, response_url: Some(url) })
         }
         Some(Either4::A(_) | Either4::B(_) | Either4::C(_)) => {
-            let src_path = Path::new(&url);
-            // url is a file path, so it's always unix style path separator in it
+            // `url` is a URL, so a `?query` or `#fragment` has to be stripped before it can
+            // be treated as a path, and the separators are always forward slashes.
+            let src_path = Path::new(url_path(&url));
             if env::var("OXC_TRANSFORM_ALL")
                 .map(|value| value.is_empty() || value == "0" || value == "false")
                 .unwrap_or(true)
@@ -902,7 +905,7 @@ fn init_resolvers(cwd: &Path) -> Resolvers {
     };
 
     Resolvers {
-        base: resolver,
+        base: Arc::new(resolver),
         options: resolve_options,
         tsconfig,
         default_module_resolved_from_tsconfig,
@@ -984,4 +987,14 @@ fn file_url_to_path(url: &str) -> Option<Cow<'_, str>> {
     // An invalid escape sequence is not something to fail resolution over: hand the raw
     // path to the resolver and let it report "not found".
     Some(percent_decode_str(path).decode_utf8().unwrap_or(Cow::Borrowed(path)))
+}
+
+/// The path part of a URL or specifier, i.e. everything before a `?query` or `#fragment`.
+///
+/// Extensions must be matched against this and not against the whole string: oxc-node
+/// supports `import "./mod.ts?v=1"`, and `Path::extension()` on the full URL would report
+/// `ts?v=1`.
+fn url_path(url: &str) -> &str {
+    let end = url.find(['?', '#']).unwrap_or(url.len());
+    &url[..end]
 }
