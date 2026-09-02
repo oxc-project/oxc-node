@@ -23,8 +23,8 @@ use oxc::{
     },
 };
 use oxc_resolver::{
-    CompilerOptions, EnforceExtension, ModuleType, Resolution, ResolveOptions, Resolver, TsConfig,
-    TsconfigDiscovery, TsconfigOptions, TsconfigReferences,
+    CompilerOptions, EnforceExtension, ModuleType, Resolution, ResolveContext as ResolverContext,
+    ResolveOptions, Resolver, TsConfig, TsconfigDiscovery, TsconfigOptions, TsconfigReferences,
 };
 use oxc_sourcemap::SourceMap;
 use phf::Set;
@@ -106,9 +106,103 @@ const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
     "zlib",
 };
 
-#[allow(clippy::type_complexity)]
-static RESOLVER_AND_TSCONFIG: OnceLock<(Resolver, Option<Arc<TsConfig>>, Option<&'static str>)> =
-    OnceLock::new();
+/// Where the `tsconfig.json` that applies to a given source file comes from.
+///
+/// `oxc_resolver` offers two discovery strategies and they are not
+/// interchangeable, so the strategy chosen at startup has to be remembered:
+///
+/// * [`TsconfigDiscovery::Manual`] pins one config for the whole process. It is
+///   also the only mode that [`Resolver::resolve`] consults, because that API
+///   goes through `manual_tsconfig()` internally.
+/// * [`TsconfigDiscovery::Auto`] resolves a config per file, and [`Resolver::resolve`]
+///   ignores it entirely. Only [`Resolver::find_tsconfig`] sees it, so under `Auto`
+///   the config is looked up here and handed to `resolve_with_context`.
+enum TsconfigSource {
+    /// An explicit config requested through `TS_NODE_PROJECT` or
+    /// `OXC_TSCONFIG_PATH`. The exact same config applies to every file,
+    /// including files inside `node_modules`.
+    ///
+    /// `None` means the requested path does not exist. That deliberately leaves
+    /// the process with no config at all instead of falling back to discovery:
+    /// somebody who names a config file explicitly does not want a different
+    /// one silently substituted.
+    Manual(Option<Arc<TsConfig>>),
+    /// No config was requested explicitly, so each file gets the nearest
+    /// ancestor `tsconfig.json` that actually claims it.
+    ///
+    /// This is what lets a file in a sub-project with no `tsconfig.json` of its
+    /// own inherit the workspace root config, while still respecting
+    /// `files` / `include` / `exclude` and project `references`: a root config
+    /// whose `include` does not cover the file is skipped rather than applied.
+    Auto,
+}
+
+/// Extensions that TypeScript only treats as program inputs when `allowJs` is on.
+const JS_EXTENSIONS: [&str; 4] = ["js", "jsx", "mjs", "cjs"];
+
+impl TsconfigSource {
+    /// The `tsconfig.json` that governs `path`, if any.
+    ///
+    /// `path` must be an absolute file path (not a `file://` URL); the resolver
+    /// returns `None` for anything else.
+    fn for_path(&self, resolver: &Resolver, path: &Path) -> Option<Arc<TsConfig>> {
+        match self {
+            Self::Manual(tsconfig) => tsconfig.clone(),
+            Self::Auto => Self::discover(resolver, path).or_else(|| {
+                Self::probe_as_typescript(path)
+                    .and_then(|probe| Self::discover(resolver, &probe))
+                    .inspect(
+                        |_| tracing::debug!(path = ?path, "tsconfig found via TypeScript probe"),
+                    )
+            }),
+        }
+    }
+
+    /// Ask the resolver which `tsconfig.json` claims `path`.
+    ///
+    /// `find_tsconfig` walks up from the file's own directory, skips anything
+    /// that is not a readable file (so a *directory* named `tsconfig.json` does
+    /// not stop the walk), caches per directory and per path, and returns `None`
+    /// inside `node_modules`. A broken config somewhere up the tree is reported
+    /// as an error; treat that as "no config" so that one bad ancestor cannot
+    /// break every transform and every resolution below it.
+    fn discover(resolver: &Resolver, path: &Path) -> Option<Arc<TsConfig>> {
+        match resolver.find_tsconfig(path) {
+            Ok(tsconfig) => tsconfig,
+            Err(err) => {
+                tracing::debug!(path = ?path, error = ?err, "failed to discover tsconfig");
+                None
+            }
+        }
+    }
+
+    /// The same path with a `.ts` extension, for a JavaScript-family file only.
+    ///
+    /// `oxc_resolver` applies TypeScript's own program-membership rule:
+    /// `is_file_included_in_tsconfig` calls `is_extensionless_or_uncompiled_js`,
+    /// which rejects `js` / `jsx` / `mjs` / `cjs` outright unless `allowJs` is
+    /// set. No config ever claims a plain JavaScript file, so under auto
+    /// discovery such a file would silently lose `paths` and `baseUrl` and fail
+    /// to resolve its aliases at runtime.
+    ///
+    /// But "is this file an input to the TypeScript program" is not the question
+    /// a loader is asking. The question is "which project does this file belong
+    /// to, for the purpose of module resolution", and a `.mjs` file sitting in
+    /// `src/` belongs to the same project as its `.ts` neighbours. So when
+    /// nothing claims a JavaScript file, ask again as if it were TypeScript.
+    ///
+    /// The probe path never has to exist: `claims_ownership_of` only matches
+    /// `files` / `include` / `exclude` globs and project references against the
+    /// string, and stats nothing but the candidate `tsconfig.json` files it
+    /// walks past. `exclude` therefore still wins — a directory the config
+    /// excludes stays unclaimed for JavaScript and TypeScript alike.
+    fn probe_as_typescript(path: &Path) -> Option<PathBuf> {
+        let extension = path.extension()?.to_str()?;
+        JS_EXTENSIONS.contains(&extension).then(|| path.with_extension("ts"))
+    }
+}
+
+static RESOLVER_AND_TSCONFIG: OnceLock<(Resolver, TsconfigSource)> = OnceLock::new();
 
 #[cfg(not(target_os = "windows"))]
 const NODE_MODULES_PATH: &str = "/node_modules/";
@@ -204,8 +298,9 @@ impl Task for TransformTask {
     fn compute(&mut self) -> Result<Self::Output> {
         let src_path = Path::new(&self.path);
         let cwd = PathBuf::from(&self.cwd);
-        let (_, resolved_tsconfig, _) =
+        let (resolver, tsconfig_source) =
             RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd, vec![]));
+        let resolved_tsconfig = tsconfig_source.for_path(resolver, src_path);
         oxc_transform(
             src_path,
             &self.source,
@@ -245,10 +340,12 @@ impl OxcTransformer {
     #[napi]
     pub fn transform(&self, path: String, source: Either<String, &[u8]>) -> Result<Output> {
         let cwd = PathBuf::from(&self.cwd);
-        let (_, resolved_tsconfig, _) =
+        let (resolver, tsconfig_source) =
             RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd, vec![]));
+        let src_path = Path::new(&path);
+        let resolved_tsconfig = tsconfig_source.for_path(resolver, src_path);
         oxc_transform(
-            Path::new(&path),
+            src_path,
             &source,
             resolved_tsconfig.as_ref().map(|t| &t.compiler_options),
             Some(Module::CommonJS),
@@ -269,7 +366,7 @@ impl OxcTransformer {
 fn oxc_transform<S: TryAsStr>(
     src_path: &Path,
     code: &S,
-    compiler_options: Option<&'static CompilerOptions>,
+    compiler_options: Option<&CompilerOptions>,
     module_target: Option<Module>,
     enable_top_level_await: bool,
 ) -> Result<Output> {
@@ -321,13 +418,16 @@ fn oxc_transform<S: TryAsStr>(
                 ..Default::default()
             },
             typescript: TypeScriptOptions {
+                // `TypeScriptOptions` holds `Cow<'static, str>`, and the compiler
+                // options are now borrowed per file rather than from a `OnceLock`,
+                // so these have to be owned.
                 jsx_pragma: compiler_options
-                    .and_then(|c| c.jsx_factory.as_deref())
-                    .map(Cow::Borrowed)
+                    .and_then(|c| c.jsx_factory.clone())
+                    .map(Cow::Owned)
                     .unwrap_or_default(),
                 jsx_pragma_frag: compiler_options
-                    .and_then(|c| c.jsx_fragment_factory.as_ref())
-                    .map(|c| Cow::Borrowed(c.as_str()))
+                    .and_then(|c| c.jsx_fragment_factory.clone())
+                    .map(Cow::Owned)
                     .unwrap_or_default(),
                 rewrite_import_extensions: compiler_options
                     .and_then(|c| c.rewrite_relative_import_extensions)
@@ -458,30 +558,56 @@ pub fn create_resolve<'env>(
 
     let conditions = context.conditions.as_slice();
 
-    let (resolver, tsconfig, default_module_resolved_from_tsconfig) =
+    let (resolver, tsconfig_source) =
         RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone(), conditions.to_vec()));
 
     let is_absolute_path = specifier.starts_with(PATH_PREFIX);
 
-    let directory = {
-        if let Some(parent) = context.parent_url.as_deref() {
-            if let Some(parent) =
-                parent.strip_prefix(PATH_PREFIX).and_then(|p| Path::new(p).parent())
-            {
-                tracing::debug!(directory = ?parent);
-                Ok(parent)
-            } else {
-                Err(Error::new(Status::GenericFailure, "Parent URL is not a file URL"))
-            }
-        } else {
-            Ok(cwd.as_path())
+    // The importing file itself, when the parent URL is a file URL. Discovery
+    // needs the file rather than its directory, because `TsconfigDiscovery::Auto`
+    // matches a config's `files` / `include` / `exclude` against the file path.
+    let parent_file = match context.parent_url.as_deref() {
+        Some(parent) => {
+            Some(parent.strip_prefix(PATH_PREFIX).map(Path::new).ok_or_else(|| {
+                Error::new(Status::GenericFailure, "Parent URL is not a file URL")
+            })?)
         }
-    }?;
+        None => None,
+    };
 
-    let resolution = resolver.resolve(
-        if is_absolute_path { Path::new("/") } else { directory },
-        if is_absolute_path { specifier.strip_prefix(PATH_PREFIX).unwrap() } else { &specifier },
-    );
+    let directory = match parent_file {
+        Some(parent_file) => parent_file
+            .parent()
+            .ok_or_else(|| Error::new(Status::GenericFailure, "Parent URL is not a file URL"))?,
+        None => cwd.as_path(),
+    };
+    tracing::debug!(directory = ?directory);
+
+    let resolution = match (is_absolute_path, tsconfig_source, parent_file) {
+        (true, ..) => {
+            resolver.resolve(Path::new("/"), specifier.strip_prefix(PATH_PREFIX).unwrap())
+        }
+        // `Resolver::resolve` only ever consults a *manually* configured tsconfig,
+        // so under `TsconfigDiscovery::Auto` it would silently ignore `paths` and
+        // `baseUrl`. The obvious alternative, `resolve_file`, rediscovers the
+        // config itself, which would bypass `for_path` — losing both its
+        // JavaScript probe and its "a broken ancestor config means no config"
+        // error handling. `resolve_with_context` is the API that takes an
+        // already-resolved config, so the importer's config is worked out once,
+        // in one place, and handed straight to the resolver. The entry-point
+        // case (no parent URL, only a working directory) has no file to discover
+        // from and still goes through `resolve`.
+        (false, TsconfigSource::Auto, Some(parent_file)) => {
+            let tsconfig = tsconfig_source.for_path(resolver, parent_file);
+            resolver.resolve_with_context(
+                directory,
+                &specifier,
+                tsconfig.as_deref(),
+                &mut ResolverContext::default(),
+            )
+        }
+        _ => resolver.resolve(directory, &specifier),
+    };
 
     // import attributes
     if !context.import_attributes.is_empty() {
@@ -506,11 +632,15 @@ pub fn create_resolve<'env>(
                         "cjs" | "cts" | "node" => None,
                         "mts" | "mjs" => Some("module"),
                         _ => {
+                            // The format describes the *resolved* file, so it is
+                            // that file's own tsconfig that decides, not the
+                            // importer's.
                             if (ext == "ts" || ext == "tsx")
-                                && let Some(default_module_resolved_from_tsconfig) =
-                                    default_module_resolved_from_tsconfig
+                                && let Some(default_module) = default_module_from_tsconfig(
+                                    tsconfig_source.for_path(resolver, p).as_deref(),
+                                )
                             {
-                                return Some(default_module_resolved_from_tsconfig);
+                                return Some(default_module);
                             }
                             match resolution.module_type() {
                                 Some(ModuleType::Module) => Some("module"),
@@ -576,17 +706,32 @@ pub fn load<'env>(
     }
 
     let loaded = next_load.call((url.clone(), Some(context)).into())?;
-    let (_, tsconfig, _) = RESOLVER_AND_TSCONFIG
+    let (resolver, tsconfig_source) = RESOLVER_AND_TSCONFIG
         .get()
         .ok_or_else(|| Error::new(Status::GenericFailure, "Failed to get resolver and tsconfig"))?;
 
-    let resolved_compiler_options = tsconfig.as_ref().map(|tsconfig| &tsconfig.compiler_options);
+    // `url` is a `file://` URL here. Auto discovery needs the plain absolute
+    // path: `find_tsconfig` bails out on anything that is not absolute, so
+    // handing it the URL would silently yield no config for every file.
+    let tsconfig = tsconfig_source
+        .for_path(resolver, Path::new(url.strip_prefix(PATH_PREFIX).unwrap_or(url.as_str())));
+
     match loaded {
-        Either::A(output) => {
-            Ok(Either::A(transform_output(url, output, resolved_compiler_options)?))
-        }
+        Either::A(output) => Ok(Either::A(transform_output(
+            url,
+            output,
+            tsconfig.as_ref().map(|tsconfig| &tsconfig.compiler_options),
+        )?)),
+        // The config is owned, so move it into the callback and borrow from it
+        // there; the callback outlives this function and must be `'static`.
         Either::B(promise) => promise
-            .then(move |ctx| transform_output(url, ctx.value, resolved_compiler_options))
+            .then(move |ctx| {
+                transform_output(
+                    url,
+                    ctx.value,
+                    tsconfig.as_ref().map(|tsconfig| &tsconfig.compiler_options),
+                )
+            })
             .map(Either::B),
     }
 }
@@ -594,7 +739,7 @@ pub fn load<'env>(
 fn transform_output(
     url: String,
     output: LoadFnOutput,
-    resolved_compiler_options: Option<&'static CompilerOptions>,
+    resolved_compiler_options: Option<&CompilerOptions>,
 ) -> Result<LoadFnOutput> {
     match &output.source {
         Some(Either4::D(_)) | None => {
@@ -724,27 +869,62 @@ impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
     }
 }
 
-fn init_resolver(
-    cwd: PathBuf,
-    conditions: Vec<String>,
-) -> (Resolver, Option<Arc<TsConfig>>, Option<&'static str>) {
-    let tsconfig = env::var("TS_NODE_PROJECT")
-        .or_else(|_| env::var("OXC_TSCONFIG_PATH"))
-        .map(Cow::Owned)
-        .unwrap_or(Cow::Borrowed("tsconfig.json"));
-    tracing::debug!(tsconfig = ?tsconfig);
-    let tsconfig_full_path = if !tsconfig.starts_with('/') {
-        cwd.join(PathBuf::from(&*tsconfig))
-    } else {
-        PathBuf::from(&*tsconfig)
+/// Read an environment variable, treating an empty value as unset.
+///
+/// Continuous integration wrappers and `.env` files routinely export variables
+/// with an empty value. Without this, an empty `TS_NODE_PROJECT` counts as set,
+/// shadows a perfectly good `OXC_TSCONFIG_PATH`, and leaves the process with no
+/// tsconfig at all.
+fn non_empty_env(name: &str) -> Option<String> {
+    env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+/// The module format that `.ts` / `.tsx` files should default to, derived from
+/// `compilerOptions.module`.
+///
+/// Node cannot tell from a `.ts` extension alone whether a file is ESM or
+/// CommonJS. When the tsconfig that owns the file asks for an ES module output,
+/// say so explicitly; otherwise fall back to the resolver's own `package.json`
+/// `type` detection.
+fn default_module_from_tsconfig(tsconfig: Option<&TsConfig>) -> Option<&'static str> {
+    let module = tsconfig?.compiler_options.module.as_deref()?.to_ascii_lowercase();
+    matches!(
+        module.as_str(),
+        "nodenext" | "node16" | "node18" | "es6" | "es2015" | "es2020" | "es2022" | "esnext"
+    )
+    .then_some("module")
+}
+
+fn init_resolver(cwd: PathBuf, conditions: Vec<String>) -> (Resolver, TsconfigSource) {
+    // An explicitly requested config always wins over discovery.
+    let explicit_tsconfig =
+        non_empty_env("TS_NODE_PROJECT").or_else(|| non_empty_env("OXC_TSCONFIG_PATH"));
+    tracing::debug!(explicit_tsconfig = ?explicit_tsconfig);
+
+    let explicit_tsconfig_path = explicit_tsconfig.map(|tsconfig| {
+        let tsconfig = PathBuf::from(tsconfig);
+        // `starts_with('/')` would misjudge `C:\...` on Windows.
+        if tsconfig.is_absolute() { tsconfig } else { cwd.join(tsconfig) }
+    });
+    tracing::debug!(explicit_tsconfig_path = ?explicit_tsconfig_path);
+
+    let tsconfig = match &explicit_tsconfig_path {
+        // Pointing `Manual` at a file that does not exist would make *every*
+        // `resolve()` call fail, so disable tsconfig handling instead. Falling
+        // back to `Auto` is not an option: an explicit request for a missing
+        // config must not quietly pick up a different one.
+        Some(path) if fs::exists(path).unwrap_or(false) => {
+            Some(TsconfigDiscovery::Manual(TsconfigOptions {
+                config_file: path.clone(),
+                references: TsconfigReferences::Auto,
+            }))
+        }
+        Some(_) => None,
+        // Nothing was requested: let the resolver find, per file, the nearest
+        // `tsconfig.json` that actually claims it.
+        None => Some(TsconfigDiscovery::Auto),
     };
-    tracing::debug!(tsconfig_full_path = ?tsconfig_full_path);
-    let tsconfig = fs::exists(&tsconfig_full_path).unwrap_or(false).then_some(
-        TsconfigDiscovery::Manual(TsconfigOptions {
-            config_file: tsconfig_full_path.clone(),
-            references: TsconfigReferences::Auto,
-        }),
-    );
+
     let resolver = Resolver::new(ResolveOptions {
         tsconfig,
         condition_names: conditions,
@@ -770,31 +950,12 @@ fn init_resolver(
         ..Default::default()
     });
 
-    let tsconfig = resolver.resolve_tsconfig(tsconfig_full_path).ok();
-
-    tracing::debug!(tsconfig = ?tsconfig);
-
-    let default_module_resolved_from_tsconfig = if let Some(tsconfig) = tsconfig.as_ref() {
-        if matches!(
-            tsconfig.compiler_options.module.as_deref().map(|m| m.to_ascii_lowercase()).as_deref(),
-            Some("nodenext")
-                | Some("node16")
-                | Some("node18")
-                | Some("es6")
-                | Some("es2015")
-                | Some("es2020")
-                | Some("es2022")
-                | Some("esnext")
-        ) {
-            Some("module")
-        } else {
-            None
-        }
-    } else {
-        None
+    let tsconfig_source = match explicit_tsconfig_path {
+        Some(path) => TsconfigSource::Manual(resolver.resolve_tsconfig(path).ok()),
+        None => TsconfigSource::Auto,
     };
 
-    (resolver, tsconfig, default_module_resolved_from_tsconfig)
+    (resolver, tsconfig_source)
 }
 
 fn join_errors(errors: Vec<OxcDiagnostic>, source_str: &str) -> String {
