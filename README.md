@@ -77,9 +77,26 @@ transform hook.
 
 ## Configuration
 
-By default, `oxc-node` reads `tsconfig.json` from the current working directory.
-Set `OXC_TSCONFIG_PATH` to use a different file. `TS_NODE_PROJECT` is also
-supported and takes precedence when both variables are set.
+By default, each file is governed by the nearest `tsconfig.json` in its own
+ancestor directories that claims it through `files`, `include`, `exclude` or a
+project reference — the same rule `tsc` follows. A file in a sub-project without
+its own `tsconfig.json` therefore inherits the workspace root one, and a file
+that no config claims is compiled with no options at all.
+
+`include` only covers `.js`, `.jsx`, `.mjs` and `.cjs` files when `allowJs` is
+enabled, so by default no config claims them and they are compiled with no
+options. For **module resolution** they are matched as if they were TypeScript,
+which keeps path aliases working from JavaScript without `allowJs`.
+
+A `tsconfig.json` that fails to parse stops the search: that file and every
+directory above it are skipped, and the file is compiled with no options.
+Comments and trailing commas are fine — only genuinely invalid JSON does this.
+Run with `OXC_LOG=debug` to see which config was picked for each file.
+
+Set `OXC_TSCONFIG_PATH` to pin one config for every file instead. `TS_NODE_PROJECT`
+is also supported and takes precedence when both variables are set; an empty value
+counts as unset. Naming a file that does not exist disables `tsconfig.json`
+handling entirely rather than falling back to the search above.
 
 The supported `tsconfig.json` options are used for resolution and
 transformation. These include path aliases, module and JSX settings, legacy
