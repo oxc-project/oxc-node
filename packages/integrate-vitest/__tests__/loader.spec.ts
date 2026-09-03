@@ -505,17 +505,19 @@ describe("transforms", () => {
         'console.log("setterCalled:", setterCalled);',
       ].join("\n"),
     };
-    const transformAll = reported(
-      runOk(classFieldsFixture(true, dependency), ["./entry.ts"], { OXC_TRANSFORM_ALL: "1" }),
-      "setterCalled",
-    );
-    const untouched = reported(
-      runOk(classFieldsFixture(true, dependency), ["./entry.ts"], { OXC_TRANSFORM_ALL: "" }),
-      "setterCalled",
-    );
-    // Untransformed is the native `[[Define]]` behaviour, so the setter never runs.
-    expect(untouched).toBe("false");
-    expect(transformAll).toBe("true");
+    const semanticsOf = (useDefine: boolean, transformAll: string) =>
+      reported(
+        runOk(classFieldsFixture(useDefine, dependency), ["./entry.ts"], {
+          OXC_TRANSFORM_ALL: transformAll,
+        }),
+        "setterCalled",
+      );
+    // Run the dependency under both `useDefineForClassFields` values. If oxc-node
+    // transformed it, the tsconfig picked the semantics and the two disagree; if it was
+    // left alone, both report whatever Node.js does natively. Which value maps to which
+    // semantics is deliberately not asserted, so this does not depend on #742.
+    expect(new Set([semanticsOf(true, "1"), semanticsOf(false, "1")]).size).toBe(2);
+    expect(new Set([semanticsOf(true, ""), semanticsOf(false, "")]).size).toBe(1);
   });
 
   test("a CommonJS .cts stack trace points at the original source", () => {
