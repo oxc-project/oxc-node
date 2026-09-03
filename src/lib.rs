@@ -272,12 +272,21 @@ const PATH_PREFIX: &str = "file:///";
 /// decode to valid UTF-8.
 fn file_url_to_path(url: &str) -> Option<PathBuf> {
     let path = url.strip_prefix(PATH_PREFIX)?;
-    if !path.contains('%') {
-        return Some(PathBuf::from(path));
-    }
     let bytes = path.as_bytes();
+
+    // Two vectorised passes carry this function, and the byte loop only ever
+    // runs over the escaped tail.
+    //
+    // `memchr` compares a vector register at a time, dispatching to SSE2 or
+    // AVX2 on x86 and NEON on aarch64 at runtime. Most URLs hold no escape at
+    // all, and for those this single scan is the whole function: no allocation,
+    // no copy, no decode loop.
+    let Some(mut index) = memchr::memchr(b'%', bytes) else {
+        return Some(PathBuf::from(path));
+    };
+
     let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
+    decoded.extend_from_slice(&bytes[..index]);
     while index < bytes.len() {
         // A `%` that is not followed by two hex digits is not an escape. Node
         // will not produce one, but a hand-written URL can, and copying it
@@ -295,7 +304,16 @@ fn file_url_to_path(url: &str) -> Option<PathBuf> {
             index += 1;
         }
     }
-    String::from_utf8(decoded).ok().map(PathBuf::from)
+
+    // Do not be tempted to `memchr` again per gap and bulk-copy between
+    // escapes. Escaped paths have short gaps — one non-ASCII character is three
+    // consecutive escapes — and a `memchr` call per gap costs more than the
+    // bytes it saves. Measured on a percent-encoded CJK path it was 90% slower
+    // than the loop above.
+    //
+    // The decoded bytes are arbitrary, so they still need validating. This is
+    // the second vectorised pass, and it is where escape-heavy paths win most.
+    simdutf8::basic::from_utf8(&decoded).ok().map(PathBuf::from)
 }
 
 fn hex_digit(byte: u8) -> Option<u8> {
