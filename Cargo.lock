@@ -651,6 +651,7 @@ dependencies = [
  "oxc",
  "oxc_resolver",
  "oxc_sourcemap",
+ "percent-encoding",
  "phf",
  "serde_json",
  "tracing",

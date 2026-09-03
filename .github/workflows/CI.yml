@@ -190,6 +190,37 @@ jobs:
       - name: Build
         run: ${{ matrix.settings.build }}
         shell: bash
+      # The napi-rs generated JS/TS bindings are committed. Only the wasm target
+      # regenerates all of them (the native targets reuse the export list recorded in
+      # `oxc-node.wasi.cjs`), so this is the one job that can detect drift.
+      - name: Check the committed napi bindings are up to date
+        if: matrix.settings.target == 'wasm32-wasip1-threads'
+        shell: bash
+        run: |
+          BINDINGS="packages/core/browser.js
+          packages/core/index.d.ts
+          packages/core/index.js
+          packages/core/oxc-node.wasi-browser.js
+          packages/core/oxc-node.wasi.cjs
+          packages/core/oxc-node.wasi.d.cts
+          packages/core/wasi-worker-browser.mjs
+          packages/core/wasi-worker.mjs"
+          # napi-rs emits unformatted code; the repository stores it formatted.
+          pnpm fmt
+          FAILED=""
+          # shellcheck disable=SC2086
+          git diff --exit-code -- $BINDINGS || FAILED="stale"
+          # A new napi-rs release can add a generated file, which `git diff` cannot see.
+          UNTRACKED="$(git ls-files --others --exclude-standard -- packages/core)"
+          if [ -n "$UNTRACKED" ]; then
+            echo "generated but not committed:"
+            echo "$UNTRACKED"
+            FAILED="stale"
+          fi
+          if [ -n "$FAILED" ]; then
+            echo "::error::The committed napi bindings are stale. Run \`just build\` and \`pnpm fmt\`, then commit the result."
+            exit 1
+          fi
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -434,6 +465,104 @@ jobs:
         run: pnpm test
         env:
           NAPI_RS_FORCE_WASI: "true"
+  # `register.mjs` only uses `module.registerHooks()` from Node.js v22.22.3 / v24.8.0 and
+  # falls back to `module.register()` below that. Every other test job pins
+  # `check-latest`/`node:<major>-slim`, so without this job the `module.register()` fallback
+  # and `esm.mjs` would not be exercised at all.
+  #
+  # 22.18.0 and 24.7.0 are the last releases in their lines that still need the fallback,
+  # so they pin the lower side of the version gate; the `node@22`/`node@24` jobs above run
+  # 22.22.3 and 24.8.0 or later and therefore pin the upper side.
+  test-register-fallback:
+    name: Test module.register() fallback - node@${{ matrix.node }}
+    needs:
+      - build
+      - build-cli
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - "22.18.0"
+          - "24.7.0"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: taiki-e/checkout-action@7d1e50e93dc4fb3bba58f85018fadf77898aee8b # v1.4.2
+      - name: setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - name: Setup node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli
+          path: ./packages/cli/dist
+      - name: Install dependencies
+        run: pnpm install
+      - name: Download artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bindings-x86_64-unknown-linux-gnu
+          path: ./packages/core
+      - name: Copy OXC Runtime
+        run: pnpm --filter=@oxc-node/core export-oxc-runtime
+      - name: Assert the fallback is the loader under test
+        run: |
+          node --input-type=module -e "
+            import assert from 'node:assert/strict';
+            import { supportsRegisterHooks } from './packages/core/hooks.mjs';
+            assert.equal(supportsRegisterHooks(process.versions.node), false);
+          "
+      - name: Test bindings
+        run: pnpm test
+  # `engines` declares Node.js >= 20.19.0 — the release where `require(esm)` became
+  # available by default in the 20 line, which oxc-node needs because oxc does not lower ES
+  # modules to CommonJS. Nothing else in CI can reach it: pnpm itself requires >= 22.13, so
+  # the suite is installed under Node.js 22 and then run under 20.19.0 directly.
+  test-engines-floor:
+    name: Test the engines floor - node@20.19.0
+    needs:
+      - build
+      - build-cli
+    runs-on: ubuntu-latest
+    steps:
+      - uses: taiki-e/checkout-action@7d1e50e93dc4fb3bba58f85018fadf77898aee8b # v1.4.2
+      - name: setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - name: Setup node for pnpm
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli
+          path: ./packages/cli/dist
+      - name: Install dependencies
+        run: pnpm install
+      - name: Download artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bindings-x86_64-unknown-linux-gnu
+          path: ./packages/core
+      - name: Copy OXC Runtime
+        run: pnpm --filter=@oxc-node/core export-oxc-runtime
+      - name: Setup the oldest supported node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20.19.0
+          package-manager-cache: false
+      - name: Assert the fallback is the loader under test
+        run: |
+          node --input-type=module -e "
+            import assert from 'node:assert/strict';
+            import { supportsRegisterHooks } from './packages/core/hooks.mjs';
+            assert.equal(supportsRegisterHooks(process.versions.node), false);
+          "
+      - name: Test bindings
+        working-directory: packages/integrate-module
+        run: node --import @oxc-node/core/register ./src/index.ts
   publish:
     name: Publish
     runs-on: ubuntu-latest
@@ -443,6 +572,8 @@ jobs:
       - test-linux-binding
       - build-freebsd
       - test-wasi
+      - test-register-fallback
+      - test-engines-floor
     permissions:
       contents: write
       id-token: write
