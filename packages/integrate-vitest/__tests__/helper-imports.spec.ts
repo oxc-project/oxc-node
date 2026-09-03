@@ -21,17 +21,19 @@ import { afterAll, describe, expect, test } from "vitest";
 const REGISTER = fileURLToPath(new URL("../../core/register.mjs", import.meta.url));
 const CORE = dirname(REGISTER);
 
-/** A transform that always needs a helper: a class field lowered to `[[Define]]`. */
+/**
+ * A transform that needs a helper: a class field installed with `[[Define]]` semantics is
+ * lowered to `@oxc-node/core/helpers/defineProperty`.
+ *
+ * `target: ES2022` with `useDefineForClassFields` left unset is deliberate — that is
+ * `[[Define]]` both by TypeScript's own default for this target and under the mapping
+ * oxc-node used before #742, so this fixture exercises a helper either way.
+ */
 const NEEDS_HELPER = [
-  "class Base {",
-  "  set field(value) {",
-  "    this.setterCalled = true;",
-  "  }",
-  "}",
-  "class Derived extends Base {",
+  "class Holder {",
   "  field = 1;",
   "}",
-  'const report = () => console.log("field:", new Derived().field);',
+  'const report = () => console.log("field:", new Holder().field);',
 ];
 
 const roots: string[] = [];
@@ -73,10 +75,8 @@ function run(root: string, entry: string): string {
   return output;
 }
 
-// `useDefineForClassFields` is what pulls in the helper; the value that does so is the one
-// oxc maps to `[[Define]]` semantics.
 const TSCONFIG = JSON.stringify({
-  compilerOptions: { module: "ESNext", target: "ES2022", useDefineForClassFields: false },
+  compilerOptions: { module: "ESNext", target: "ES2022" },
 });
 
 describe("injected runtime helpers", () => {
