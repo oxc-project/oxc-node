@@ -476,6 +476,38 @@ impl OxcTransformer {
     }
 }
 
+/// Whether class fields use `[[Define]]` semantics, i.e. TypeScript's
+/// [`useDefineForClassFields`].
+///
+/// TypeScript defaults it to `true` when `target` is `ES2022` or later — the first target
+/// with native class fields — and to `false` otherwise, including when no `target` is set
+/// at all (`tsc` then defaults the target to `ES5`).
+///
+/// [`useDefineForClassFields`]: https://www.typescriptlang.org/tsconfig/#useDefineForClassFields
+fn use_define_for_class_fields(compiler_options: Option<&'static CompilerOptions>) -> bool {
+    if let Some(explicit) = compiler_options.and_then(|options| options.use_define_for_class_fields)
+    {
+        return explicit;
+    }
+    compiler_options
+        .and_then(|options| options.target.as_deref())
+        .is_some_and(target_has_native_class_fields)
+}
+
+/// Whether a TypeScript `target` is `ES2022` or later, `ESNext` included.
+fn target_has_native_class_fields(target: &str) -> bool {
+    if target.eq_ignore_ascii_case("esnext") {
+        return true;
+    }
+    // `es3`, `es5` and `es6` parse to 3, 5 and 6, all below the cutoff.
+    target
+        .get(..2)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("es"))
+        .then(|| target[2..].parse::<u32>().ok())
+        .flatten()
+        .is_some_and(|year| year >= 2022)
+}
+
 fn oxc_transform<S: TryAsStr>(
     src_path: &Path,
     code: &S,
@@ -497,16 +529,16 @@ fn oxc_transform<S: TryAsStr>(
     }
     let scoping = SemanticBuilder::new().build(&program).semantic.into_scoping();
 
-    let use_define_for_class_fields =
-        compiler_options.and_then(|c| c.use_define_for_class_fields).unwrap_or_default();
+    let use_define_for_class_fields = use_define_for_class_fields(compiler_options);
+    // `useDefineForClassFields` selects `[[Define]]` semantics; oxc's `setPublicClassFields`
+    // assumption and the class-properties `loose` option both select `[[Set]]`, so they are
+    // the negation of it.
+    let set_public_class_fields = !use_define_for_class_fields;
     let TransformerReturn { diagnostics, .. } = Transformer::new(
         &allocator,
         src_path,
         &TransformOptions {
-            assumptions: CompilerAssumptions {
-                set_public_class_fields: use_define_for_class_fields,
-                ..Default::default()
-            },
+            assumptions: CompilerAssumptions { set_public_class_fields, ..Default::default() },
             decorator: DecoratorOptions {
                 legacy: compiler_options.and_then(|c| c.experimental_decorators).unwrap_or(false),
                 emit_decorator_metadata: compiler_options
@@ -554,7 +586,7 @@ fn oxc_transform<S: TryAsStr>(
                 es2022: ES2022Options {
                     class_static_block: true,
                     class_properties: Some(ClassPropertiesOptions {
-                        loose: use_define_for_class_fields,
+                        loose: set_public_class_fields,
                     }),
                     // Turn this on would throw error for all top-level awaits.
                     top_level_await: enable_top_level_await,
