@@ -649,14 +649,6 @@ pub fn create_resolve<'env>(
         tracing::debug!("short-circuiting data URL resolve: {}", specifier);
         return add_short_circuit(specifier, Some("builtin"), context, next_resolve);
     }
-    if specifier.ends_with(".json") {
-        tracing::debug!("short-circuiting JSON resolve: {}", specifier);
-        if context.import_attributes.contains_key("type") {
-            return add_short_circuit(specifier, Some("json"), context, next_resolve);
-        }
-        return add_short_circuit(specifier, Some("module"), context, next_resolve);
-    }
-
     #[cfg(target_family = "wasm")]
     let cwd = {
         if let Some(get_cwd) = options.get_current_directory {
@@ -724,6 +716,23 @@ pub fn create_resolve<'env>(
         _ => resolver.resolve(directory, &specifier),
     };
 
+    // JSON modules, resolved with oxc-node's own resolver so that tsconfig `paths`, package
+    // `exports` and conditions apply to them like they do to everything else. Deciding this
+    // from the specifier before resolving, as this used to, meant an aliased or exported
+    // JSON path was handed to Node.js unresolved.
+    //
+    // Node.js wants `json` when the caller wrote an import attribute. Without one it would
+    // refuse to load the module at all, so report `module` and let `load` synthesise a
+    // default export plus one named export per key.
+    if let Ok(resolved) = &resolution
+        && resolved.path().extension().is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+    {
+        let format = json_format(&context);
+        tracing::debug!("resolved JSON {} as format: {}", specifier, format);
+        let url = oxc_resolved_path_to_url(resolved);
+        return add_short_circuit(url, Some(format), context, next_resolve);
+    }
+
     // import attributes
     if !context.import_attributes.is_empty() {
         tracing::debug!(
@@ -776,7 +785,20 @@ pub fn create_resolve<'env>(
 
     tracing::debug!("default resolve: {}", specifier);
 
+    if url_path(&specifier).ends_with(".json") {
+        // oxc-node's resolver has nothing to add for this one; keep reporting the format so
+        // Node.js can load it, exactly as before.
+        let format = json_format(&context);
+        return add_short_circuit(specifier, Some(format), context, next_resolve);
+    }
+
     add_short_circuit(specifier, None, context, next_resolve)
+}
+
+/// The format to report for a JSON module: `json` when the caller wrote an import
+/// attribute, `module` otherwise so that [`load`] can synthesise its named exports.
+fn json_format(context: &ResolveContext) -> &'static str {
+    if context.import_attributes.contains_key("type") { "json" } else { "module" }
 }
 
 #[napi(object)]
@@ -863,19 +885,27 @@ fn transform_output(
             Ok(LoadFnOutput { format: output.format, source: None, response_url: Some(url) })
         }
         Some(Either4::A(_) | Either4::B(_) | Either4::C(_)) => {
-            let src_path = Path::new(&url);
-            // url is a file path, so it's always unix style path separator in it
-            if env::var("OXC_TRANSFORM_ALL")
-                .map(|value| value.is_empty() || value == "0" || value == "false")
-                .unwrap_or(true)
+            // `url` is a URL, so a `?query` or `#fragment` has to be stripped before it can
+            // be treated as a path, and the separators are always forward slashes.
+            let src_path = Path::new(url_path(&url));
+            let ext = src_path.extension().and_then(|ext| ext.to_str());
+            let is_json = ext.is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
+
+            // Turning JSON into a module is not a code transform, so it happens for
+            // dependencies too — `OXC_TRANSFORM_ALL` decides whether their *source* is
+            // transpiled, and skipping this would hand Node.js raw JSON to run as an ES
+            // module.
+            if !is_json
+                && env::var("OXC_TRANSFORM_ALL")
+                    .map(|value| value.is_empty() || value == "0" || value == "false")
+                    .unwrap_or(true)
                 && url.contains("/node_modules/")
             {
                 tracing::debug!("Skip transforming node_modules {}", url);
                 return Ok(output);
             }
-            let ext = src_path.extension().and_then(|ext| ext.to_str());
 
-            if ext.map(|ext| ext == "json").unwrap_or(false) {
+            if is_json {
                 let source_str = output.source.as_ref().unwrap().try_as_str()?;
                 let json: serde_json::Value = serde_json::from_str(source_str)?;
                 if let serde_json::Value::Object(obj) = json {
@@ -1113,6 +1143,16 @@ fn add_short_circuit<'env>(
             })
             .map(Either::B),
     }
+}
+
+/// The path part of a URL or specifier, i.e. everything before a `?query` or `#fragment`.
+///
+/// Extensions must be matched against this and not against the whole string: oxc-node
+/// supports `import "./mod.ts?v=1"`, and `Path::extension()` on the full URL would report
+/// `ts?v=1`.
+fn url_path(url: &str) -> &str {
+    let end = url.find(['?', '#']).unwrap_or(url.len());
+    &url[..end]
 }
 
 fn oxc_resolved_path_to_url(resolution: &Resolution) -> String {
