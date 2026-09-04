@@ -7,8 +7,8 @@ settings:
 catalogs:
   default:
     '@napi-rs/cli':
-      specifier: 3.8.6
-      version: 3.8.6
+      specifier: 3.9.0
+      version: 3.9.0
     vite-plus:
       specifier: 0.3.0
       version: 0.3.0
@@ -26,7 +26,7 @@ importers:
         version: 2.0.0-alpha.4
       '@napi-rs/cli':
         specifier: 'catalog:'
-        version: 3.8.6(@emnapi/core@2.0.0-alpha.4)(@emnapi/runtime@2.0.0-alpha.4)(@types/node@26.4.0)(emnapi@2.0.0-alpha.4)(supports-color@7.2.0)
+        version: 3.9.0(@emnapi/core@2.0.0-alpha.4)(@emnapi/runtime@2.0.0-alpha.4)(@types/node@26.4.0)(emnapi@2.0.0-alpha.4)(supports-color@7.2.0)
       '@napi-rs/wasm-runtime':
         specifier: ^1.2.3
         version: 1.2.3(@emnapi/core@2.0.0-alpha.4)(@emnapi/runtime@2.0.0-alpha.4)
@@ -99,7 +99,7 @@ importers:
     devDependencies:
       '@napi-rs/cli':
         specifier: 'catalog:'
-        version: 3.8.6(@emnapi/core@2.0.0-alpha.4)(@emnapi/runtime@2.0.0-alpha.4)(@types/node@26.4.0)(emnapi@2.0.0-alpha.4)(supports-color@7.2.0)
+        version: 3.9.0(@emnapi/core@2.0.0-alpha.4)(@emnapi/runtime@2.0.0-alpha.4)(@types/node@26.4.0)(emnapi@2.0.0-alpha.4)(supports-color@7.2.0)
       '@oxc-project/runtime':
         specifier: ^0.148.0
         version: 0.148.0
@@ -718,8 +718,8 @@ packages:
     resolution: {integrity: sha512-Z7C/xXCiGWsg0KuKsHTKJxbWhpI3Vs5GwLfOean7MGyVFGqdRgBbAjOCh6u4bbjPc/8MJ2pZmK/0DLdCbivLDA==}
     engines: {node: '>=8'}
 
-  '@napi-rs/cli@3.8.6':
-    resolution: {integrity: sha512-FnJ9fghsV9Q4zh2aJGPSvQiUlJRC27B6KhzAXcIW2rlSD8keak3mhXw4tJYa3KJkP9whETfsPwqp/DJRnQg5ng==}
+  '@napi-rs/cli@3.9.0':
+    resolution: {integrity: sha512-ZlerYOCLgVdaqbVDt8+uQxmU9j8bKMVFcYo6zRHJJHTO9jN5060+y953aIVc/0zkVSKq+fHjDAtTGOrbxpeZCw==}
     engines: {node: ^20.17.0 || ^22.13.0 || >= 23.5.0}
     hasBin: true
     peerDependencies:
@@ -4782,7 +4782,7 @@ snapshots:
 
   '@lukeed/csprng@1.1.0': {}
 
-  '@napi-rs/cli@3.8.6(@emnapi/core@2.0.0-alpha.4)(@emnapi/runtime@2.0.0-alpha.4)(@types/node@26.4.0)(emnapi@2.0.0-alpha.4)(supports-color@7.2.0)':
+  '@napi-rs/cli@3.9.0(@emnapi/core@2.0.0-alpha.4)(@emnapi/runtime@2.0.0-alpha.4)(@types/node@26.4.0)(emnapi@2.0.0-alpha.4)(supports-color@7.2.0)':
     dependencies:
       '@inquirer/prompts': 8.7.0(@types/node@26.4.0)
       '@napi-rs/cross-toolchain': 1.0.3(supports-color@7.2.0)

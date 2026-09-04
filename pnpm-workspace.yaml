@@ -8,7 +8,7 @@ allowBuilds:
   nx: true
 
 catalog:
-  "@napi-rs/cli": 3.8.6
+  "@napi-rs/cli": 3.9.0
   vite-plus: 0.3.0
 
 overrides:
