@@ -13,8 +13,7 @@ import { afterAll, describe, expect, test } from "vitest";
  * per key.
  */
 
-const REGISTER = fileURLToPath(new URL("../../core/register.mjs", import.meta.url));
-const CORE = dirname(REGISTER);
+const CORE = fileURLToPath(new URL("../../core", import.meta.url));
 
 const roots: string[] = [];
 
@@ -44,7 +43,9 @@ function fixture(files: Record<string, string>): string {
 
 /** Run the entry point and return the value it reported as `value: <value>`. */
 function reported(root: string, entry: string): string {
-  const result = spawnSync(process.execPath, ["--import", REGISTER, entry], {
+  // A bare specifier, resolved from the fixture's node_modules: on Windows an absolute
+  // path is rejected by the ESM loader unless it is a valid file:// URL.
+  const result = spawnSync(process.execPath, ["--import", "@oxc-node/core/register", entry], {
     cwd: root,
     encoding: "utf8",
     env: { ...process.env, NODE_OPTIONS: undefined },
