@@ -929,9 +929,14 @@ fn transform_output(
                         response_url: Some(url),
                     });
                 }
+                // An array or scalar has no keys to turn into named exports. Keep it an ES
+                // module instead of wrapping it in `module.exports`: `commonjs` output is
+                // cached by filename, so `./data.json?v=1` and `./data.json?v=2` would
+                // collapse into one shared module instead of staying one module per URL.
+                tracing::debug!("loaded {} format: module", url);
                 return Ok(LoadFnOutput {
-                    format: "commonjs".to_owned(),
-                    source: Some(Either4::A(format!("module.exports = {source_str}"))),
+                    format: "module".to_owned(),
+                    source: Some(Either4::A(format!("export default {source_str}"))),
                     response_url: Some(url),
                 });
             }

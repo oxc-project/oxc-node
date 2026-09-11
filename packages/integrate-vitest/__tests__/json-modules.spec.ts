@@ -174,4 +174,30 @@ describe("JSON modules keep working", () => {
     );
     expect(reported(root, "./entry.ts")).toBe(expected);
   });
+
+  // Every URL is its own module: a `?query` variant must not share state with another.
+  test("an object keeps one module instance per URL", () => {
+    const root = relative(
+      [
+        'const a = await import("./data.json?v=1");',
+        'const b = await import("./data.json?v=2");',
+        'a.default.v = "mutated";',
+        'console.log("value:", b.default.v);',
+      ].join("\n"),
+    );
+    expect(reported(root, "./entry.ts")).toBe("relative");
+  });
+
+  test("an array keeps one module instance per URL", () => {
+    const root = relative(
+      [
+        'const a = await import("./data.json?v=1");',
+        'const b = await import("./data.json?v=2");',
+        'a.default.push("three");',
+        'console.log("value:", a.default !== b.default && b.default.length === 2);',
+      ].join("\n"),
+      '["one","two"]',
+    );
+    expect(reported(root, "./entry.ts")).toBe("true");
+  });
 });
