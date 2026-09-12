@@ -99,10 +99,7 @@ describe("a CommonJS package", () => {
       // Reported as CommonJS, but nothing downlevels the `export`, so a CommonJS
       // reading of it has no named exports at all.
       "cjs/dep.ts": 'export const dep = "dep-ok";\n',
-      "entry.ts": [
-        'import { dep } from "./cjs/dep.ts";',
-        'console.log("dep:", dep);',
-      ].join("\n"),
+      "entry.ts": ['import { dep } from "./cjs/dep.ts";', 'console.log("dep:", dep);'].join("\n"),
     });
     expect(run(root, "./entry.ts")).toContain("dep: dep-ok");
   });
@@ -151,16 +148,12 @@ describe("a CommonJS package", () => {
       "package.json": COMMONJS,
       "legacy.ts": "const x = 42;\nexport = x;\n",
       // No ESM syntax anywhere, so both files stay CommonJS end to end.
-      "entry.ts": [
-        'const x = require("./legacy.ts");',
-        'console.log("export=:", x);',
-      ].join("\n"),
+      "entry.ts": ['const x = require("./legacy.ts");', 'console.log("export=:", x);'].join("\n"),
       // `export =` is TypeScript's CommonJS construct, not ESM syntax: imported through
       // the ESM loader it must stay CommonJS and arrive through the default interop.
-      "consumer.mts": [
-        'import x from "./legacy.ts";',
-        'console.log("export= esm:", x);',
-      ].join("\n"),
+      "consumer.mts": ['import x from "./legacy.ts";', 'console.log("export= esm:", x);'].join(
+        "\n",
+      ),
     });
     expect(run(root, "./entry.ts")).toContain("export=: 42");
     expect(run(root, "./consumer.mts")).toContain("export= esm: 42");
