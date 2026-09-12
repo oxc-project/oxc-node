@@ -38,6 +38,6 @@
   },
   "devDependencies": {
     "clipanion": "^4.0.0-rc.4",
-    "rolldown": "^1.2.6"
+    "rolldown": "^1.2.8"
   }
 }
