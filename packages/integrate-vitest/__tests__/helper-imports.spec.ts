@@ -1,0 +1,145 @@
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterAll, describe, expect, test } from "vitest";
+
+/**
+ * When a transform needs a runtime helper, oxc injects an import of it. Whether that is an
+ * `import` declaration or a `require()` call is decided by the module kind of the source,
+ * and for `.js`, `.jsx`, `.ts` and `.tsx` oxc infers that from the presence of
+ * `import`/`export` syntax — so a file that happens to have none looks like a script.
+ *
+ * Node.js decides from the nearest `package.json` instead, so such a file inside a
+ * `"type": "module"` package is executed as an ES module and the injected `require()` fails
+ * with `ReferenceError: require is not defined in ES module scope`. The loader knows the
+ * format Node.js reported and passes it down, so these specs cover both module kinds with
+ * and without module syntax.
+ */
+
+// `--import` takes a module specifier, so hand it the URL itself: an absolute path only
+// works on POSIX — on Windows the drive letter is parsed as a URL scheme (`c:`) and
+// Node.js exits with ERR_UNSUPPORTED_ESM_URL_SCHEME before the hooks are registered.
+const REGISTER_URL = new URL("../../core/register.mjs", import.meta.url);
+const CORE = dirname(fileURLToPath(REGISTER_URL));
+
+/**
+ * A transform that needs a helper: a class field installed with `[[Define]]` semantics is
+ * lowered to `@oxc-node/core/helpers/defineProperty`.
+ *
+ * `target: ES2022` with `useDefineForClassFields` left unset is deliberate — that is
+ * `[[Define]]` both by TypeScript's own default for this target and under the mapping
+ * oxc-node used before #742, so this fixture exercises a helper either way.
+ */
+const NEEDS_HELPER = [
+  "class Holder {",
+  "  field = 1;",
+  "}",
+  'const report = () => console.log("field:", new Holder().field);',
+];
+
+const roots: string[] = [];
+
+afterAll(() => {
+  for (const root of roots) {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+function fixture(files: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), "oxc-node-helpers-"));
+  roots.push(root);
+  for (const [name, contents] of Object.entries(files)) {
+    const path = join(root, name);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, contents);
+  }
+  mkdirSync(join(root, "node_modules", "@oxc-node"), { recursive: true });
+  symlinkSync(
+    CORE,
+    join(root, "node_modules", "@oxc-node", "core"),
+    // `junction` is the only link type Windows allows without elevated privileges.
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  return root;
+}
+
+function run(root: string, entry: string): string {
+  const result = spawnSync(process.execPath, ["--import", REGISTER_URL.href, entry], {
+    cwd: root,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      NODE_OPTIONS: undefined,
+      // An explicit tsconfig from the environment wins over every fixture's own
+      // tsconfig.json, so inheriting one would silently rewrite the matrix — or
+      // neutralise it entirely if it also turns helper injection off.
+      // `OXC_TRANSFORM_ALL` is left alone: CI sets it on purpose.
+      TS_NODE_PROJECT: undefined,
+      OXC_TSCONFIG_PATH: undefined,
+    },
+    timeout: 30_000,
+  });
+  const output = `${result.stdout}${result.stderr}`;
+  expect(result.error, result.error?.message).toBeFalsy();
+  expect(result.status, output).toBe(0);
+  return output;
+}
+
+// For a `.ts` file the loader asks the file's own tsconfig for the module kind before it
+// falls back to the nearest package.json `type`, so the tsconfig has to agree with the
+// package for a `commonjs` row to actually load — and execute — as CommonJS.
+const tsconfig = (module: string) =>
+  JSON.stringify({ compilerOptions: { module, target: "ES2022" } });
+
+describe("injected runtime helpers", () => {
+  test.each([
+    // A `"type": "module"` package: every extension below is an ES module to Node.js, but
+    // only `.mts` says so through its extension.
+    ["module", "entry.ts", "no module syntax"],
+    ["module", "entry.mts", "no module syntax"],
+    ["module", "entry.ts", "with an export"],
+    ["commonjs", "entry.ts", "no module syntax"],
+    ["commonjs", "entry.cts", "no module syntax"],
+  ])("a %s package loading %s (%s)", (type, entry, shape) => {
+    const body = [...NEEDS_HELPER];
+    if (shape === "with an export") {
+      body.push("export const exported = true;");
+    }
+    body.push("report();");
+    // Prove the file really executed as the module kind the row claims: `require`
+    // only exists in a CommonJS scope, and `typeof` does not throw on the missing
+    // binding in an ES module.
+    body.push('console.log("format:", typeof require === "undefined" ? "module" : "commonjs");');
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true, type }),
+      "tsconfig.json": tsconfig(type === "module" ? "ESNext" : "CommonJS"),
+      [entry]: body.join("\n"),
+    });
+    const output = run(root, `./${entry}`);
+    expect(output).toContain("field: 1");
+    expect(output).toContain(`format: ${type}`);
+  });
+
+  test("an imported module without module syntax also gets a usable helper", () => {
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true, type: "module" }),
+      "tsconfig.json": tsconfig("ESNext"),
+      // No `import`/`export`, so oxc would infer a script and inject `require()`.
+      "dep.ts": [
+        ...NEEDS_HELPER,
+        "globalThis.__report = report;",
+        'globalThis.__format = typeof require === "undefined" ? "module" : "commonjs";',
+      ].join("\n"),
+      "entry.ts": [
+        'import "./dep.ts";',
+        "(globalThis as Record<string, any>).__report();",
+        'console.log("format:", (globalThis as Record<string, any>).__format);',
+      ].join("\n"),
+    });
+    const output = run(root, "./entry.ts");
+    expect(output).toContain("field: 1");
+    expect(output).toContain("format: module");
+  });
+});
