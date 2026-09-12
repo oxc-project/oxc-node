@@ -69,7 +69,16 @@ function run(root: string, entry: string): string {
   const result = spawnSync(process.execPath, ["--import", REGISTER_URL.href, entry], {
     cwd: root,
     encoding: "utf8",
-    env: { ...process.env, NODE_OPTIONS: undefined },
+    env: {
+      ...process.env,
+      NODE_OPTIONS: undefined,
+      // An explicit tsconfig from the environment wins over every fixture's own
+      // tsconfig.json, so inheriting one would silently rewrite the matrix — or
+      // neutralise it entirely if it also turns helper injection off.
+      // `OXC_TRANSFORM_ALL` is left alone: CI sets it on purpose.
+      TS_NODE_PROJECT: undefined,
+      OXC_TSCONFIG_PATH: undefined,
+    },
     timeout: 30_000,
   });
   const output = `${result.stdout}${result.stderr}`;
@@ -99,12 +108,18 @@ describe("injected runtime helpers", () => {
       body.push("export const exported = true;");
     }
     body.push("report();");
+    // Prove the file really executed as the module kind the row claims: `require`
+    // only exists in a CommonJS scope, and `typeof` does not throw on the missing
+    // binding in an ES module.
+    body.push('console.log("format:", typeof require === "undefined" ? "module" : "commonjs");');
     const root = fixture({
       "package.json": JSON.stringify({ name: "fx", private: true, type }),
       "tsconfig.json": tsconfig(type === "module" ? "ESNext" : "CommonJS"),
       [entry]: body.join("\n"),
     });
-    expect(run(root, `./${entry}`)).toContain("field: 1");
+    const output = run(root, `./${entry}`);
+    expect(output).toContain("field: 1");
+    expect(output).toContain(`format: ${type}`);
   });
 
   test("an imported module without module syntax also gets a usable helper", () => {
@@ -112,11 +127,19 @@ describe("injected runtime helpers", () => {
       "package.json": JSON.stringify({ name: "fx", private: true, type: "module" }),
       "tsconfig.json": tsconfig("ESNext"),
       // No `import`/`export`, so oxc would infer a script and inject `require()`.
-      "dep.ts": [...NEEDS_HELPER, "globalThis.__report = report;"].join("\n"),
-      "entry.ts": ['import "./dep.ts";', "(globalThis as Record<string, any>).__report();"].join(
-        "\n",
-      ),
+      "dep.ts": [
+        ...NEEDS_HELPER,
+        "globalThis.__report = report;",
+        'globalThis.__format = typeof require === "undefined" ? "module" : "commonjs";',
+      ].join("\n"),
+      "entry.ts": [
+        'import "./dep.ts";',
+        "(globalThis as Record<string, any>).__report();",
+        'console.log("format:", (globalThis as Record<string, any>).__format);',
+      ].join("\n"),
     });
-    expect(run(root, "./entry.ts")).toContain("field: 1");
+    const output = run(root, "./entry.ts");
+    expect(output).toContain("field: 1");
+    expect(output).toContain("format: module");
   });
 });
