@@ -18,8 +18,11 @@ import { afterAll, describe, expect, test } from "vitest";
  * and without module syntax.
  */
 
-const REGISTER = fileURLToPath(new URL("../../core/register.mjs", import.meta.url));
-const CORE = dirname(REGISTER);
+// `--import` takes a module specifier, so hand it the URL itself: an absolute path only
+// works on POSIX — on Windows the drive letter is parsed as a URL scheme (`c:`) and
+// Node.js exits with ERR_UNSUPPORTED_ESM_URL_SCHEME before the hooks are registered.
+const REGISTER_URL = new URL("../../core/register.mjs", import.meta.url);
+const CORE = dirname(fileURLToPath(REGISTER_URL));
 
 /**
  * A transform that needs a helper: a class field installed with `[[Define]]` semantics is
@@ -63,7 +66,7 @@ function fixture(files: Record<string, string>): string {
 }
 
 function run(root: string, entry: string): string {
-  const result = spawnSync(process.execPath, ["--import", REGISTER, entry], {
+  const result = spawnSync(process.execPath, ["--import", REGISTER_URL.href, entry], {
     cwd: root,
     encoding: "utf8",
     env: { ...process.env, NODE_OPTIONS: undefined },
@@ -75,9 +78,11 @@ function run(root: string, entry: string): string {
   return output;
 }
 
-const TSCONFIG = JSON.stringify({
-  compilerOptions: { module: "ESNext", target: "ES2022" },
-});
+// For a `.ts` file the loader asks the file's own tsconfig for the module kind before it
+// falls back to the nearest package.json `type`, so the tsconfig has to agree with the
+// package for a `commonjs` row to actually load — and execute — as CommonJS.
+const tsconfig = (module: string) =>
+  JSON.stringify({ compilerOptions: { module, target: "ES2022" } });
 
 describe("injected runtime helpers", () => {
   test.each([
@@ -96,7 +101,7 @@ describe("injected runtime helpers", () => {
     body.push("report();");
     const root = fixture({
       "package.json": JSON.stringify({ name: "fx", private: true, type }),
-      "tsconfig.json": TSCONFIG,
+      "tsconfig.json": tsconfig(type === "module" ? "ESNext" : "CommonJS"),
       [entry]: body.join("\n"),
     });
     expect(run(root, `./${entry}`)).toContain("field: 1");
@@ -105,7 +110,7 @@ describe("injected runtime helpers", () => {
   test("an imported module without module syntax also gets a usable helper", () => {
     const root = fixture({
       "package.json": JSON.stringify({ name: "fx", private: true, type: "module" }),
-      "tsconfig.json": TSCONFIG,
+      "tsconfig.json": tsconfig("ESNext"),
       // No `import`/`export`, so oxc would infer a script and inject `require()`.
       "dep.ts": [...NEEDS_HELPER, "globalThis.__report = report;"].join("\n"),
       "entry.ts": ['import "./dep.ts";', "(globalThis as Record<string, any>).__report();"].join(
