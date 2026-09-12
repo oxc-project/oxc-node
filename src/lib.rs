@@ -476,6 +476,39 @@ impl OxcTransformer {
     }
 }
 
+/// Whether class fields use `[[Define]]` semantics, i.e. TypeScript's
+/// [`useDefineForClassFields`].
+///
+/// TypeScript defaults it to `true` when `target` is `ES2022` or later — the first target
+/// with native class fields. When no `target` is set at all, TypeScript 6 and later default
+/// the target to the stable ECMAScript version preceding `ESNext`, so the option defaults to
+/// `true` as well (and `target: es5` was removed in TypeScript 7).
+///
+/// [`useDefineForClassFields`]: https://www.typescriptlang.org/tsconfig/#useDefineForClassFields
+fn use_define_for_class_fields(compiler_options: Option<&CompilerOptions>) -> bool {
+    if let Some(explicit) = compiler_options.and_then(|options| options.use_define_for_class_fields)
+    {
+        return explicit;
+    }
+    compiler_options
+        .and_then(|options| options.target.as_deref())
+        .is_none_or(target_has_native_class_fields)
+}
+
+/// Whether a TypeScript `target` is `ES2022` or later, `ESNext` included.
+fn target_has_native_class_fields(target: &str) -> bool {
+    if target.eq_ignore_ascii_case("esnext") {
+        return true;
+    }
+    // `es3`, `es5` and `es6` parse to 3, 5 and 6, all below the cutoff.
+    target
+        .get(..2)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("es"))
+        .then(|| target[2..].parse::<u32>().ok())
+        .flatten()
+        .is_some_and(|year| year >= 2022)
+}
+
 fn oxc_transform<S: TryAsStr>(
     src_path: &Path,
     code: &S,
@@ -497,16 +530,15 @@ fn oxc_transform<S: TryAsStr>(
     }
     let scoping = SemanticBuilder::new().build(&program).semantic.into_scoping();
 
-    let use_define_for_class_fields =
-        compiler_options.and_then(|c| c.use_define_for_class_fields).unwrap_or_default();
+    let use_define_for_class_fields = use_define_for_class_fields(compiler_options);
+    // `useDefineForClassFields` selects `[[Define]]` semantics; oxc's `setPublicClassFields`
+    // assumption selects the opposite, `[[Set]]`, so it is the negation of it.
+    let set_public_class_fields = !use_define_for_class_fields;
     let TransformerReturn { diagnostics, .. } = Transformer::new(
         &allocator,
         src_path,
         &TransformOptions {
-            assumptions: CompilerAssumptions {
-                set_public_class_fields: use_define_for_class_fields,
-                ..Default::default()
-            },
+            assumptions: CompilerAssumptions { set_public_class_fields, ..Default::default() },
             decorator: DecoratorOptions {
                 legacy: compiler_options.and_then(|c| c.experimental_decorators).unwrap_or(false),
                 emit_decorator_metadata: compiler_options
@@ -547,15 +579,21 @@ fn oxc_transform<S: TryAsStr>(
                     .unwrap_or_default()
                     .then_some(RewriteExtensionsMode::Rewrite),
                 only_remove_type_imports: false,
+                // With `[[Set]]` semantics, `tsc` also drops class fields that have no
+                // initializer instead of assigning `undefined` through the prototype chain
+                // (which would fire an inherited setter). oxc only does that when asked.
+                remove_class_fields_without_initializer: set_public_class_fields,
                 ..Default::default()
             },
             env: EnvOptions {
                 module: module_target.unwrap_or_default(),
                 es2022: ES2022Options {
                     class_static_block: true,
-                    class_properties: Some(ClassPropertiesOptions {
-                        loose: use_define_for_class_fields,
-                    }),
+                    // `loose` stays `false`: it would also lower `#private` fields to
+                    // string-keyed properties, which `tsc` never does. The assumption
+                    // above alone selects `[[Set]]` for public fields — the transformer
+                    // ORs the two together.
+                    class_properties: Some(ClassPropertiesOptions::default()),
                     // Turn this on would throw error for all top-level awaits.
                     top_level_await: enable_top_level_await,
                 },
