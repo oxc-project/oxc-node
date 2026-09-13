@@ -27,6 +27,21 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
         Some(index) => (&rest[..index], &rest[index..]),
         None => (rest, ""),
     };
+    // The URL parser folds a drive-letter authority back into the path:
+    // `file://C:/app.ts` is `file:///C:/app.ts`, and the `c|` spelling
+    // normalizes to `c:` before `fileURLToPath` runs.
+    let bytes = rest.as_bytes();
+    if bytes.len() >= 2
+        && bytes[0].is_ascii_alphabetic()
+        && matches!(bytes[1], b':' | b'|')
+        && (bytes.len() == 2 || bytes[2] == b'/' || bytes[2] == b'\\')
+    {
+        let mut path = String::with_capacity(rest.len());
+        path.push(bytes[0] as char);
+        path.push(':');
+        path.push_str(&rest[2..]);
+        return decode_path(&path, suffix);
+    }
     // Drive form: `file:///C:/a/b` — the slash after the scheme anchors
     // the drive letter, and stripping it leaves `C:/a/b` where it belongs.
     if let Some(path) = rest.strip_prefix('/') {
@@ -156,21 +171,20 @@ fn decode_path(path: &str, suffix: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path))
 }
 
-/// Percent-decode a URL path, refusing the encoded separators that
-/// `fileURLToPath` rejects with `ERR_INVALID_FILE_URL_PATH`.
+/// Percent-decode a URL path, refusing the escapes `fileURLToPath`
+/// rejects: `%5C`/`%2F` become real separators and would let the URL text
+/// denote a file outside the directory its path names, and a malformed
+/// escape makes Node's `decodeURIComponent` throw.
 fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
     let bytes = path.as_bytes();
     let mut search_from = 0;
     while let Some(relative) = bytes[search_from..].iter().position(|&byte| byte == b'%') {
         let index = search_from + relative;
-        if bytes.len() - index >= 3 {
-            let high = bytes[index + 1];
-            let low = bytes[index + 2] | 0x20;
-            if (high == b'2' && low == b'f') || (high == b'5' && low == b'c') {
-                return None;
-            }
+        match hex_byte(bytes, index) {
+            Some(0x2f | 0x5c) => return None,
+            Some(_) => search_from = index + 3,
+            None => return None,
         }
-        search_from = index + 1;
     }
     percent_decode(path)
 }
@@ -528,12 +542,11 @@ mod tests {
         }
         assert_eq!(url_to_path("file:///C:/a%5cb.ts"), None);
         assert_eq!(url_to_path("file:///C:/a%2Fb.ts"), None);
-        // A lone `%` or unrelated escapes are unaffected.
+        // A valid, unrelated escape is unaffected.
         assert_eq!(
             url_to_path("file://server/share/a%20b.ts"),
             Some(PathBuf::from("\\\\server\\share\\a b.ts"))
         );
-        assert_eq!(url_to_path("file:///C:/a%zz.ts"), Some(PathBuf::from("C:/a%zz.ts")));
     }
 
     #[test]
@@ -592,8 +605,23 @@ mod tests {
     }
 
     #[test]
-    fn malformed_escapes_are_copied_verbatim() {
-        assert_eq!(url_to_path("file:///C:/a%zz.ts"), Some(PathBuf::from("C:/a%zz.ts")));
+    fn windows_malformed_escapes_are_rejected() {
+        // Node's `fileURLToPath` runs `decodeURIComponent`, which throws on
+        // a malformed escape (URIError), on both the UNC and drive forms.
+        assert_eq!(url_to_path("file://server/share/a%zz.ts"), None);
+        assert_eq!(url_to_path("file:///C:/a%zz.ts"), None);
+        assert_eq!(url_to_path("file:///C:/a%"), None);
+    }
+
+    #[test]
+    fn windows_drive_letter_authority_folds_into_path() {
+        // The URL parser folds a drive-letter authority back into the path
+        // (`file://C:/app.ts` is `file:///C:/app.ts`); the `c|` spelling
+        // normalizes to `c:`.
+        assert_eq!(url_to_path("file://C:/app.ts"), Some(PathBuf::from("C:/app.ts")));
+        assert_eq!(url_to_path("file://c|/app.ts"), Some(PathBuf::from("c:/app.ts")));
+        assert_eq!(url_to_path("file://C:"), Some(PathBuf::from("C:")));
+        assert_eq!(url_to_path("file://g:/dir/app.ts"), Some(PathBuf::from("g:/dir/app.ts")));
     }
 
     #[test]
