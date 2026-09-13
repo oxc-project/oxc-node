@@ -19,10 +19,18 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     if rest.is_empty() {
         return None;
     }
+    // The query and fragment are not part of the filesystem path — Node
+    // validates and decodes the pathname only — so split them off before the
+    // separator checks and pass the raw suffix through for the resolver to
+    // treat as module identity.
+    let (rest, suffix) = match rest.find(['?', '#']) {
+        Some(index) => (&rest[..index], &rest[index..]),
+        None => (rest, ""),
+    };
     // Drive form: `file:///C:/a/b` — the slash after the scheme anchors
     // the drive letter, and stripping it leaves `C:/a/b` where it belongs.
     if let Some(path) = rest.strip_prefix('/') {
-        return decode_path_string(path).map(|text| PathBuf::from(text.into_owned()));
+        return decode_path(path, suffix);
     }
     // UNC form: `file://server/share/a`.
     let (host, path) = match rest.find('/') {
@@ -30,7 +38,15 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
         None => (rest, ""),
     };
     if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
-        return decode_path_string(path).map(|text| PathBuf::from(text.into_owned()));
+        return decode_path(path, suffix);
+    }
+    // The URL parser rejects an authority whose escapes decode to forbidden
+    // host code points (`file://server%5Cother/…` is ERR_INVALID_URL), and
+    // decodes the rest through IDNA to-ASCII before `fileURLToPath` maps it
+    // back — so an allowed escape such as `%C3%BD` still reaches us as the
+    // Unicode name the punycode authority denotes.
+    if has_forbidden_host_escape(host) {
+        return None;
     }
     let host = percent_decode(host)?;
     // `pathToFileURL` writes a non-ASCII server name as punycode, and
@@ -40,11 +56,12 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     // names a server nobody has.
     let host = domain_to_unicode(&host);
     let path = decode_path_string(path)?;
-    let mut unc = String::with_capacity(host.len() + path.len() + 3);
+    let mut unc = String::with_capacity(host.len() + path.len() + suffix.len() + 3);
     unc.push_str("\\\\");
     unc.push_str(&host);
     unc.push('\\');
     unc.push_str(&path.replace('/', "\\"));
+    unc.push_str(suffix);
     Some(PathBuf::from(unc))
 }
 
@@ -115,10 +132,21 @@ fn domain_to_unicode(host: &str) -> Cow<'_, str> {
     if changed { Cow::Owned(decoded) } else { Cow::Borrowed(host) }
 }
 
+/// Percent-decode a URL path and re-attach the raw query/fragment suffix,
+/// refusing the encoded separators that `fileURLToPath` rejects with
+/// `ERR_INVALID_FILE_URL_PATH`: a `%5C` or `%2F` that became a real
+/// separator after decoding would let the URL text denote a file outside
+/// the directory its path names. The suffix is validated separately by
+/// Node, so escapes inside it stay untouched.
+fn decode_path(path: &str, suffix: &str) -> Option<PathBuf> {
+    let decoded = decode_path_string(path)?;
+    let mut path = decoded.into_owned();
+    path.push_str(suffix);
+    Some(PathBuf::from(path))
+}
+
 /// Percent-decode a URL path, refusing the encoded separators that
-/// `fileURLToPath` rejects with `ERR_INVALID_FILE_URL_PATH`: a `%5C` or
-/// `%2F` that became a real separator after decoding would let the URL text
-/// denote a file outside the directory its path names.
+/// `fileURLToPath` rejects with `ERR_INVALID_FILE_URL_PATH`.
 fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
     let bytes = path.as_bytes();
     let mut search_from = 0;
@@ -134,6 +162,38 @@ fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
         search_from = index + 1;
     }
     percent_decode(path)
+}
+
+/// True when an authority escape decodes to a code point the URL parser
+/// forbids in a special-scheme host (controls, space, `"` `#` `%` `/` `:`
+/// `<` `>` `?` `@` `[` `\` `]` `^` `|` DEL), or a `%` is not a valid escape
+/// at all — Node rejects such hosts outright (`ERR_INVALID_URL`).
+fn has_forbidden_host_escape(host: &str) -> bool {
+    let bytes = host.as_bytes();
+    let mut search_from = 0;
+    while let Some(relative) = bytes[search_from..].iter().position(|&byte| byte == b'%') {
+        let index = search_from + relative;
+        match hex_byte(bytes, index) {
+            Some(byte) if forbidden_host_byte(byte) => return true,
+            Some(_) => search_from = index + 3,
+            None => return true,
+        }
+    }
+    false
+}
+
+/// Decode one `%XX` escape at `index`; `None` when it is malformed.
+fn hex_byte(bytes: &[u8], index: usize) -> Option<u8> {
+    if bytes.len() - index < 3 {
+        return None;
+    }
+    Some(super::hex_digit(bytes[index + 1])? * 16 + super::hex_digit(bytes[index + 2])?)
+}
+
+fn forbidden_host_byte(byte: u8) -> bool {
+    matches!(byte,
+        0x00..=0x20 | 0x22 | 0x23 | 0x25 | 0x2f | 0x3a | 0x3c | 0x3e | 0x3f | 0x40 | 0x5b..=0x5d
+            | 0x5e | 0x7c | 0x7f)
 }
 
 /// Percent-encode a resolved path for the URL path: `/` separators stay,
@@ -295,11 +355,34 @@ mod tests {
             url_to_path("file://server/share/my%20dir/x.ts"),
             Some(PathBuf::from("\\\\server\\share\\my dir\\x.ts"))
         );
-        // The authority decodes too.
+        // The authority decodes allowed escapes: `%C3%BD` is the IDNA form
+        // of `ý`, so the host is the Unicode name, like `fileURLToPath`.
         assert_eq!(
-            url_to_path("file://my%20server/share/x.ts"),
-            Some(PathBuf::from("\\\\my server\\share\\x.ts"))
+            url_to_path("file://my%C3%BDserver/share/x.ts"),
+            Some(PathBuf::from("\\\\myýserver\\share\\x.ts"))
         );
+    }
+
+    #[test]
+    fn windows_query_and_fragment_pass_through() {
+        // Node validates and decodes the pathname only; the raw suffix is
+        // module identity and its escapes are not filesystem separators.
+        assert_eq!(
+            url_to_path("file://server/share/a.ts?key=%2F"),
+            Some(PathBuf::from("\\\\server\\share\\a.ts?key=%2F"))
+        );
+        assert_eq!(url_to_path("file:///C:/a.ts#frag%5C"), Some(PathBuf::from("C:/a.ts#frag%5C")));
+    }
+
+    #[test]
+    fn windows_forbidden_host_escapes_are_rejected() {
+        // The URL parser rejects an authority whose escapes decode to
+        // forbidden host code points (ERR_INVALID_URL); decoding them here
+        // would silently move a path segment into the server name.
+        assert_eq!(url_to_path("file://server%5Cother/share/x.ts"), None);
+        assert_eq!(url_to_path("file://server%2Fother/share/x.ts"), None);
+        assert_eq!(url_to_path("file://my%20server/share/x.ts"), None);
+        assert_eq!(url_to_path("file://ser%ver/share/x.ts"), None);
     }
 
     #[test]
