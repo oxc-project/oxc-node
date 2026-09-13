@@ -62,6 +62,15 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
         return None;
     }
     let host = percent_decode(host)?;
+    // WHATWG host parsing canonicalizes IPv4 authorities (`file://127.1/…`
+    // is `127.0.0.1`) and rejects anything that ends in a number without
+    // being a valid address (`256.1` is ERR_INVALID_URL). This runs before
+    // IDNA, matching the parser's order.
+    let host = match parse_ipv4_authority(&host) {
+        Ipv4Authority::Address(address) => Cow::Owned(address.to_string()),
+        Ipv4Authority::Invalid => return None,
+        Ipv4Authority::NotIpv4 => host,
+    };
     // `pathToFileURL` writes a non-ASCII server name as punycode, and
     // `fileURLToPath` runs the host through IDNA to-Unicode
     // (`domainToUnicode`) — `\\mýserver\share` round trips as
@@ -73,16 +82,27 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     if host.eq_ignore_ascii_case("localhost") {
         // `file://localhost/…` is the local drive form: `fileURLToPath`
         // requires an absolute drive path (`file://localhost/share/…` is
-        // rejected) and the `c|` spelling normalizes to `c:`.
-        let bytes = path.as_bytes();
-        if bytes.len() < 2 || !bytes[0].is_ascii_alphabetic() || !matches!(bytes[1], b':' | b'|') {
+        // rejected). A raw `c|` spelling folds to `c:` at parse time, but
+        // an encoded `%7C` decodes too late — `file://localhost/c%7C/…`
+        // is rejected — so the drive check after decoding accepts only
+        // `:`; a percent-encoded drive letter (`%43%3A`) decodes fine.
+        let mut raw = path;
+        let normalized;
+        let raw_bytes = raw.as_bytes();
+        if raw_bytes.len() >= 2 && raw_bytes[0].is_ascii_alphabetic() && raw_bytes[1] == b'|' {
+            normalized = format!("{}:{}", raw_bytes[0] as char, &raw[2..]);
+            raw = &normalized;
+        }
+        let decoded = decode_path_string(raw)?;
+        let bytes = decoded.as_bytes();
+        if bytes.len() < 2 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' {
             return None;
         }
-        let mut drive = String::with_capacity(path.len());
+        let mut drive = String::with_capacity(decoded.len());
         drive.push(bytes[0] as char);
         drive.push(':');
-        drive.push_str(&path[2..]);
-        return decode_path(&drive);
+        drive.push_str(&decoded[2..]);
+        return Some(PathBuf::from(drive));
     }
     let path = decode_path_string(path)?;
     let mut unc = String::with_capacity(host.len() + path.len() + 3);
@@ -122,6 +142,70 @@ fn unc_path_to_url(stripped: &str) -> String {
     let rest = rest.replace('\\', "/");
     let rest = encode_path(&rest);
     format!("file://{}/{rest}", encode_host(host))
+}
+
+enum Ipv4Authority {
+    /// The authority is not IPv4; host handling continues normally.
+    NotIpv4,
+    /// The canonical dotted-quad the authority denotes.
+    Address(std::net::Ipv4Addr),
+    /// Ends in a number but is not a valid IPv4 address (`ERR_INVALID_URL`).
+    Invalid,
+}
+
+/// WHATWG IPv4 parsing for special-scheme authorities: when the last label
+/// is a number, the whole authority must parse as IPv4 — decimal, `0x`
+/// hex, and leading-zero octal parts, with the last part filling the
+/// remaining bytes (`127.1` is `127.0.0.1`) — or the URL is invalid.
+fn parse_ipv4_authority(host: &str) -> Ipv4Authority {
+    let Some(last) = host.rsplit('.').next() else {
+        return Ipv4Authority::NotIpv4;
+    };
+    if ipv4_number(last).is_none() {
+        return Ipv4Authority::NotIpv4;
+    }
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() > 4 || parts.iter().any(|part| part.is_empty()) {
+        return Ipv4Authority::Invalid;
+    }
+    let mut numbers = [0u64; 4];
+    for (index, part) in parts.iter().enumerate() {
+        let Some(value) = ipv4_number(part) else {
+            return Ipv4Authority::Invalid;
+        };
+        let max =
+            if index == parts.len() - 1 { 1u64 << (8 * (5 - parts.len()) as u32) } else { 256 };
+        if value >= max {
+            return Ipv4Authority::Invalid;
+        }
+        numbers[index] = value;
+    }
+    let last_value = numbers[parts.len() - 1];
+    let mut octets = [0u8; 4];
+    for (index, number) in numbers.iter().enumerate().take(parts.len() - 1) {
+        octets[index] = *number as u8;
+    }
+    let remaining = 4 - (parts.len() - 1);
+    for index in 0..remaining {
+        octets[4 - remaining + index] = (last_value >> (8 * (remaining - 1 - index))) as u8;
+    }
+    Ipv4Authority::Address(std::net::Ipv4Addr::from(octets))
+}
+
+/// WHATWG IPv4 number parser: `0x` hex, leading-zero octal, decimal.
+fn ipv4_number(part: &str) -> Option<u64> {
+    let bytes = part.as_bytes();
+    let (radix, digits) = if bytes.len() > 2 && bytes[0] == b'0' && (bytes[1] | 0x20) == b'x' {
+        (16, &part[2..])
+    } else if bytes.len() > 1 && bytes[0] == b'0' {
+        (8, &part[1..])
+    } else {
+        (10, part)
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    u64::from_str_radix(digits, radix).ok()
 }
 
 /// Percent-encode a UNC server name for the URL authority: every byte
@@ -769,10 +853,47 @@ mod tests {
         assert_eq!(url_to_path("file://%6cocalhost/C:/a.ts"), Some(PathBuf::from("C:/a.ts")));
         assert_eq!(url_to_path("file://LOCALHOST/C:/a.ts"), Some(PathBuf::from("C:/a.ts")));
         // The localhost form still has to name a drive, and the `c|` spelling
-        // normalizes to `c:` — everything else is `must be absolute`.
+        // normalizes to `c:` — everything else is `must be absolute`. The
+        // drive letter may itself be percent-encoded; an encoded pipe is
+        // decoded too late and rejected.
         assert_eq!(url_to_path("file://localhost/c|/a.ts"), Some(PathBuf::from("c:/a.ts")));
+        assert_eq!(url_to_path("file://localhost/%43%3A/a.ts"), Some(PathBuf::from("C:/a.ts")));
+        assert_eq!(url_to_path("file://localhost/C%3A/a.ts"), Some(PathBuf::from("C:/a.ts")));
+        assert_eq!(url_to_path("file://localhost/c%7C/a.ts"), None);
         assert_eq!(url_to_path("file://localhost/share/a.ts"), None);
         assert_eq!(url_to_path("file://localhost/"), None);
+    }
+
+    #[test]
+    fn windows_ipv4_authorities_are_canonicalized() {
+        // WHATWG IPv4 parsing: partial and non-decimal spellings
+        // canonicalize, anything ending in a number that is not valid IPv4
+        // is ERR_INVALID_URL.
+        assert_eq!(
+            url_to_path("file://127.1/share/x.ts"),
+            Some(PathBuf::from("\\\\127.0.0.1\\share\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://1.2.3/share/x.ts"),
+            Some(PathBuf::from("\\\\1.2.0.3\\share\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://0x7f.1/share/x.ts"),
+            Some(PathBuf::from("\\\\127.0.0.1\\share\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://0177.0.0.1/share/x.ts"),
+            Some(PathBuf::from("\\\\127.0.0.1\\share\\x.ts"))
+        );
+        assert_eq!(url_to_path("file://256.1/share/x.ts"), None);
+        assert_eq!(url_to_path("file://1.2.3.4.5/share/x.ts"), None);
+        assert_eq!(url_to_path("file://server.256.1/share/x.ts"), None);
+        assert_eq!(url_to_path("file://1.2.3.256/share/x.ts"), None);
+        // A name that merely ends in a digit is not IPv4.
+        assert_eq!(
+            url_to_path("file://server1/share/x.ts"),
+            Some(PathBuf::from("\\\\server1\\share\\x.ts"))
+        );
     }
 
     #[test]
