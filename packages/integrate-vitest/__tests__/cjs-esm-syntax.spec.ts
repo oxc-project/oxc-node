@@ -176,6 +176,23 @@ describe("a CommonJS package", () => {
     expect(run(root, "./entry.js")).toContain("meta: true");
   });
 
+  test("a file whose only module syntax is a type-only import runs as an ES module", () => {
+    // `import type` is erased, but the transform injects `export {}` so that the output
+    // stays a module — the CommonJS path never could run such a file (it crashed with
+    // ERR_REQUIRE_CYCLE_MODULE), so flipping to ESM is the only working behaviour. CJS
+    // globals were never available to it either way.
+    const root = fixture({
+      "package.json": COMMONJS,
+      "types.ts": "export type ExecPath = string;\n",
+      "entry.ts": [
+        'import type { ExecPath } from "./types";',
+        "const p: ExecPath = process.execPath;",
+        'console.log("type-only:", typeof require === "undefined", p.length > 0);',
+      ].join("\n"),
+    });
+    expect(run(root, "./entry.ts")).toContain("type-only: true true");
+  });
+
   test("a .cts file is CommonJS by contract and never flips", () => {
     const root = fixture({
       "package.json": COMMONJS,
