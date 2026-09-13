@@ -158,6 +158,13 @@ describe.skipIf(!shareReady)("Windows UNC file URLs", () => {
     "entry-collide.mjs",
     [`await import("file://${process.env.COMPUTERNAME}/${SHARE}/coll%23ide.ts");`].join("\n"),
   );
+  // A real fragment is module identity, not a filename character: the `.js`
+  // → `.ts` extension alias must still apply to the path before it.
+  fixture("alias.ts", ['console.log("unc-alias: ok");', ""].join("\n"));
+  fixture(
+    "entry-alias.mjs",
+    [`await import("file://${process.env.COMPUTERNAME}/${SHARE}/alias.js#v1");`].join("\n"),
+  );
 
   test("a UNC file URL imports and runs TypeScript", () => {
     const { status, output } = run("entry-url.mjs");
@@ -202,5 +209,12 @@ describe.skipIf(!shareReady)("Windows UNC file URLs", () => {
     expect(status, output).toBe(0);
     expect(output).toContain("unc-collide: right file");
     expect(output).not.toContain("unc-collide: wrong file");
+  });
+
+  test("a real fragment stays module identity and the extension alias applies", () => {
+    const { status, output } = run("entry-alias.mjs");
+    expect(output, output).not.toContain("Parent URL is not a file URL");
+    expect(status, output).toBe(0);
+    expect(output).toContain("unc-alias: ok");
   });
 });

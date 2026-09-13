@@ -265,6 +265,12 @@ const NODE_MODULES_PATH: &str = "\\node_modules\\";
 #[cfg(not(windows))]
 fn file_url_to_path(url: &str) -> Option<PathBuf> {
     let rest = url.strip_prefix("file://")?;
+    // The query and fragment are not part of the filesystem path; Node
+    // decodes the pathname only.
+    let (rest, _suffix) = match rest.find(['?', '#']) {
+        Some(index) => (&rest[..index], &rest[index..]),
+        None => (rest, ""),
+    };
     percent_decode_to_path(rest)
 }
 
@@ -878,9 +884,18 @@ pub fn create_resolve<'env>(
             // The path is fully decoded, so a literal `#` in a file name would
             // be parsed as a fragment here and a same-named prefix file would
             // win (`a` over `a#b.ts`); the resolver's enhanced-resolve escape
-            // keeps the hash a filename character.
+            // keeps the hash a filename character. The query/fragment are not
+            // part of the path — `file_url_to_path` drops them — so re-attach
+            // the raw suffix afterwards, where it stays module identity.
             let escaped = specifier_path.to_string_lossy().replace('#', "\u{0}#");
-            resolver.resolve(Path::new("/"), &escaped)
+            match specifier.find(['?', '#']) {
+                Some(index) => {
+                    let mut with_suffix = escaped;
+                    with_suffix.push_str(&specifier[index..]);
+                    resolver.resolve(Path::new("/"), &with_suffix)
+                }
+                None => resolver.resolve(Path::new("/"), &escaped),
+            }
         }
         // `Resolver::resolve` only ever consults a *manually* configured tsconfig,
         // so under `TsconfigDiscovery::Auto` it would silently ignore `paths` and

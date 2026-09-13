@@ -21,9 +21,8 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     }
     // The query and fragment are not part of the filesystem path — Node
     // validates and decodes the pathname only — so split them off before the
-    // separator checks and pass the raw suffix through for the resolver to
-    // treat as module identity.
-    let (rest, suffix) = match rest.find(['?', '#']) {
+    // separator checks; `create_resolve` re-attaches them for module identity.
+    let (rest, _suffix) = match rest.find(['?', '#']) {
         Some(index) => (&rest[..index], &rest[index..]),
         None => (rest, ""),
     };
@@ -40,12 +39,12 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
         path.push(bytes[0] as char);
         path.push(':');
         path.push_str(&rest[2..]);
-        return decode_path(&path, suffix);
+        return decode_path(&path);
     }
     // Drive form: `file:///C:/a/b` — the slash after the scheme anchors
     // the drive letter, and stripping it leaves `C:/a/b` where it belongs.
     if let Some(path) = rest.strip_prefix('/') {
-        return decode_path(path, suffix);
+        return decode_path(path);
     }
     // UNC form: `file://server/share/a`. The URL parser treats `\` as `/`
     // in special schemes, so an absolute specifier may arrive with either
@@ -83,15 +82,14 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
         drive.push(bytes[0] as char);
         drive.push(':');
         drive.push_str(&path[2..]);
-        return decode_path(&drive, suffix);
+        return decode_path(&drive);
     }
     let path = decode_path_string(path)?;
-    let mut unc = String::with_capacity(host.len() + path.len() + suffix.len() + 3);
+    let mut unc = String::with_capacity(host.len() + path.len() + 3);
     unc.push_str("\\\\");
     unc.push_str(&host);
     unc.push('\\');
     unc.push_str(&path.replace('/', "\\"));
-    unc.push_str(suffix);
     Some(PathBuf::from(unc))
 }
 
@@ -130,6 +128,11 @@ fn unc_path_to_url(stripped: &str) -> String {
 /// outside the unreserved ASCII set becomes `%XX` with uppercase hex,
 /// matching what `pathToFileURL` writes for a host such as `my server`.
 fn encode_host(host: &str) -> Cow<'_, str> {
+    // Bracketed IPv6 literals keep their authority syntax — percent-encoding
+    // the brackets produces a URL Node rejects (ERR_INVALID_URL).
+    if host.len() > 2 && host.starts_with('[') && host.ends_with(']') {
+        return Cow::Borrowed(host);
+    }
     percent_encode(host, &[])
 }
 
@@ -169,17 +172,14 @@ fn domain_to_unicode(host: &str) -> Cow<'_, str> {
     if changed { Cow::Owned(decoded) } else { host }
 }
 
-/// Percent-decode a URL path and re-attach the raw query/fragment suffix,
-/// refusing the encoded separators that `fileURLToPath` rejects with
-/// `ERR_INVALID_FILE_URL_PATH`: a `%5C` or `%2F` that became a real
-/// separator after decoding would let the URL text denote a file outside
-/// the directory its path names. The suffix is validated separately by
-/// Node, so escapes inside it stay untouched.
-fn decode_path(path: &str, suffix: &str) -> Option<PathBuf> {
-    let decoded = decode_path_string(path)?;
-    let mut path = decoded.into_owned();
-    path.push_str(suffix);
-    Some(PathBuf::from(path))
+/// Percent-decode a URL path, refusing the escapes `fileURLToPath`
+/// rejects: `%5C`/`%2F` become real separators and would let the URL text
+/// denote a file outside the directory its path names, and a malformed
+/// escape makes Node's `decodeURIComponent` throw. The query/fragment are
+/// not part of the filesystem path and are dropped, like Node's pathname
+/// handling; `create_resolve` re-attaches them for module identity.
+fn decode_path(path: &str) -> Option<PathBuf> {
+    decode_path_string(path).map(|decoded| PathBuf::from(decoded.into_owned()))
 }
 
 /// Percent-decode a URL path, refusing the escapes `fileURLToPath`
@@ -422,14 +422,14 @@ mod tests {
     }
 
     #[test]
-    fn windows_query_and_fragment_pass_through() {
-        // Node validates and decodes the pathname only; the raw suffix is
-        // module identity and its escapes are not filesystem separators.
+    fn windows_query_and_fragment_are_not_part_of_the_path() {
+        // Node validates and decodes the pathname only; the suffix is module
+        // identity, dropped here and re-attached by `create_resolve`.
         assert_eq!(
             url_to_path("file://server/share/a.ts?key=%2F"),
-            Some(PathBuf::from("\\\\server\\share\\a.ts?key=%2F"))
+            Some(PathBuf::from("\\\\server\\share\\a.ts"))
         );
-        assert_eq!(url_to_path("file:///C:/a.ts#frag%5C"), Some(PathBuf::from("C:/a.ts#frag%5C")));
+        assert_eq!(url_to_path("file:///C:/a.ts#frag%5C"), Some(PathBuf::from("C:/a.ts")));
     }
 
     #[test]
@@ -567,6 +567,17 @@ mod tests {
         assert_eq!(path_to_url("\\\\?\\UNC\\server\\share\\x.ts"), "file://server/share/x.ts");
         assert_eq!(path_to_url("\\\\?\\C:\\x.ts"), "file:///C:/x.ts");
         assert_eq!(path_to_url("\\\\server\\share\\x.ts"), "file://server/share/x.ts");
+    }
+
+    #[test]
+    fn windows_ipv6_host_keeps_its_authority_syntax() {
+        // `pathToFileURL` emits bracketed IPv6 authorities verbatim;
+        // percent-encoding the brackets is ERR_INVALID_URL in Node.
+        assert_eq!(path_to_url("\\\\[::1]\\share\\x.ts"), "file://[::1]/share/x.ts");
+        assert_eq!(
+            path_to_url("\\\\[2001:db8::1]\\share\\x.ts"),
+            "file://[2001:db8::1]/share/x.ts"
+        );
     }
 
     #[test]
