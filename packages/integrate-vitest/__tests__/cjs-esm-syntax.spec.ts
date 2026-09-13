@@ -116,6 +116,50 @@ describe("a CommonJS package", () => {
     expect(run(root, "./entry.ts")).toContain("tla: ok");
   });
 
+  test("top-level await without any import/export is still module syntax", () => {
+    // Node.js's own detection counts top-level await as module syntax; the file only
+    // parses as a module, so it must flip rather than hit the CommonJS machinery, which
+    // rejects it (`await is only valid in async functions ...`).
+    const root = fixture({
+      "package.json": COMMONJS,
+      "entry.ts": [
+        "await new Promise(resolve => setTimeout(resolve, 1));",
+        'console.log("tla-only: ok");',
+      ].join("\n"),
+    });
+    expect(run(root, "./entry.ts")).toContain("tla-only: ok");
+  });
+
+  test("top-level `for await` is module syntax too", () => {
+    // The unambiguous parse cannot resolve this one to a module on its own — the
+    // module-mode retry is what catches it.
+    const root = fixture({
+      "package.json": COMMONJS,
+      "entry.ts": [
+        'for await (const value of [1, 2]) {',
+        '  console.log("for-await:", value);',
+        "}",
+      ].join("\n"),
+    });
+    expect(run(root, "./entry.ts")).toContain("for-await: 2");
+  });
+
+  test("an imported top-level-await module without import/export runs", () => {
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true, type: "module" }),
+      "cjs/package.json": COMMONJS,
+      "cjs/dep.ts": [
+        "await new Promise(resolve => setTimeout(resolve, 1));",
+        'globalThis.__tlaDep = "tla-dep-ok";',
+      ].join("\n"),
+      "entry.ts": [
+        'await import("./cjs/dep.ts");',
+        'console.log("tla-dep:", (globalThis as Record<string, any>).__tlaDep);',
+      ].join("\n"),
+    });
+    expect(run(root, "./entry.ts")).toContain("tla-dep: tla-dep-ok");
+  });
+
   test("a .js file with ESM syntax runs as an ES module", () => {
     const root = fixture({
       "package.json": COMMONJS,
