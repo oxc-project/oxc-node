@@ -136,7 +136,7 @@ describe("a CommonJS package", () => {
     const root = fixture({
       "package.json": COMMONJS,
       "entry.ts": [
-        'for await (const value of [1, 2]) {',
+        "for await (const value of [1, 2]) {",
         '  console.log("for-await:", value);',
         "}",
       ].join("\n"),
