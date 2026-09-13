@@ -196,7 +196,7 @@ fn parse_ipv4_authority(host: &str) -> Ipv4Authority {
 /// bare prefix (`0x`, `00`) is numeric zero, as the parser defines.
 fn ipv4_number(part: &str) -> Option<u64> {
     let bytes = part.as_bytes();
-    let (radix, digits) = if bytes.len() > 2 && bytes[0] == b'0' && (bytes[1] | 0x20) == b'x' {
+    let (radix, digits) = if bytes.len() >= 2 && bytes[0] == b'0' && (bytes[1] | 0x20) == b'x' {
         (16, &part[2..])
     } else if bytes.len() > 1 && bytes[0] == b'0' {
         (8, &part[1..])
