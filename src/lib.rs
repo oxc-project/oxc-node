@@ -251,12 +251,6 @@ const NODE_MODULES_PATH: &str = "/node_modules/";
 #[cfg(target_os = "windows")]
 const NODE_MODULES_PATH: &str = "\\node_modules\\";
 
-#[cfg(not(target_os = "windows"))]
-const PATH_PREFIX: &str = "file://";
-
-#[cfg(target_os = "windows")]
-const PATH_PREFIX: &str = "file:///";
-
 /// Convert a `file://` URL into a filesystem path.
 ///
 /// Node hands the loader hooks URLs, and a URL percent-encodes every character
@@ -266,25 +260,129 @@ const PATH_PREFIX: &str = "file:///";
 /// past the project and finds nothing, and relative specifiers resolve against
 /// a directory that does not exist.
 ///
-/// The `file:///C:/…` form needs no special casing: [`PATH_PREFIX`] already
-/// carries the extra slash on Windows, so stripping it leaves the drive letter
-/// at the front where it belongs.
-///
 /// Returns `None` if `url` is not a `file://` URL, or if its escapes do not
 /// decode to valid UTF-8.
+#[cfg(not(windows))]
 fn file_url_to_path(url: &str) -> Option<PathBuf> {
-    let path = url.strip_prefix(PATH_PREFIX)?;
-    let bytes = path.as_bytes();
+    let rest = url.strip_prefix("file://")?;
+    percent_decode_to_path(rest)
+}
 
-    // Two vectorised passes carry this function, and the byte loop only ever
-    // runs over the escaped tail.
-    //
-    // `memchr` compares a vector register at a time, dispatching to SSE2 or
-    // AVX2 on x86 and NEON on aarch64 at runtime. Most URLs hold no escape at
-    // all, and for those this single scan is the whole function: no allocation,
-    // no copy, no decode loop.
+/// Convert a `file://` URL into a filesystem path, including the UNC
+/// authority form: `\\server\share\dir\module.ts` round trips as
+/// `file://server/share/dir/module.ts`, the form `pathToFileURL` produces, so
+/// the component between `file://` and the next `/` is the server name rather
+/// than a path segment. Reading it as one lost the host on the way in and
+/// wrote `file://///server/…` on the way out (issue #744).
+#[cfg(windows)]
+fn file_url_to_path(url: &str) -> Option<PathBuf> {
+    windows_file_url::url_to_path(url)
+}
+
+/// Windows `file:` URL rules (issue #744): a UNC path round trips through the
+/// URL authority — `\\server\share\a.ts` <-> `file://server/share/a.ts` —
+/// while a drive-letter path keeps the `file:///C:/…` form. Compiled into
+/// test builds on every platform so the matrix below runs wherever `cargo
+/// test` does; production builds on other platforms exclude it entirely.
+#[cfg(any(windows, test))]
+mod windows_file_url {
+    use std::borrow::Cow;
+    use std::path::PathBuf;
+
+    use super::{percent_decode, percent_decode_to_path};
+
+    /// Convert a `file://` URL into a filesystem path: `file:///C:/…` keeps
+    /// the drive form, and `file://server/share/…` maps its authority back to
+    /// a leading `\\server\…`, the same reading `fileURLToPath` gives it.
+    /// Returns `None` for non-`file:` URLs and escapes that do not decode to
+    /// valid UTF-8.
+    pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
+        let rest = url.strip_prefix("file://")?;
+        if rest.is_empty() {
+            return None;
+        }
+        // Drive form: `file:///C:/a/b` — the slash after the scheme anchors
+        // the drive letter, and stripping it leaves `C:/a/b` where it belongs.
+        if let Some(path) = rest.strip_prefix('/') {
+            return percent_decode_to_path(path);
+        }
+        // UNC form: `file://server/share/a`.
+        let (host, path) = match rest.find('/') {
+            Some(index) => (&rest[..index], &rest[index + 1..]),
+            None => (rest, ""),
+        };
+        if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
+            return percent_decode_to_path(path);
+        }
+        let host = percent_decode(host)?;
+        let path = percent_decode(path)?;
+        let mut unc = String::with_capacity(host.len() + path.len() + 3);
+        unc.push_str("\\\\");
+        unc.push_str(&host);
+        unc.push('\\');
+        unc.push_str(&path.replace('/', "\\"));
+        Some(PathBuf::from(unc))
+    }
+
+    /// The `pathToFileURL` mapping: a `\\` or `//` prefix makes the first
+    /// component the UNC authority — percent-encoded — and everything else
+    /// keeps the `file:///<drive>:/…` form.
+    pub(super) fn path_to_url(path: &str) -> String {
+        if let Some(stripped) = path.strip_prefix("\\\\").or_else(|| path.strip_prefix("//")) {
+            let (host, rest) = match stripped.find(['\\', '/']) {
+                Some(index) => (&stripped[..index], &stripped[index + 1..]),
+                None => (stripped, ""),
+            };
+            return format!("file://{}/{rest}", encode_host(host)).replace('\\', "/");
+        }
+        format!("file:///{path}").replace('\\', "/")
+    }
+
+    /// Percent-encode a UNC server name for the URL authority: every byte
+    /// outside the unreserved ASCII set becomes `%XX` with uppercase hex,
+    /// matching what `pathToFileURL` writes for a host such as `my server`.
+    fn encode_host(host: &str) -> Cow<'_, str> {
+        fn unreserved(byte: u8) -> bool {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+        }
+        if host.bytes().all(unreserved) {
+            return Cow::Borrowed(host);
+        }
+        let mut encoded = String::with_capacity(host.len());
+        for byte in host.bytes() {
+            if unreserved(byte) {
+                encoded.push(byte as char);
+            } else {
+                encoded.push('%');
+                encoded
+                    .push(char::from_digit(u32::from(byte >> 4), 16).unwrap().to_ascii_uppercase());
+                encoded.push(
+                    char::from_digit(u32::from(byte & 0xf), 16).unwrap().to_ascii_uppercase(),
+                );
+            }
+        }
+        Cow::Owned(encoded)
+    }
+}
+
+/// Decode one URL component straight into a path; see [`percent_decode`].
+fn percent_decode_to_path(input: &str) -> Option<PathBuf> {
+    percent_decode(input).map(|text| PathBuf::from(text.into_owned()))
+}
+
+/// Percent-decode one URL component, validating the decoded bytes as UTF-8.
+///
+/// Two vectorised passes carry this function, and the byte loop only ever
+/// runs over the escaped tail.
+///
+/// `memchr` compares a vector register at a time, dispatching to SSE2 or
+/// AVX2 on x86 and NEON on aarch64 at runtime. Most URLs hold no escape at
+/// all, and for those this single scan is the whole function: no allocation,
+/// no copy, no decode loop.
+fn percent_decode(input: &str) -> Option<Cow<'_, str>> {
+    let bytes = input.as_bytes();
     let Some(mut index) = memchr::memchr(b'%', bytes) else {
-        return Some(PathBuf::from(path));
+        return Some(Cow::Borrowed(input));
     };
 
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -315,7 +413,8 @@ fn file_url_to_path(url: &str) -> Option<PathBuf> {
     //
     // The decoded bytes are arbitrary, so they still need validating. This is
     // the second vectorised pass, and it is where escape-heavy paths win most.
-    simdutf8::basic::from_utf8(&decoded).ok().map(PathBuf::from)
+    let text = simdutf8::basic::from_utf8(&decoded).ok()?;
+    Some(Cow::Owned(text.to_owned()))
 }
 
 fn hex_digit(byte: u8) -> Option<u8> {
@@ -830,7 +929,9 @@ pub fn create_resolve<'env>(
     let (resolver, tsconfig_source) =
         RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone(), conditions.to_vec()));
 
-    let is_absolute_path = specifier.starts_with(PATH_PREFIX);
+    // A `file:` URL is an absolute path in every form Node.js hands over,
+    // UNC `file://server/…` included.
+    let is_absolute_path = specifier.starts_with("file://");
 
     // The importing file itself, when the parent URL is a file URL. Discovery
     // needs the file rather than its directory, because `TsconfigDiscovery::Auto`
@@ -1409,15 +1510,132 @@ fn url_path(url: &str) -> &str {
 }
 
 fn oxc_resolved_path_to_url(resolution: &Resolution) -> String {
-    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
-    let mut url = if resolution.query().is_some() || resolution.fragment().is_some() {
-        format!("{PATH_PREFIX}{}", resolution.full_path().to_string_lossy())
+    let path = if resolution.query().is_some() || resolution.fragment().is_some() {
+        resolution.full_path().to_string_lossy().into_owned()
     } else {
-        format!("{PATH_PREFIX}{}", resolution.path().to_string_lossy())
+        resolution.path().to_string_lossy().into_owned()
     };
-    #[cfg(target_os = "windows")]
-    {
-        url = url.replace("\\", "/");
+    path_to_file_url(&path)
+}
+
+/// Generate a `file:` URL from an absolute path.
+#[cfg(not(windows))]
+fn path_to_file_url(path: &str) -> String {
+    format!("file://{path}")
+}
+
+/// Generate a `file:` URL from an absolute path, following the `pathToFileURL`
+/// rules: a `\\` or `//` prefix makes the first component the UNC authority —
+/// percent-encoded — and everything else keeps the `file:///<drive>:/…` form.
+#[cfg(windows)]
+fn path_to_file_url(path: &str) -> String {
+    windows_file_url::path_to_url(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    // Windows `file:` URL handling (issue #744): UNC paths round trip through
+    // the URL authority (`\\server\share\a.ts` <-> `file://server/share/a.ts`),
+    // while drive-letter paths keep the `file:///C:/…` form. The rules live
+    // in `windows_file_url`, which test builds compile on every platform.
+
+    #[test]
+    fn windows_drive_url_parses() {
+        assert_eq!(
+            windows_file_url::url_to_path("file:///C:/a/b.ts"),
+            Some(PathBuf::from("C:/a/b.ts"))
+        );
     }
-    url
+
+    #[test]
+    fn windows_drive_path_generates() {
+        assert_eq!(windows_file_url::path_to_url("C:\\a\\b.ts"), "file:///C:/a/b.ts");
+    }
+
+    #[test]
+    fn windows_unc_url_parses_to_unc_path() {
+        assert_eq!(
+            windows_file_url::url_to_path("file://server/share/dir/module.ts"),
+            Some(PathBuf::from("\\\\server\\share\\dir\\module.ts"))
+        );
+    }
+
+    #[test]
+    fn windows_unc_url_without_path_parses_to_server_root() {
+        assert_eq!(
+            windows_file_url::url_to_path("file://server"),
+            Some(PathBuf::from("\\\\server\\"))
+        );
+    }
+
+    #[test]
+    fn windows_unc_url_decodes_escapes() {
+        assert_eq!(
+            windows_file_url::url_to_path("file://server/share/my%20dir/x.ts"),
+            Some(PathBuf::from("\\\\server\\share\\my dir\\x.ts"))
+        );
+        // The authority decodes too.
+        assert_eq!(
+            windows_file_url::url_to_path("file://my%20server/share/x.ts"),
+            Some(PathBuf::from("\\\\my server\\share\\x.ts"))
+        );
+    }
+
+    #[test]
+    fn windows_unc_path_generates_authority_url() {
+        assert_eq!(
+            windows_file_url::path_to_url("\\\\server\\share\\x.ts"),
+            "file://server/share/x.ts"
+        );
+        // Forward-slash UNC spellings are accepted as well.
+        assert_eq!(
+            windows_file_url::path_to_url("//server/share/x.ts"),
+            "file://server/share/x.ts"
+        );
+        // The host is percent-encoded for the authority.
+        assert_eq!(
+            windows_file_url::path_to_url("\\\\my server\\share\\x.ts"),
+            "file://my%20server/share/x.ts"
+        );
+    }
+
+    #[test]
+    fn windows_localhost_authority_maps_to_drive_path() {
+        assert_eq!(
+            windows_file_url::url_to_path("file://localhost/C:/a.ts"),
+            Some(PathBuf::from("C:/a.ts"))
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn non_windows_behavior_is_unchanged() {
+        assert_eq!(file_url_to_path("file:///a/b.ts"), Some(PathBuf::from("/a/b.ts")));
+        assert_eq!(file_url_to_path("file:///a%20b.ts"), Some(PathBuf::from("/a b.ts")));
+        assert_eq!(path_to_file_url("/a/b.ts"), "file:///a/b.ts");
+    }
+
+    #[test]
+    fn non_file_urls_are_rejected() {
+        assert_eq!(windows_file_url::url_to_path("https://example.com/x.ts"), None);
+        assert_eq!(windows_file_url::url_to_path("node:fs"), None);
+    }
+
+    #[test]
+    fn malformed_escapes_are_copied_verbatim() {
+        assert_eq!(
+            windows_file_url::url_to_path("file:///C:/a%zz.ts"),
+            Some(PathBuf::from("C:/a%zz.ts"))
+        );
+    }
+
+    #[test]
+    fn invalid_utf8_escapes_are_rejected() {
+        assert_eq!(windows_file_url::url_to_path("file:///a%FF.ts"), None);
+        assert_eq!(windows_file_url::url_to_path("file://server/share/%FF.ts"), None);
+    }
 }

@@ -7,7 +7,9 @@ license = "MIT"
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+# `rlib` lets `cargo test` link unit tests against the library; the napi build
+# only consumes the `cdylib` artifact.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 memchr = "2"

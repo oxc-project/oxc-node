@@ -46,6 +46,8 @@ jobs:
         run: pnpm lint
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Cargo test
+        run: cargo test --all-features
 
   build-cli:
     name: Build CLI
