@@ -172,26 +172,28 @@ fn domain_to_unicode(host: &str) -> Cow<'_, str> {
     if changed { Cow::Owned(decoded) } else { host }
 }
 
-/// WHATWG URL path normalization, applied to the percent-encoded path
-/// where `%2E` is a filename character rather than a dot segment: `.`
-/// segments vanish, `..` pops the previous segment without ever crossing a
-/// drive prefix (`C:/../x` stays `C:/x`) or the share root, and a trailing
-/// dot segment leaves a trailing slash.
+/// WHATWG URL path normalization, applied to the percent-encoded path: a
+/// dot segment (`.`, `..`, and their `%2e` spellings — `%2E`/`%2e` count
+/// as a dot) vanishes or pops the previous segment, never crossing a drive
+/// prefix (`C:/../x` stays `C:/x`) or the share root, and a trailing dot
+/// segment leaves a trailing slash. `%2E` inside a longer segment stays a
+/// filename character, exactly as the URL parser treats it.
 fn normalize_dot_segments(path: &str) -> Cow<'_, str> {
-    if !path.split('/').any(|segment| segment == "." || segment == "..") {
+    if !path.split('/').any(|segment| dot_segment_kind(segment) != 0) {
         return Cow::Borrowed(path);
     }
-    let trailing_slash = path.ends_with("/.") || path.ends_with("/..");
+    let trailing_slash =
+        path.rsplit('/').next().is_some_and(|segment| dot_segment_kind(segment) != 0);
     let mut out: Vec<&str> = Vec::new();
     for segment in path.split('/') {
-        match segment {
-            "." => {}
-            ".." => {
+        match dot_segment_kind(segment) {
+            1 => {}
+            2 => {
                 if out.len() > 1 || out.first().is_some_and(|first| !is_drive_prefix(first)) {
                     out.pop();
                 }
             }
-            other => out.push(other),
+            _ => out.push(segment),
         }
     }
     let mut normalized = out.join("/");
@@ -199,6 +201,33 @@ fn normalize_dot_segments(path: &str) -> Cow<'_, str> {
         normalized.push('/');
     }
     Cow::Owned(normalized)
+}
+
+/// 1 for a single-dot segment (`.` or `%2e`), 2 for a double-dot segment
+/// (`..`, `.%2e`, `%2e.`, `%2e%2e`, any hex case), 0 otherwise.
+fn dot_segment_kind(segment: &str) -> u8 {
+    let bytes = segment.as_bytes();
+    let mut dots = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'.' {
+            dots += 1;
+            index += 1;
+        } else if bytes.len() - index >= 3
+            && bytes[index] == b'%'
+            && bytes[index + 1] == b'2'
+            && (bytes[index + 2] | 0x20) == b'e'
+        {
+            dots += 1;
+            index += 3;
+        } else {
+            return 0;
+        }
+        if dots > 2 {
+            return 0;
+        }
+    }
+    dots
 }
 
 fn is_drive_prefix(segment: &str) -> bool {
@@ -632,10 +661,29 @@ mod tests {
             url_to_path("file://server/share/."),
             Some(PathBuf::from("\\\\server\\share\\"))
         );
-        // An escaped dot is a filename character, not a dot segment.
+        // Encoded dot segments normalize the same way — %2e is a dot in the
+        // URL parser — while %2E inside a longer segment is a filename char.
+        assert_eq!(
+            url_to_path("file://server/old/%2E%2E/new/x.ts"),
+            Some(PathBuf::from("\\\\server\\new\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://server/old/.%2e/new/x.ts"),
+            Some(PathBuf::from("\\\\server\\new\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://server/share/%2E"),
+            Some(PathBuf::from("\\\\server\\share\\"))
+        );
+        assert_eq!(
+            url_to_path("file://server/a%2Eb/x.ts"),
+            Some(PathBuf::from("\\\\server\\a.b\\x.ts"))
+        );
+        // A bare encoded double dot is still a double-dot segment: it pops
+        // the share, exactly like the literal spelling.
         assert_eq!(
             url_to_path("file://server/share/%2E%2E/x.ts"),
-            Some(PathBuf::from("\\\\server\\share\\..\\x.ts"))
+            Some(PathBuf::from("\\\\server\\x.ts"))
         );
     }
 
