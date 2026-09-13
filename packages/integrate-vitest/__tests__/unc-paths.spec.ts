@@ -31,9 +31,12 @@ const REGISTER_URL = new URL("../../core/register.mjs", import.meta.url);
 const isWindows = process.platform === "win32";
 
 // Set up the loopback share before collecting tests, so `describe.skipIf`
-// below sees the real answer.
+// below sees the real answer. Creation and readiness are tracked separately:
+// `net share` can succeed while the reachability probe fails, and a leftover
+// share with a fixed name would make every later run skip silently.
 let fixtureDir = "";
 let uncRoot = "";
+let shareCreated = false;
 let shareReady = false;
 
 if (isWindows) {
@@ -42,11 +45,12 @@ if (isWindows) {
   const created = spawnSync("net", ["share", `${SHARE}=${fixtureDir}`, "/grant:Everyone,FULL"], {
     encoding: "utf8",
   });
-  shareReady = created.status === 0 && existsSync(uncRoot);
+  shareCreated = created.status === 0;
+  shareReady = shareCreated && existsSync(uncRoot);
 }
 
 afterAll(() => {
-  if (shareReady) {
+  if (shareCreated) {
     spawnSync("net", ["share", SHARE, "/delete", "/yes"], { encoding: "utf8" });
   }
   if (fixtureDir) {
