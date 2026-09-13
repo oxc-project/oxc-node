@@ -875,7 +875,12 @@ pub fn create_resolve<'env>(
         (true, ..) => {
             let specifier_path = file_url_to_path(&specifier)
                 .ok_or_else(|| Error::new(Status::GenericFailure, "Specifier is not a file URL"))?;
-            resolver.resolve(Path::new("/"), &specifier_path.to_string_lossy())
+            // The path is fully decoded, so a literal `#` in a file name would
+            // be parsed as a fragment here and a same-named prefix file would
+            // win (`a` over `a#b.ts`); the resolver's enhanced-resolve escape
+            // keeps the hash a filename character.
+            let escaped = specifier_path.to_string_lossy().replace('#', "\u{0}#");
+            resolver.resolve(Path::new("/"), &escaped)
         }
         // `Resolver::resolve` only ever consults a *manually* configured tsconfig,
         // so under `TsconfigDiscovery::Auto` it would silently ignore `paths` and

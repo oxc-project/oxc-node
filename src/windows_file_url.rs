@@ -72,7 +72,18 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     // is the local drive path just like `file://localhost/C:/…`.
     let host = domain_to_unicode(&host);
     if host.eq_ignore_ascii_case("localhost") {
-        return decode_path(path, suffix);
+        // `file://localhost/…` is the local drive form: `fileURLToPath`
+        // requires an absolute drive path (`file://localhost/share/…` is
+        // rejected) and the `c|` spelling normalizes to `c:`.
+        let bytes = path.as_bytes();
+        if bytes.len() < 2 || !bytes[0].is_ascii_alphabetic() || !matches!(bytes[1], b':' | b'|') {
+            return None;
+        }
+        let mut drive = String::with_capacity(path.len());
+        drive.push(bytes[0] as char);
+        drive.push(':');
+        drive.push_str(&path[2..]);
+        return decode_path(&drive, suffix);
     }
     let path = decode_path_string(path)?;
     let mut unc = String::with_capacity(host.len() + path.len() + suffix.len() + 3);
@@ -582,6 +593,11 @@ mod tests {
         // it, so escapes and case do not defeat the localhost special case.
         assert_eq!(url_to_path("file://%6cocalhost/C:/a.ts"), Some(PathBuf::from("C:/a.ts")));
         assert_eq!(url_to_path("file://LOCALHOST/C:/a.ts"), Some(PathBuf::from("C:/a.ts")));
+        // The localhost form still has to name a drive, and the `c|` spelling
+        // normalizes to `c:` — everything else is `must be absolute`.
+        assert_eq!(url_to_path("file://localhost/c|/a.ts"), Some(PathBuf::from("c:/a.ts")));
+        assert_eq!(url_to_path("file://localhost/share/a.ts"), None);
+        assert_eq!(url_to_path("file://localhost/"), None);
     }
 
     #[test]

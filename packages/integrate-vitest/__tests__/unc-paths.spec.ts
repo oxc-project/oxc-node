@@ -148,6 +148,16 @@ describe.skipIf(!shareReady)("Windows UNC file URLs", () => {
     "entry-hash.mjs",
     [`await import("file://${process.env.COMPUTERNAME}/${SHARE}/hash%23name.ts");`].join("\n"),
   );
+  // The fallback only retries the full path when the fragment-stripped path
+  // does NOT exist — so when both `coll` and `coll#ide.ts` exist, a decoded
+  // `#` would resolve the wrong file. The absolute branch escapes the hash
+  // for the resolver instead.
+  fixture("coll", ['console.log("unc-collide: wrong file");', ""].join("\n"));
+  fixture("coll#ide.ts", ['console.log("unc-collide: right file");', ""].join("\n"));
+  fixture(
+    "entry-collide.mjs",
+    [`await import("file://${process.env.COMPUTERNAME}/${SHARE}/coll%23ide.ts");`].join("\n"),
+  );
 
   test("a UNC file URL imports and runs TypeScript", () => {
     const { status, output } = run("entry-url.mjs");
@@ -184,5 +194,13 @@ describe.skipIf(!shareReady)("Windows UNC file URLs", () => {
     expect(output, output).not.toContain("Parent URL is not a file URL");
     expect(status, output).toBe(0);
     expect(output).toContain("unc-hash: ok");
+  });
+
+  test("a hash-named file wins over its same-named prefix", () => {
+    const { status, output } = run("entry-collide.mjs");
+    expect(output, output).not.toContain("Parent URL is not a file URL");
+    expect(status, output).toBe(0);
+    expect(output).toContain("unc-collide: right file");
+    expect(output).not.toContain("unc-collide: wrong file");
   });
 });
