@@ -7,7 +7,7 @@
 use std::borrow::Cow;
 use std::path::PathBuf;
 
-use super::{percent_decode, percent_decode_to_path};
+use super::percent_decode;
 
 /// Convert a `file://` URL into a filesystem path: `file:///C:/…` keeps
 /// the drive form, and `file://server/share/…` maps its authority back to
@@ -22,7 +22,7 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     // Drive form: `file:///C:/a/b` — the slash after the scheme anchors
     // the drive letter, and stripping it leaves `C:/a/b` where it belongs.
     if let Some(path) = rest.strip_prefix('/') {
-        return percent_decode_to_path(path);
+        return decode_path_string(path).map(|text| PathBuf::from(text.into_owned()));
     }
     // UNC form: `file://server/share/a`.
     let (host, path) = match rest.find('/') {
@@ -30,7 +30,7 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
         None => (rest, ""),
     };
     if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
-        return percent_decode_to_path(path);
+        return decode_path_string(path).map(|text| PathBuf::from(text.into_owned()));
     }
     let host = percent_decode(host)?;
     // `pathToFileURL` writes a non-ASCII server name as punycode, and
@@ -39,7 +39,7 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     // `file://xn--mserver-v2a/share`. Match that, or the decoded host
     // names a server nobody has.
     let host = domain_to_unicode(&host);
-    let path = percent_decode(path)?;
+    let path = decode_path_string(path)?;
     let mut unc = String::with_capacity(host.len() + path.len() + 3);
     unc.push_str("\\\\");
     unc.push_str(&host);
@@ -52,21 +52,31 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
 /// component the UNC authority — percent-encoded — and everything else
 /// keeps the `file:///<drive>:/…` form.
 pub(super) fn path_to_url(path: &str) -> String {
+    // Canonicalized paths carry the extended-length prefix (`\\?\`), which
+    // the `pathToFileURL` mapping ignores.
+    if let Some(stripped) = path.strip_prefix("\\\\?\\UNC\\") {
+        return unc_path_to_url(stripped);
+    }
+    let path = path.strip_prefix("\\\\?\\").unwrap_or(path);
     if let Some(stripped) = path.strip_prefix("\\\\").or_else(|| path.strip_prefix("//")) {
-        let (host, rest) = match stripped.find(['\\', '/']) {
-            Some(index) => (&stripped[..index], &stripped[index + 1..]),
-            None => (stripped, ""),
-        };
-        // The path is encoded the way the `file:` URL path setter encodes
-        // it: `/` separators stay, everything outside the unreserved set
-        // becomes `%XX`. Over-encoding is safe — a URL parser decodes
-        // `%XX` back to the same file — while under-encoding is not: a
-        // literal `%` would be read as an escape and a `#` as a fragment.
-        let rest = rest.replace('\\', "/");
-        let rest = encode_path(&rest);
-        return format!("file://{}/{rest}", encode_host(host));
+        return unc_path_to_url(stripped);
     }
     format!("file:///{path}").replace('\\', "/")
+}
+
+fn unc_path_to_url(stripped: &str) -> String {
+    let (host, rest) = match stripped.find(['\\', '/']) {
+        Some(index) => (&stripped[..index], &stripped[index + 1..]),
+        None => (stripped, ""),
+    };
+    // The path is encoded the way the `file:` URL path setter encodes
+    // it: `/` separators stay, everything outside the unreserved set
+    // becomes `%XX`. Over-encoding is safe — a URL parser decodes
+    // `%XX` back to the same file — while under-encoding is not: a
+    // literal `%` would be read as an escape and a `#` as a fragment.
+    let rest = rest.replace('\\', "/");
+    let rest = encode_path(&rest);
+    format!("file://{}/{rest}", encode_host(host))
 }
 
 /// Percent-encode a UNC server name for the URL authority: every byte
@@ -103,6 +113,27 @@ fn domain_to_unicode(host: &str) -> Cow<'_, str> {
         decoded.push_str(label);
     }
     if changed { Cow::Owned(decoded) } else { Cow::Borrowed(host) }
+}
+
+/// Percent-decode a URL path, refusing the encoded separators that
+/// `fileURLToPath` rejects with `ERR_INVALID_FILE_URL_PATH`: a `%5C` or
+/// `%2F` that became a real separator after decoding would let the URL text
+/// denote a file outside the directory its path names.
+fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
+    let bytes = path.as_bytes();
+    let mut search_from = 0;
+    while let Some(relative) = bytes[search_from..].iter().position(|&byte| byte == b'%') {
+        let index = search_from + relative;
+        if bytes.len() - index >= 3 {
+            let high = bytes[index + 1];
+            let low = bytes[index + 2] | 0x20;
+            if (high == b'2' && low == b'f') || (high == b'5' && low == b'c') {
+                return None;
+            }
+        }
+        search_from = index + 1;
+    }
+    percent_decode(path)
 }
 
 /// Percent-encode a resolved path for the URL path: `/` separators stay,
@@ -330,6 +361,37 @@ mod tests {
             url_to_path("file://server.example.com/share/x.ts"),
             Some(PathBuf::from("\\\\server.example.com\\share\\x.ts"))
         );
+    }
+
+    #[test]
+    fn windows_encoded_separators_are_rejected() {
+        // `fileURLToPath` refuses `%5C`/`%2F` with ERR_INVALID_FILE_URL_PATH;
+        // decoding them into real separators would let a URL text denote a
+        // file outside the directory its path names.
+        for escape in ["%5C", "%5c", "%2F", "%2f"] {
+            assert_eq!(
+                url_to_path(&format!("file://server/share/dir{escape}..{escape}secret.ts")),
+                None,
+                "{escape} must be rejected"
+            );
+        }
+        assert_eq!(url_to_path("file:///C:/a%5cb.ts"), None);
+        assert_eq!(url_to_path("file:///C:/a%2Fb.ts"), None);
+        // A lone `%` or unrelated escapes are unaffected.
+        assert_eq!(
+            url_to_path("file://server/share/a%20b.ts"),
+            Some(PathBuf::from("\\\\server\\share\\a b.ts"))
+        );
+        assert_eq!(url_to_path("file:///C:/a%zz.ts"), Some(PathBuf::from("C:/a%zz.ts")));
+    }
+
+    #[test]
+    fn windows_verbatim_prefix_is_ignored() {
+        // Canonicalized paths carry the extended-length prefix; `pathToFileURL`
+        // maps `\\?\UNC\server\share\…` and `\\?\C:\…` to the ordinary forms.
+        assert_eq!(path_to_url("\\\\?\\UNC\\server\\share\\x.ts"), "file://server/share/x.ts");
+        assert_eq!(path_to_url("\\\\?\\C:\\x.ts"), "file:///C:/x.ts");
+        assert_eq!(path_to_url("\\\\server\\share\\x.ts"), "file://server/share/x.ts");
     }
 
     #[test]
