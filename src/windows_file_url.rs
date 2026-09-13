@@ -39,9 +39,6 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
         Some(index) => (&rest[..index], &rest[index + 1..]),
         None => (rest, ""),
     };
-    if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
-        return decode_path(path, suffix);
-    }
     // The URL parser rejects an authority whose escapes decode to forbidden
     // host code points (`file://server%5Cother/…` is ERR_INVALID_URL), and
     // decodes the rest through IDNA to-ASCII before `fileURLToPath` maps it
@@ -55,8 +52,13 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     // `fileURLToPath` runs the host through IDNA to-Unicode
     // (`domainToUnicode`) — `\\mýserver\share` round trips as
     // `file://xn--mserver-v2a/share`. Match that, or the decoded host
-    // names a server nobody has.
+    // names a server nobody has. The URL parser also lowercases and
+    // canonicalizes the authority first, so `file://%6cocalhost/C:/…`
+    // is the local drive path just like `file://localhost/C:/…`.
     let host = domain_to_unicode(&host);
+    if host.eq_ignore_ascii_case("localhost") {
+        return decode_path(path, suffix);
+    }
     let path = decode_path_string(path)?;
     let mut unc = String::with_capacity(host.len() + path.len() + suffix.len() + 3);
     unc.push_str("\\\\");
@@ -113,6 +115,13 @@ fn domain_to_unicode(host: &str) -> Cow<'_, str> {
     if !host.is_ascii() {
         return Cow::Borrowed(host);
     }
+    // The URL parser canonicalizes the authority to lowercase before
+    // `fileURLToPath` maps it back, so uppercase never survives.
+    let host = if host.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        Cow::Owned(host.to_ascii_lowercase())
+    } else {
+        Cow::Borrowed(host)
+    };
     let mut decoded = String::with_capacity(host.len());
     let mut changed = false;
     let mut first_label = true;
@@ -131,7 +140,7 @@ fn domain_to_unicode(host: &str) -> Cow<'_, str> {
         }
         decoded.push_str(label);
     }
-    if changed { Cow::Owned(decoded) } else { Cow::Borrowed(host) }
+    if changed { Cow::Owned(decoded) } else { host }
 }
 
 /// Percent-decode a URL path and re-attach the raw query/fragment suffix,
@@ -189,7 +198,13 @@ fn has_forbidden_host_escape(host: &str) -> bool {
 /// keep their `:`, which is otherwise forbidden.
 fn has_forbidden_host_char(host: &str) -> bool {
     if host.len() > 2 && host.starts_with('[') && host.ends_with(']') {
-        return false;
+        // The bracket exception holds only for genuine IPv6 literals —
+        // `file://[foo]/…` is ERR_INVALID_URL in Node, and the fallback
+        // below rejects the brackets as forbidden characters.
+        let address = host[1..host.len() - 1].split('%').next().unwrap_or_default();
+        if address.parse::<std::net::Ipv6Addr>().is_ok() {
+            return false;
+        }
     }
     // `%` is legal inside a valid escape and policed by
     // `has_forbidden_host_escape` instead — malformed there, forbidden when
@@ -421,11 +436,13 @@ mod tests {
             assert_eq!(url_to_path(&format!("file://{host}/share/x.ts")), None, "{host}");
         }
         // A raw `"` and bracketed IPv6 literals are accepted, matching
-        // `fileURLToPath`.
+        // `fileURLToPath`; brackets around anything that is not IPv6 are
+        // rejected like Node's URL parser.
         assert_eq!(
             url_to_path("file://ser\"ver/share/x.ts"),
             Some(PathBuf::from("\\\\ser\"ver\\share\\x.ts"))
         );
+        assert_eq!(url_to_path("file://[foo]/share/x.ts"), None);
         assert_eq!(
             url_to_path("file://[::1]/share/x.ts"),
             Some(PathBuf::from("\\\\[::1]\\share\\x.ts"))
@@ -548,6 +565,24 @@ mod tests {
     #[test]
     fn windows_localhost_authority_maps_to_drive_path() {
         assert_eq!(url_to_path("file://localhost/C:/a.ts"), Some(PathBuf::from("C:/a.ts")));
+        // The parser canonicalizes the authority before `fileURLToPath` sees
+        // it, so escapes and case do not defeat the localhost special case.
+        assert_eq!(url_to_path("file://%6cocalhost/C:/a.ts"), Some(PathBuf::from("C:/a.ts")));
+        assert_eq!(url_to_path("file://LOCALHOST/C:/a.ts"), Some(PathBuf::from("C:/a.ts")));
+    }
+
+    #[test]
+    fn windows_authority_is_lowercased() {
+        assert_eq!(
+            url_to_path("file://SERVER/share/x.ts"),
+            Some(PathBuf::from("\\\\server\\share\\x.ts"))
+        );
+        // Punycode decodes after lowercasing, like the URL parser plus
+        // `domainToUnicode`.
+        assert_eq!(
+            url_to_path("file://XN--MSERVER-V2A/share/x.ts"),
+            Some(PathBuf::from("\\\\mýserver\\share\\x.ts"))
+        );
     }
 
     #[test]
