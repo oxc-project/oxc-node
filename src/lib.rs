@@ -10,11 +10,13 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use oxc::{
     allocator::Allocator,
+    ast::ast::{Program, Statement},
     codegen::{Codegen, CodegenOptions, CodegenReturn},
-    diagnostics::OxcDiagnostic,
+    diagnostics::{Diagnostics, OxcDiagnostic},
     parser::{Parser, ParserReturn},
     semantic::SemanticBuilder,
     span::SourceType,
+    syntax::module_record::ModuleRecord,
     transformer::{
         ClassPropertiesOptions, CompilerAssumptions, DecoratorOptions, ES2022Options,
         ES2026Options, EnvOptions, HelperLoaderOptions, JsxOptions, JsxRuntime, Module,
@@ -422,6 +424,7 @@ impl Task for TransformTask {
             // the extension and the source decide.
             false,
         )
+        .map(|(output, _)| output)
     }
 
     fn resolve(&mut self, _: Env, output: Self::Output) -> Result<Self::JsValue> {
@@ -468,6 +471,7 @@ impl OxcTransformer {
             true,
             false,
         )
+        .map(|(output, _)| output)
     }
 
     #[napi]
@@ -513,6 +517,76 @@ fn target_has_native_class_fields(target: &str) -> bool {
         .is_some_and(|year| year >= 2022)
 }
 
+/// Whether the file is an ES module whose output keeps ECMAScript module syntax — an
+/// `import`/`export` declaration, `import.meta`, or top-level await. Node.js's own syntax
+/// detection counts top-level await as module syntax, and oxc resolves it to a module.
+///
+/// The parser's module record is not enough on its own: TypeScript's CommonJS constructs
+/// (`import =`, `export =`) report a module too, but they compile to `require` /
+/// `module.exports`, which only run when the file stays CommonJS.
+fn parsed_as_esm(program: &Program<'_>, module_record: &ModuleRecord<'_>) -> bool {
+    let ts_cjs_construct = program.body.iter().any(|statement| {
+        matches!(
+            statement,
+            Statement::TSExportAssignment(_) | Statement::TSImportEqualsDeclaration(_)
+        )
+    });
+    has_esm_syntax(program, module_record) || (program.source_type.is_module() && !ts_cjs_construct)
+}
+
+/// Whether the file carries ECMAScript module syntax — an `import`/`export` declaration
+/// or `import.meta`.
+fn has_esm_syntax(program: &Program<'_>, module_record: &ModuleRecord<'_>) -> bool {
+    !module_record.import_metas.is_empty()
+        || program.body.iter().any(|statement| {
+            matches!(
+                statement,
+                Statement::ImportDeclaration(_)
+                    | Statement::ExportAllDeclaration(_)
+                    | Statement::ExportDefaultDeclaration(_)
+                    | Statement::ExportDeclaration(_)
+                    | Statement::ExportNamedDeclaration(_)
+                    | Statement::ExportFromDeclaration(_)
+            )
+        })
+}
+
+/// A parsed source, plus whether it became valid only when parsed as a module — a
+/// top-level `for await` without any `import`/`export`/`import.meta`, which oxc cannot
+/// resolve to a module on its own.
+struct Parsed<'a> {
+    program: Program<'a>,
+    diagnostics: Diagnostics,
+    module_record: ModuleRecord<'a>,
+    only_module_parse: bool,
+}
+
+/// Parses once, and retries in module mode when the first parse failed: a file that
+/// only becomes valid as a module is one. Node.js's own syntax detection counts
+/// top-level await as module syntax, so such a file reported as `commonjs` must not be
+/// handed to the CommonJS machinery, which rejects it.
+fn parse_source<'a>(
+    allocator: &'a Allocator,
+    source: &'a str,
+    source_type: SourceType,
+    allow_module_retry: bool,
+) -> Parsed<'a> {
+    let ParserReturn { program, diagnostics, module_record, .. } =
+        Parser::new(allocator, source, source_type).parse();
+    if allow_module_retry && source_type.is_unambiguous() && !diagnostics.is_empty() {
+        let retry = Parser::new(allocator, source, source_type.with_module(true)).parse();
+        if retry.diagnostics.is_empty() {
+            return Parsed {
+                program: retry.program,
+                diagnostics: retry.diagnostics,
+                module_record: retry.module_record,
+                only_module_parse: true,
+            };
+        }
+    }
+    Parsed { program, diagnostics, module_record, only_module_parse: false }
+}
+
 fn oxc_transform<S: TryAsStr>(
     src_path: &Path,
     code: &S,
@@ -520,7 +594,7 @@ fn oxc_transform<S: TryAsStr>(
     module_target: Option<Module>,
     enable_top_level_await: bool,
     is_es_module: bool,
-) -> Result<Output> {
+) -> Result<(Output, bool)> {
     let allocator = Allocator::default();
     // `.js`, `.jsx`, `.ts` and `.tsx` are ambiguous: oxc decides between a script and an ES
     // module by looking for `import`/`export` syntax, so a file that has none is treated as
@@ -529,8 +603,11 @@ fn oxc_transform<S: TryAsStr>(
     // an ES module. Only the caller knows which it is, so let it say.
     let source_type = SourceType::from_path(src_path).unwrap_or_default().with_module(is_es_module);
     let source_str = code.try_as_str()?;
-    let ParserReturn { mut program, diagnostics, .. } =
-        Parser::new(&allocator, source_str, source_type).parse();
+    let allow_module_retry = !is_es_module
+        && matches!(module_target, Some(Module::Preserve))
+        && source_type.is_unambiguous();
+    let Parsed { mut program, diagnostics, module_record, only_module_parse } =
+        parse_source(&allocator, source_str, source_type, allow_module_retry);
     if !diagnostics.is_empty() {
         let msg = join_errors(diagnostics.into_vec(), source_str);
         return Err(Error::new(
@@ -538,14 +615,52 @@ fn oxc_transform<S: TryAsStr>(
             format!("Failed to parse {}: {}", src_path.display(), msg),
         ));
     }
-    let scoping = SemanticBuilder::new().build(&program).semantic.into_scoping();
+    // A `.ts`/`.js` file inside a CommonJS package is reported as `commonjs`, but nothing
+    // here downlevels ESM syntax — the module transform only rewrites TypeScript's
+    // `import =` / `export =` — so a file that parsed as an ES module would reach Node.js
+    // with its `import`/`export` declarations intact: as an entry point the `require(esm)`
+    // retry is a self-cycle (`ERR_REQUIRE_CYCLE_MODULE`), and as an import it exposes no
+    // named exports to `cjs-module-lexer`. Node.js runs the same file as an ES module when
+    // it is `require()`d, so report it as one. Only the load-hook path can — it is the one
+    // that reports a format back — and it passes `Module::Preserve`; the `pirates` hook and
+    // the public API feed Node's CommonJS machinery, which has its own retry. Only the
+    // ambiguous extensions may flip: `.cts`/`.cjs` are CommonJS by contract, and their
+    // source type emits `require()` for helpers, which an ES module cannot run.
+    let flip_to_module =
+        only_module_parse || (allow_module_retry && parsed_as_esm(&program, &module_record));
+
+    let output = transform_program(
+        &allocator,
+        src_path,
+        &mut program,
+        source_str,
+        compiler_options,
+        module_target,
+        enable_top_level_await && !flip_to_module,
+    )?;
+    Ok((output, flip_to_module))
+}
+
+/// Semantic analysis, transform and codegen for an already-parsed program. Split from
+/// parsing so the CommonJS sniff path can decide from the parse result and transform
+/// straight away, without a second parse.
+fn transform_program<'a>(
+    allocator: &'a Allocator,
+    src_path: &Path,
+    program: &mut Program<'a>,
+    source_str: &str,
+    compiler_options: Option<&CompilerOptions>,
+    module_target: Option<Module>,
+    enable_top_level_await: bool,
+) -> Result<Output> {
+    let scoping = SemanticBuilder::new().build(program).semantic.into_scoping();
 
     let use_define_for_class_fields = use_define_for_class_fields(compiler_options);
     // `useDefineForClassFields` selects `[[Define]]` semantics; oxc's `setPublicClassFields`
     // assumption selects the opposite, `[[Set]]`, so it is the negation of it.
     let set_public_class_fields = !use_define_for_class_fields;
     let TransformerReturn { diagnostics, .. } = Transformer::new(
-        &allocator,
+        allocator,
         src_path,
         &TransformOptions {
             assumptions: CompilerAssumptions { set_public_class_fields, ..Default::default() },
@@ -604,7 +719,8 @@ fn oxc_transform<S: TryAsStr>(
                     // above alone selects `[[Set]]` for public fields — the transformer
                     // ORs the two together.
                     class_properties: Some(ClassPropertiesOptions::default()),
-                    // Turn this on would throw error for all top-level awaits.
+                    // Turn this on would throw error for all top-level awaits; the caller
+                    // clears it for a file flipping to an ES module, which keeps them.
                     top_level_await: enable_top_level_await,
                 },
                 es2026: ES2026Options { explicit_resource_management: true },
@@ -618,7 +734,7 @@ fn oxc_transform<S: TryAsStr>(
             ..Default::default()
         },
     )
-    .build_with_scoping(scoping, &mut program);
+    .build_with_scoping(scoping, program);
 
     if !diagnostics.is_empty() {
         let msg = join_errors(diagnostics.into_vec(), source_str);
@@ -633,7 +749,7 @@ fn oxc_transform<S: TryAsStr>(
             source_map_path: Some(src_path.to_path_buf()),
             ..Default::default()
         })
-        .build(&program);
+        .build(program);
     Ok(Output { code, map: map.map(|source_map| source_map.into_owned()) })
 }
 
@@ -922,6 +1038,94 @@ pub fn load<'env>(
     }
 }
 
+/// Node.js does not read CommonJS modules for the `load` hook: its default load returns
+/// no source and lets the CJS machinery fetch the file later. The format was decided from
+/// the outside, though — a `.ts`/`.js` file in a CommonJS package that contains ESM syntax
+/// is an ES module to Node.js (it runs as one when `require()`d), and reporting it as
+/// `commonjs` breaks both entry points (`ERR_REQUIRE_CYCLE_MODULE`) and named imports
+/// (`cjs-module-lexer` finds no exports). Read the file and check what it really is,
+/// transforming it right away when it is an ES module; anything else falls through
+/// untouched. The parse is shared with the transform, so a flipped file is parsed once.
+fn load_commonjs_esm(
+    url: &str,
+    output: &LoadFnOutput,
+    resolved_compiler_options: Option<&CompilerOptions>,
+) -> Result<Option<LoadFnOutput>> {
+    if output.format != "commonjs" {
+        return Ok(None);
+    }
+    // The same skip as the transform below: dependencies are left alone unless asked for.
+    if env::var("OXC_TRANSFORM_ALL")
+        .map(|value| value.is_empty() || value == "0" || value == "false")
+        .unwrap_or(true)
+        && url.contains("/node_modules/")
+    {
+        return Ok(None);
+    }
+    // A `?query` or `#fragment` suffix belongs to the module URL, not to the file on disk.
+    let Some(path) = file_url_to_path(url_path(url)) else { return Ok(None) };
+    let Ok(source_type) = SourceType::from_path(&path) else { return Ok(None) };
+    // Only the ambiguous extensions may flip: `.cts`/`.cjs` are CommonJS by contract, and
+    // their source type emits `require()` for helpers, which an ES module cannot run.
+    if !source_type.is_unambiguous() {
+        return Ok(None);
+    }
+    // `read_to_string` would validate UTF-8 with std's scalar check; the SIMD pass is the
+    // one `file_url_to_path` uses, and borrowing the bytes skips the copy into a String.
+    let Ok(bytes) = std::fs::read(&path) else { return Ok(None) };
+    let Ok(source) = simdutf8::basic::from_utf8(&bytes) else { return Ok(None) };
+    let allocator = Allocator::default();
+    // `only_module_parse` covers the shapes oxc cannot resolve on its own, such as a
+    // top-level `for await`; `parsed_as_esm` covers the rest, including top-level await.
+    let Parsed { mut program, diagnostics, module_record, only_module_parse } =
+        parse_source(&allocator, source, source_type, true);
+    if !(only_module_parse || parsed_as_esm(&program, &module_record)) {
+        return Ok(None);
+    }
+    // From here on the file is handed back as an ES module, so surface parse errors
+    // exactly as the source-bearing path would.
+    if !diagnostics.is_empty() {
+        let msg = join_errors(diagnostics.into_vec(), source);
+        return Err(Error::new(
+            Status::GenericFailure,
+            format!("Failed to parse {}: {}", path.display(), msg),
+        ));
+    }
+    // A module keeps its top-level awaits, hence the last `false`.
+    let transformed = transform_program(
+        &allocator,
+        &path,
+        &mut program,
+        source,
+        resolved_compiler_options,
+        Some(Module::Preserve),
+        false,
+    )?;
+    tracing::debug!("loaded {} format: module", url);
+    Ok(Some(LoadFnOutput {
+        format: "module".to_owned(),
+        source: Some(Either4::B(Uint8Array::from_string(code_with_inline_map(transformed)))),
+        response_url: Some(url.to_owned()),
+    }))
+}
+
+/// The generated code with its source map appended as a data URL, if one was produced.
+fn code_with_inline_map(output: Output) -> String {
+    match output.map {
+        Some(sm) => {
+            let sm = sm.to_data_url();
+            const SOURCEMAP_PREFIX: &str = "\n//# sourceMappingURL=";
+            let len = sm.len() + output.code.len() + 22;
+            let mut output_code = String::with_capacity(len);
+            output_code.push_str(&output.code);
+            output_code.push_str(SOURCEMAP_PREFIX);
+            output_code.push_str(sm.as_str());
+            output_code
+        }
+        None => output.code,
+    }
+}
+
 fn transform_output(
     url: String,
     output: LoadFnOutput,
@@ -929,6 +1133,9 @@ fn transform_output(
 ) -> Result<LoadFnOutput> {
     match &output.source {
         Some(Either4::D(_)) | None => {
+            if let Some(loaded) = load_commonjs_esm(&url, &output, resolved_compiler_options)? {
+                return Ok(loaded);
+            }
             tracing::debug!("No source code to transform {}", url);
             Ok(LoadFnOutput { format: output.format, source: None, response_url: Some(url) })
         }
@@ -990,7 +1197,7 @@ fn transform_output(
             }
 
             let is_es_module = output.format == "module";
-            let transform_output = oxc_transform(
+            let (transform_output, flipped_to_module) = oxc_transform(
                 src_path,
                 output.source.as_ref().unwrap(),
                 resolved_compiler_options,
@@ -998,22 +1205,13 @@ fn transform_output(
                 !is_es_module,
                 is_es_module,
             )?;
-            let output_code = transform_output
-                .map
-                .map(|sm| {
-                    let sm = sm.to_data_url();
-                    const SOURCEMAP_PREFIX: &str = "\n//# sourceMappingURL=";
-                    let len = sm.len() + transform_output.code.len() + 22;
-                    let mut output_code = String::with_capacity(len + 22);
-                    output_code.push_str(&transform_output.code);
-                    output_code.push_str(SOURCEMAP_PREFIX);
-                    output_code.push_str(sm.as_str());
-                    output_code
-                })
-                .unwrap_or_else(|| transform_output.code);
-            tracing::debug!("loaded {} format: {}", url, output.format);
+            // A CommonJS-reported file that turned out to be an ES module is handed back
+            // as one, so Node.js never tries to compile its `import`/`export` as CommonJS.
+            let format = if flipped_to_module { "module".to_owned() } else { output.format };
+            let output_code = code_with_inline_map(transform_output);
+            tracing::debug!("loaded {} format: {}", url, format);
             Ok(LoadFnOutput {
-                format: output.format,
+                format,
                 source: Some(Either4::B(Uint8Array::from_string(output_code))),
                 response_url: Some(url),
             })
