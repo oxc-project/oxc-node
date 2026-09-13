@@ -129,9 +129,10 @@ describe.skipIf(!shareReady)("Windows UNC file URLs", () => {
   // carry it as `%25`, or Node decodes it as an escape and loads the wrong
   // file (adversarial-review finding on this branch).
   fixture("pct%20name.ts", ['console.log("unc-pct: ok");', ""].join("\n"));
-  fixture("entry-pct.mjs", [
-    `await import("file://${process.env.COMPUTERNAME}/${SHARE}/pct%2520name.ts");`,
-  ].join("\n"));
+  fixture(
+    "entry-pct.mjs",
+    [`await import("file://${process.env.COMPUTERNAME}/${SHARE}/pct%2520name.ts");`].join("\n"),
+  );
 
   test("a UNC file URL imports and runs TypeScript", () => {
     const { status, output } = run("entry-url.mjs");
