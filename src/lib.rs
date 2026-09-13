@@ -1018,17 +1018,20 @@ fn load_commonjs_esm(
     if !source_type.is_unambiguous() {
         return Ok(None);
     }
-    let Ok(source) = std::fs::read_to_string(&path) else { return Ok(None) };
+    // `read_to_string` would validate UTF-8 with std's scalar check; the SIMD pass is the
+    // one `file_url_to_path` uses, and borrowing the bytes skips the copy into a String.
+    let Ok(bytes) = std::fs::read(&path) else { return Ok(None) };
+    let Ok(source) = simdutf8::basic::from_utf8(&bytes) else { return Ok(None) };
     let allocator = Allocator::default();
     let ParserReturn { mut program, diagnostics, module_record, .. } =
-        Parser::new(&allocator, &source, source_type).parse();
+        Parser::new(&allocator, source, source_type).parse();
     if !has_esm_syntax(&program, &module_record) {
         return Ok(None);
     }
     // From here on the file is handed back as an ES module, so surface parse errors
     // exactly as the source-bearing path would.
     if !diagnostics.is_empty() {
-        let msg = join_errors(diagnostics.into_vec(), &source);
+        let msg = join_errors(diagnostics.into_vec(), source);
         return Err(Error::new(
             Status::GenericFailure,
             format!("Failed to parse {}: {}", path.display(), msg),
@@ -1039,7 +1042,7 @@ fn load_commonjs_esm(
         &allocator,
         &path,
         &mut program,
-        &source,
+        source,
         resolved_compiler_options,
         Some(Module::Preserve),
         false,
