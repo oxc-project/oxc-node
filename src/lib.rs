@@ -368,7 +368,12 @@ mod windows_file_url {
         }
         let mut decoded = String::with_capacity(host.len());
         let mut changed = false;
+        let mut first_label = true;
         for label in host.split('.') {
+            if !first_label {
+                decoded.push('.');
+            }
+            first_label = false;
             if label.len() > 4
                 && label[..4].eq_ignore_ascii_case("xn--")
                 && let Some(unicode) = punycode_decode(&label[4..])
@@ -1804,6 +1809,15 @@ mod tests {
         assert_eq!(
             windows_file_url::url_to_path("file://server/share/x.ts"),
             Some(PathBuf::from("\\\\server\\share\\x.ts"))
+        );
+        // Dots between labels survive the conversion.
+        assert_eq!(
+            windows_file_url::url_to_path("file://xn--mserver-v2a.example.com/share/x.ts"),
+            Some(PathBuf::from("\\\\mýserver.example.com\\share\\x.ts"))
+        );
+        assert_eq!(
+            windows_file_url::url_to_path("file://server.example.com/share/x.ts"),
+            Some(PathBuf::from("\\\\server.example.com\\share\\x.ts"))
         );
     }
 
