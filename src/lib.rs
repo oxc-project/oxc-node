@@ -1035,8 +1035,15 @@ fn load_commonjs_esm(
         ));
     }
     // A module keeps its top-level awaits, hence the last `false`.
-    let transformed =
-        transform_program(&allocator, &path, &mut program, &source, resolved_compiler_options, Some(Module::Preserve), false)?;
+    let transformed = transform_program(
+        &allocator,
+        &path,
+        &mut program,
+        &source,
+        resolved_compiler_options,
+        Some(Module::Preserve),
+        false,
+    )?;
     tracing::debug!("loaded {} format: module", url);
     Ok(Some(LoadFnOutput {
         format: "module".to_owned(),
