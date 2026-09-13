@@ -136,6 +136,14 @@ describe.skipIf(!shareReady)("Windows UNC file URLs", () => {
     "entry-pct.mjs",
     [`await import("file://${process.env.COMPUTERNAME}/${SHARE}/pct%2520name.ts");`].join("\n"),
   );
+  // `#` is a legal Windows file name character. The absolute-URL branch
+  // percent-decodes it before resolving; oxc_resolver's fragment-as-path
+  // fallback then finds the real file (review-verified behaviour).
+  fixture("hash#name.ts", ['console.log("unc-hash: ok");', ""].join("\n"));
+  fixture(
+    "entry-hash.mjs",
+    [`await import("file://${process.env.COMPUTERNAME}/${SHARE}/hash%23name.ts");`].join("\n"),
+  );
 
   test("a UNC file URL imports and runs TypeScript", () => {
     const { status, output } = run("entry-url.mjs");
@@ -165,5 +173,12 @@ describe.skipIf(!shareReady)("Windows UNC file URLs", () => {
     expect(output, output).not.toContain("Parent URL is not a file URL");
     expect(status, output).toBe(0);
     expect(output).toContain("unc-pct: ok");
+  });
+
+  test("a file name with a literal hash resolves", () => {
+    const { status, output } = run("entry-hash.mjs");
+    expect(output, output).not.toContain("Parent URL is not a file URL");
+    expect(status, output).toBe(0);
+    expect(output).toContain("unc-hash: ok");
   });
 });

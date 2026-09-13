@@ -315,6 +315,12 @@ mod windows_file_url {
             return percent_decode_to_path(path);
         }
         let host = percent_decode(host)?;
+        // `pathToFileURL` writes a non-ASCII server name as punycode, and
+        // `fileURLToPath` runs the host through IDNA to-Unicode
+        // (`domainToUnicode`) — `\\mýserver\share` round trips as
+        // `file://xn--mserver-v2a/share`. Match that, or the decoded host
+        // names a server nobody has.
+        let host = domain_to_unicode(&host);
         let path = percent_decode(path)?;
         let mut unc = String::with_capacity(host.len() + path.len() + 3);
         unc.push_str("\\\\");
@@ -352,10 +358,125 @@ mod windows_file_url {
         percent_encode(host, &[])
     }
 
+    /// IDNA to-Unicode for a UNC host, the conversion `fileURLToPath` applies
+    /// through `domainToUnicode`: `xn--` labels are punycode-decoded, labels
+    /// that do not decode are kept as-is, and non-ASCII input is untouched —
+    /// the URL parser has already mapped those labels to their punycode form.
+    fn domain_to_unicode(host: &str) -> Cow<'_, str> {
+        if !host.is_ascii() {
+            return Cow::Borrowed(host);
+        }
+        let mut decoded = String::with_capacity(host.len());
+        let mut changed = false;
+        for label in host.split('.') {
+            if label.len() > 4
+                && label[..4].eq_ignore_ascii_case("xn--")
+                && let Some(unicode) = punycode_decode(&label[4..])
+            {
+                decoded.push_str(&unicode);
+                changed = true;
+                continue;
+            }
+            decoded.push_str(label);
+        }
+        if changed { Cow::Owned(decoded) } else { Cow::Borrowed(host) }
+    }
+
     /// Percent-encode a resolved path for the URL path: `/` separators stay,
     /// everything else outside the unreserved ASCII set becomes `%XX`.
     fn encode_path(path: &str) -> Cow<'_, str> {
         percent_encode(path, b"/")
+    }
+
+    /// RFC 3492 punycode decode. `None` on malformed input or overflow, so a
+    /// hostile host can never panic the loader — the caller falls back to the
+    /// literal label.
+    fn punycode_decode(input: &str) -> Option<String> {
+        const BASE: u32 = 36;
+        const TMIN: u32 = 1;
+        const TMAX: u32 = 26;
+        const INITIAL_BIAS: u32 = 72;
+        const INITIAL_N: u32 = 128;
+
+        let mut n = INITIAL_N;
+        let mut i: u32 = 0;
+        let mut bias = INITIAL_BIAS;
+        let mut output: Vec<char> = Vec::with_capacity(input.len());
+
+        // Code points before the last delimiter are copied verbatim; an
+        // absent delimiter means the whole input is the encoded section.
+        let input: Vec<char> = input.chars().collect();
+        let encoded = match input.iter().rposition(|&c| c == '-') {
+            Some(index) => {
+                output.extend_from_slice(&input[..index]);
+                &input[index + 1..]
+            }
+            None => &input[..],
+        };
+
+        let mut index = 0;
+        while index < encoded.len() {
+            let old_i = i;
+            let mut w: u32 = 1;
+            let mut k = BASE;
+            loop {
+                let digit = match encoded.get(index) {
+                    Some(&c) => {
+                        index += 1;
+                        decode_digit(c)?
+                    }
+                    None => return None,
+                };
+                i = i.checked_add(digit.checked_mul(w)?)?;
+                let t = if k <= bias {
+                    TMIN
+                } else if k >= bias + TMAX {
+                    TMAX
+                } else {
+                    k - bias
+                };
+                if digit < t {
+                    break;
+                }
+                w = w.checked_mul(BASE - t)?;
+                k += BASE;
+            }
+            let out_len = (output.len() as u32).checked_add(1)?;
+            bias = adapt(i - old_i, out_len, old_i == 0);
+            n = n.checked_add(i / out_len)?;
+            i %= out_len;
+            output.insert(i as usize, char::from_u32(n)?);
+            i += 1;
+        }
+
+        let mut decoded = String::with_capacity(output.len());
+        decoded.extend(output);
+        Some(decoded)
+    }
+
+    fn decode_digit(c: char) -> Option<u32> {
+        match c {
+            '0'..='9' => Some(u32::from(c) - u32::from('0') + 26),
+            'a'..='z' => Some(u32::from(c) - u32::from('a')),
+            'A'..='Z' => Some(u32::from(c) - u32::from('A')),
+            _ => None,
+        }
+    }
+
+    fn adapt(mut delta: u32, num_points: u32, first: bool) -> u32 {
+        const BASE: u32 = 36;
+        const TMIN: u32 = 1;
+        const TMAX: u32 = 26;
+        const SKEW: u32 = 38;
+        const DAMP: u32 = 700;
+        delta = if first { delta / DAMP } else { delta / 2 };
+        delta += delta / num_points;
+        let mut k = 0;
+        while delta > ((BASE - TMIN) * TMAX) / 2 {
+            delta /= BASE - TMIN;
+            k += BASE;
+        }
+        k + ((BASE - TMIN + 1) * delta) / (delta + SKEW)
     }
 
     fn percent_encode<'a>(input: &'a str, extra_allowed: &[u8]) -> Cow<'a, str> {
@@ -1658,6 +1779,31 @@ mod tests {
         assert_eq!(
             windows_file_url::url_to_path(&url),
             Some(PathBuf::from("\\\\server\\share\\a%20b.ts"))
+        );
+    }
+
+    #[test]
+    fn windows_punycode_host_decodes_to_unicode() {
+        // `pathToFileURL('\\\\mýserver\\share\\x')` writes the punycode
+        // authority; `fileURLToPath` maps it back through IDNA to-Unicode.
+        assert_eq!(
+            windows_file_url::url_to_path("file://xn--mserver-v2a/share/x.ts"),
+            Some(PathBuf::from("\\\\mýserver\\share\\x.ts"))
+        );
+        // An already-Unicode host is left alone.
+        assert_eq!(
+            windows_file_url::url_to_path("file://m%C3%BDserver/share/x.ts"),
+            Some(PathBuf::from("\\\\mýserver\\share\\x.ts"))
+        );
+        // A label that is not valid punycode falls back to the literal text.
+        assert_eq!(
+            windows_file_url::url_to_path("file://xn--!!!/share/x.ts"),
+            Some(PathBuf::from("\\\\xn--!!!\\share\\x.ts"))
+        );
+        // ASCII hosts take the fast path.
+        assert_eq!(
+            windows_file_url::url_to_path("file://server/share/x.ts"),
+            Some(PathBuf::from("\\\\server\\share\\x.ts"))
         );
     }
 
