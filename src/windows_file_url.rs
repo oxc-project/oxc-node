@@ -32,8 +32,10 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     if let Some(path) = rest.strip_prefix('/') {
         return decode_path(path, suffix);
     }
-    // UNC form: `file://server/share/a`.
-    let (host, path) = match rest.find('/') {
+    // UNC form: `file://server/share/a`. The URL parser treats `\` as `/`
+    // in special schemes, so an absolute specifier may arrive with either
+    // separator and the authority ends at the first of either.
+    let (host, path) = match rest.find(['/', '\\']) {
         Some(index) => (&rest[..index], &rest[index + 1..]),
         None => (rest, ""),
     };
@@ -475,6 +477,23 @@ mod tests {
         assert_eq!(path_to_url("\\\\?\\UNC\\server\\share\\x.ts"), "file://server/share/x.ts");
         assert_eq!(path_to_url("\\\\?\\C:\\x.ts"), "file:///C:/x.ts");
         assert_eq!(path_to_url("\\\\server\\share\\x.ts"), "file://server/share/x.ts");
+    }
+
+    #[test]
+    fn windows_backslashes_are_url_separators() {
+        // The URL parser normalizes `\` to `/` in special schemes, so a
+        // specifier written with Windows separators still splits into
+        // authority and path.
+        assert_eq!(
+            url_to_path("file://server\\share\\x.ts"),
+            Some(PathBuf::from("\\\\server\\share\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://server\\share/x.ts"),
+            Some(PathBuf::from("\\\\server\\share\\x.ts"))
+        );
+        // Encoded separators are still rejected in this spelling.
+        assert_eq!(url_to_path("file://server\\share%5C..%5Csecret.ts"), None);
     }
 
     #[test]
