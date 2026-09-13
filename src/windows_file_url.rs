@@ -163,9 +163,17 @@ fn domain_to_unicode(host: &str) -> Cow<'_, str> {
             && label[..4].eq_ignore_ascii_case("xn--")
             && let Some(unicode) = punycode_decode(&label[4..])
         {
-            decoded.push_str(&unicode);
-            changed = true;
-            continue;
+            // Controls and non-characters are DISALLOWED in every IDNA
+            // version, so a label decoding to one is kept literal — a loader
+            // should never be handed a control-character host.
+            if !unicode.chars().any(|c| {
+                matches!(c, '\u{0}'..='\u{1f}' | '\u{7f}'..='\u{9f}' | '\u{fdd0}'..='\u{fdef}')
+                    || (c as u32) & 0xfffe == 0xfffe
+            }) {
+                decoded.push_str(&unicode);
+                changed = true;
+                continue;
+            }
         }
         decoded.push_str(label);
     }
@@ -607,10 +615,17 @@ mod tests {
             url_to_path("file://m%C3%BDserver/share/x.ts"),
             Some(PathBuf::from("\\\\mýserver\\share\\x.ts"))
         );
-        // A label that is not valid punycode falls back to the literal text.
+        // A label that is not valid punycode, or that decodes to characters
+        // DISALLOWED in every IDNA version (controls, non-characters), is
+        // kept literal — `fileURLToPath` never hands the loader a
+        // control-character host.
         assert_eq!(
             url_to_path("file://xn--!!!/share/x.ts"),
             Some(PathBuf::from("\\\\xn--!!!\\share\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://xn--a/share/x.ts"),
+            Some(PathBuf::from("\\\\xn--a\\share\\x.ts"))
         );
         // ASCII hosts take the fast path.
         assert_eq!(
