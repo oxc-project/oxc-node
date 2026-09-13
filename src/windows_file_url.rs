@@ -154,17 +154,21 @@ enum Ipv4Authority {
 }
 
 /// WHATWG IPv4 parsing for special-scheme authorities: when the last label
-/// is a number, the whole authority must parse as IPv4 — decimal, `0x`
-/// hex, and leading-zero octal parts, with the last part filling the
-/// remaining bytes (`127.1` is `127.0.0.1`) — or the URL is invalid.
+/// is syntactically a number, the whole authority must parse as IPv4 —
+/// decimal, `0x` hex, and leading-zero octal parts, with the last part
+/// filling the remaining bytes (`127.1` is `127.0.0.1`) — or the URL is
+/// invalid. A single trailing dot is dropped for classification: FQDNs
+/// keep it (`server.example.`), numeric hosts canonicalize without it
+/// (`127.1.` is `127.0.0.1`), and a double dot is an ordinary hostname.
 fn parse_ipv4_authority(host: &str) -> Ipv4Authority {
-    let Some(last) = host.rsplit('.').next() else {
+    let candidate = host.strip_suffix('.').unwrap_or(host);
+    let Some(last) = candidate.rsplit('.').next() else {
         return Ipv4Authority::NotIpv4;
     };
-    if ipv4_number(last).is_none() {
+    if !ends_in_number(last) {
         return Ipv4Authority::NotIpv4;
     }
-    let parts: Vec<&str> = host.split('.').collect();
+    let parts: Vec<&str> = candidate.split('.').collect();
     if parts.len() > 4 || parts.iter().any(|part| part.is_empty()) {
         return Ipv4Authority::Invalid;
     }
@@ -190,6 +194,22 @@ fn parse_ipv4_authority(host: &str) -> Ipv4Authority {
         octets[4 - remaining + index] = (last_value >> (8 * (remaining - 1 - index))) as u8;
     }
     Ipv4Authority::Address(std::net::Ipv4Addr::from(octets))
+}
+
+/// WHATWG ends-in-a-number: the label is non-empty and all ASCII digits,
+/// or a `0x` prefix followed by hex digits (a bare `0x` counts).
+fn ends_in_number(label: &str) -> bool {
+    let bytes = label.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    if bytes.iter().all(|byte| byte.is_ascii_digit()) {
+        return true;
+    }
+    bytes.len() >= 2
+        && bytes[0] == b'0'
+        && (bytes[1] | 0x20) == b'x'
+        && bytes[2..].iter().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// WHATWG IPv4 number parser: `0x` hex, leading-zero octal, decimal; a
@@ -899,6 +919,22 @@ mod tests {
             url_to_path("file://00/share/x.ts"),
             Some(PathBuf::from("\\\\0.0.0.0\\share\\x.ts"))
         );
+        // A single trailing dot drops for classification: FQDNs keep it,
+        // numeric hosts canonicalize, a double dot is an ordinary hostname.
+        assert_eq!(
+            url_to_path("file://server.example./share/x.ts"),
+            Some(PathBuf::from("\\\\server.example.\\share\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://127.1./share/x.ts"),
+            Some(PathBuf::from("\\\\127.0.0.1\\share\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://1.2.3.4../share/x.ts"),
+            Some(PathBuf::from("\\\\1.2.3.4..\\share\\x.ts"))
+        );
+        // A syntactically numeric label with an invalid value is rejected.
+        assert_eq!(url_to_path("file://09/share/x.ts"), None);
         assert_eq!(url_to_path("file://256.1/share/x.ts"), None);
         assert_eq!(url_to_path("file://1.2.3.4.5/share/x.ts"), None);
         assert_eq!(url_to_path("file://server.256.1/share/x.ts"), None);
