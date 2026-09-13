@@ -333,7 +333,14 @@ mod windows_file_url {
                 Some(index) => (&stripped[..index], &stripped[index + 1..]),
                 None => (stripped, ""),
             };
-            return format!("file://{}/{rest}", encode_host(host)).replace('\\', "/");
+            // The path is encoded the way the `file:` URL path setter encodes
+            // it: `/` separators stay, everything outside the unreserved set
+            // becomes `%XX`. Over-encoding is safe — a URL parser decodes
+            // `%XX` back to the same file — while under-encoding is not: a
+            // literal `%` would be read as an escape and a `#` as a fragment.
+            let rest = rest.replace('\\', "/");
+            let rest = encode_path(&rest);
+            return format!("file://{}/{rest}", encode_host(host));
         }
         format!("file:///{path}").replace('\\', "/")
     }
@@ -342,15 +349,26 @@ mod windows_file_url {
     /// outside the unreserved ASCII set becomes `%XX` with uppercase hex,
     /// matching what `pathToFileURL` writes for a host such as `my server`.
     fn encode_host(host: &str) -> Cow<'_, str> {
+        percent_encode(host, &[])
+    }
+
+    /// Percent-encode a resolved path for the URL path: `/` separators stay,
+    /// everything else outside the unreserved ASCII set becomes `%XX`.
+    fn encode_path(path: &str) -> Cow<'_, str> {
+        percent_encode(path, b"/")
+    }
+
+    fn percent_encode<'a>(input: &'a str, extra_allowed: &[u8]) -> Cow<'a, str> {
         fn unreserved(byte: u8) -> bool {
             byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
         }
-        if host.bytes().all(unreserved) {
-            return Cow::Borrowed(host);
+        let allowed = |byte: u8| unreserved(byte) || extra_allowed.contains(&byte);
+        if input.bytes().all(allowed) {
+            return Cow::Borrowed(input);
         }
-        let mut encoded = String::with_capacity(host.len());
-        for byte in host.bytes() {
-            if unreserved(byte) {
+        let mut encoded = String::with_capacity(input.len());
+        for byte in input.bytes() {
+            if allowed(byte) {
                 encoded.push(byte as char);
             } else {
                 encoded.push('%');
@@ -1510,12 +1528,19 @@ fn url_path(url: &str) -> &str {
 }
 
 fn oxc_resolved_path_to_url(resolution: &Resolution) -> String {
-    let path = if resolution.query().is_some() || resolution.fragment().is_some() {
-        resolution.full_path().to_string_lossy().into_owned()
-    } else {
-        resolution.path().to_string_lossy().into_owned()
-    };
-    path_to_file_url(&path)
+    // The path goes through `path_to_file_url` on its own: its percent-encode
+    // set differs from the raw query and fragment, which must be appended
+    // verbatim or a `?`/`#` inside the path would be misparsed.
+    let mut url = path_to_file_url(&resolution.path().to_string_lossy());
+    if let Some(query) = resolution.query() {
+        url.push('?');
+        url.push_str(query);
+    }
+    if let Some(fragment) = resolution.fragment() {
+        url.push('#');
+        url.push_str(fragment);
+    }
+    url
 }
 
 /// Generate a `file:` URL from an absolute path.
@@ -1600,6 +1625,39 @@ mod tests {
         assert_eq!(
             windows_file_url::path_to_url("\\\\my server\\share\\x.ts"),
             "file://my%20server/share/x.ts"
+        );
+    }
+
+    #[test]
+    fn windows_unc_path_escapes_url_significant_characters() {
+        // A literal `%` in a file name must not be read back as an escape.
+        assert_eq!(
+            windows_file_url::path_to_url("\\\\server\\share\\a%20b.ts"),
+            "file://server/share/a%2520b.ts"
+        );
+        // Neither should `#`, which would start a fragment.
+        assert_eq!(
+            windows_file_url::path_to_url("\\\\server\\share\\a#b.ts"),
+            "file://server/share/a%23b.ts"
+        );
+        // Spaces and non-ASCII bytes encode the way `pathToFileURL` encodes.
+        assert_eq!(
+            windows_file_url::path_to_url("\\\\server\\share\\a b.ts"),
+            "file://server/share/a%20b.ts"
+        );
+        assert_eq!(
+            windows_file_url::path_to_url("\\\\server\\share\\õ.ts"),
+            "file://server/share/%C3%B5.ts"
+        );
+    }
+
+    #[test]
+    fn windows_escaped_unc_path_round_trips() {
+        let url = windows_file_url::path_to_url("\\\\server\\share\\a%20b.ts");
+        assert_eq!(url, "file://server/share/a%2520b.ts");
+        assert_eq!(
+            windows_file_url::url_to_path(&url),
+            Some(PathBuf::from("\\\\server\\share\\a%20b.ts"))
         );
     }
 
