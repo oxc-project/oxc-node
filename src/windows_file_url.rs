@@ -172,6 +172,40 @@ fn domain_to_unicode(host: &str) -> Cow<'_, str> {
     if changed { Cow::Owned(decoded) } else { host }
 }
 
+/// WHATWG URL path normalization, applied to the percent-encoded path
+/// where `%2E` is a filename character rather than a dot segment: `.`
+/// segments vanish, `..` pops the previous segment without ever crossing a
+/// drive prefix (`C:/../x` stays `C:/x`) or the share root, and a trailing
+/// dot segment leaves a trailing slash.
+fn normalize_dot_segments(path: &str) -> Cow<'_, str> {
+    if !path.split('/').any(|segment| segment == "." || segment == "..") {
+        return Cow::Borrowed(path);
+    }
+    let trailing_slash = path.ends_with("/.") || path.ends_with("/..");
+    let mut out: Vec<&str> = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "." => {}
+            ".." => {
+                if out.len() > 1 || out.first().is_some_and(|first| !is_drive_prefix(first)) {
+                    out.pop();
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    let mut normalized = out.join("/");
+    if trailing_slash {
+        normalized.push('/');
+    }
+    Cow::Owned(normalized)
+}
+
+fn is_drive_prefix(segment: &str) -> bool {
+    let bytes = segment.as_bytes();
+    bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
 /// Percent-decode a URL path, refusing the escapes `fileURLToPath`
 /// rejects: `%5C`/`%2F` become real separators and would let the URL text
 /// denote a file outside the directory its path names, and a malformed
@@ -187,6 +221,7 @@ fn decode_path(path: &str) -> Option<PathBuf> {
 /// denote a file outside the directory its path names, and a malformed
 /// escape makes Node's `decodeURIComponent` throw.
 fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
+    let path = normalize_dot_segments(path);
     let bytes = path.as_bytes();
     let mut search_from = 0;
     while let Some(relative) = bytes[search_from..].iter().position(|&byte| byte == b'%') {
@@ -197,7 +232,12 @@ fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
             None => return None,
         }
     }
-    percent_decode(path)
+    match percent_decode(&path) {
+        // No escapes: the (possibly normalized) buffer is the result.
+        Some(Cow::Borrowed(_)) => Some(path),
+        Some(Cow::Owned(owned)) => Some(Cow::Owned(owned)),
+        None => None,
+    }
 }
 
 /// True when an authority escape decodes to a code point the URL parser
@@ -567,6 +607,36 @@ mod tests {
         assert_eq!(path_to_url("\\\\?\\UNC\\server\\share\\x.ts"), "file://server/share/x.ts");
         assert_eq!(path_to_url("\\\\?\\C:\\x.ts"), "file:///C:/x.ts");
         assert_eq!(path_to_url("\\\\server\\share\\x.ts"), "file://server/share/x.ts");
+    }
+
+    #[test]
+    fn windows_dot_segments_are_normalized() {
+        // The URL parser normalizes dot segments before `fileURLToPath`
+        // runs; `..` clamps at the share root and never crosses the drive.
+        assert_eq!(
+            url_to_path("file://server/./share/x.ts"),
+            Some(PathBuf::from("\\\\server\\share\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://server/a/../share/x.ts"),
+            Some(PathBuf::from("\\\\server\\share\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://server/../share/x.ts"),
+            Some(PathBuf::from("\\\\server\\share\\x.ts"))
+        );
+        assert_eq!(url_to_path("file:///C:/a/../b.ts"), Some(PathBuf::from("C:/b.ts")));
+        assert_eq!(url_to_path("file:///C:/../x.ts"), Some(PathBuf::from("C:/x.ts")));
+        // A trailing dot segment keeps the trailing slash.
+        assert_eq!(
+            url_to_path("file://server/share/."),
+            Some(PathBuf::from("\\\\server\\share\\"))
+        );
+        // An escaped dot is a filename character, not a dot segment.
+        assert_eq!(
+            url_to_path("file://server/share/%2E%2E/x.ts"),
+            Some(PathBuf::from("\\\\server\\share\\..\\x.ts"))
+        );
     }
 
     #[test]
