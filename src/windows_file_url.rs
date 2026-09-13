@@ -192,7 +192,8 @@ fn parse_ipv4_authority(host: &str) -> Ipv4Authority {
     Ipv4Authority::Address(std::net::Ipv4Addr::from(octets))
 }
 
-/// WHATWG IPv4 number parser: `0x` hex, leading-zero octal, decimal.
+/// WHATWG IPv4 number parser: `0x` hex, leading-zero octal, decimal; a
+/// bare prefix (`0x`, `00`) is numeric zero, as the parser defines.
 fn ipv4_number(part: &str) -> Option<u64> {
     let bytes = part.as_bytes();
     let (radix, digits) = if bytes.len() > 2 && bytes[0] == b'0' && (bytes[1] | 0x20) == b'x' {
@@ -203,7 +204,7 @@ fn ipv4_number(part: &str) -> Option<u64> {
         (10, part)
     };
     if digits.is_empty() {
-        return None;
+        return Some(0);
     }
     u64::from_str_radix(digits, radix).ok()
 }
@@ -884,6 +885,19 @@ mod tests {
         assert_eq!(
             url_to_path("file://0177.0.0.1/share/x.ts"),
             Some(PathBuf::from("\\\\127.0.0.1\\share\\x.ts"))
+        );
+        // A bare hex or octal prefix is numeric zero.
+        assert_eq!(
+            url_to_path("file://0x/share/x.ts"),
+            Some(PathBuf::from("\\\\0.0.0.0\\share\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://0X.1/share/x.ts"),
+            Some(PathBuf::from("\\\\0.0.0.1\\share\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://00/share/x.ts"),
+            Some(PathBuf::from("\\\\0.0.0.0\\share\\x.ts"))
         );
         assert_eq!(url_to_path("file://256.1/share/x.ts"), None);
         assert_eq!(url_to_path("file://1.2.3.4.5/share/x.ts"), None);
