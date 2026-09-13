@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.1.1](https://github.com/oxc-project/oxc-node/compare/v0.1.0...v0.1.1) (2026-09-13)
+
+### Bug Fixes
+
+* emit ESM imports for injected helpers in ES modules ([#743](https://github.com/oxc-project/oxc-node/issues/743)) ([bf94957](https://github.com/oxc-project/oxc-node/commit/bf94957186987339af9be8d78da5d7e264779116)), closes [#742](https://github.com/oxc-project/oxc-node/issues/742)
+* honour useDefineForClassFields instead of inverting it ([#742](https://github.com/oxc-project/oxc-node/issues/742)) ([9a4c088](https://github.com/oxc-project/oxc-node/commit/9a4c08870f2eecbb086d0b433cbd5ec874bccd77)), closes [#743](https://github.com/oxc-project/oxc-node/issues/743)
+* resolve JSON modules with oxc-node's resolver ([#745](https://github.com/oxc-project/oxc-node/issues/745)) ([be799a4](https://github.com/oxc-project/oxc-node/commit/be799a4c71446601c801b03cd4678a9b9e5e6c2f)), closes [#726](https://github.com/oxc-project/oxc-node/issues/726) [#633](https://github.com/oxc-project/oxc-node/issues/633)
+* run CommonJS-reported files with ESM syntax as ES modules ([#759](https://github.com/oxc-project/oxc-node/issues/759)) ([27bab1b](https://github.com/oxc-project/oxc-node/commit/27bab1bd22edb4aad268ad3ea40d69d204386eb2)), closes [#452](https://github.com/oxc-project/oxc-node/issues/452) [#569](https://github.com/oxc-project/oxc-node/issues/569) [#745](https://github.com/oxc-project/oxc-node/issues/745)
+
+### Features
+
+* discover the nearest tsconfig.json that claims each file ([#569](https://github.com/oxc-project/oxc-node/issues/569)) ([ec06c3c](https://github.com/oxc-project/oxc-node/commit/ec06c3cc5585ad177c466b4fbbdcd39e0878b782))
+
+
 ## [0.0.35](https://github.com/oxc-project/oxc-node/compare/v0.0.34...v0.0.35) (2025-12-01)
 
 ### Bug Fixes
