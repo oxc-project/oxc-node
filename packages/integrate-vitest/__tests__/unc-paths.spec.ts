@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, test } from "vitest";
 
 /**
@@ -23,7 +22,11 @@ import { afterAll, describe, expect, test } from "vitest";
 
 const SHARE = "OXCNODEUNC";
 
-const REGISTER = fileURLToPath(new URL("../../core/register.mjs", import.meta.url));
+// `--import` takes a module specifier, so hand it the URL itself: a bare
+// absolute path only works on POSIX — on Windows the drive letter parses as
+// a URL scheme (`d:`) and Node.js exits with ERR_UNSUPPORTED_ESM_URL_SCHEME
+// before the hooks are registered.
+const REGISTER_URL = new URL("../../core/register.mjs", import.meta.url);
 
 const isWindows = process.platform === "win32";
 
@@ -64,7 +67,7 @@ function fixture(name: string, contents: string): void {
 
 /** Run a node process with the oxc-node loader registered, returning its combined output. */
 function run(entry: string): { status: number | null; output: string } {
-  const result = spawnSync(process.execPath, ["--import", REGISTER, entry], {
+  const result = spawnSync(process.execPath, ["--import", REGISTER_URL.href, entry], {
     cwd: fixtureDir,
     encoding: "utf8",
     env: {
