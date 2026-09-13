@@ -15,6 +15,15 @@ use super::percent_decode;
 /// Returns `None` for non-`file:` URLs and escapes that do not decode to
 /// valid UTF-8.
 pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
+    // The URL parser removes every ASCII tab or newline before parsing —
+    // authority and path alike — so `file://ser\tver/…` names `server`.
+    let cleaned;
+    let url = if url.contains(['\t', '\n', '\r']) {
+        cleaned = url.replace(['\t', '\n', '\r'], "");
+        &cleaned
+    } else {
+        url
+    };
     let rest = url.strip_prefix("file://")?;
     if rest.is_empty() {
         return None;
@@ -883,6 +892,19 @@ mod tests {
         assert_eq!(url_to_path("file://localhost/c%7C/a.ts"), None);
         assert_eq!(url_to_path("file://localhost/share/a.ts"), None);
         assert_eq!(url_to_path("file://localhost/"), None);
+    }
+
+    #[test]
+    fn windows_tabs_and_newlines_are_stripped() {
+        // The URL parser removes ASCII tab/newline characters everywhere
+        // before parsing, in the authority and the path alike.
+        for escape in ['\t', '\n', '\r'] {
+            assert_eq!(
+                url_to_path(&format!("file://ser{escape}ver/sh{escape}are/x.ts")),
+                Some(PathBuf::from("\\\\server\\share\\x.ts")),
+                "{escape:?} must be stripped"
+            );
+        }
     }
 
     #[test]
