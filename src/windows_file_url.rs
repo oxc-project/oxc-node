@@ -250,8 +250,25 @@ fn decode_path(path: &str) -> Option<PathBuf> {
 /// denote a file outside the directory its path names, and a malformed
 /// escape makes Node's `decodeURIComponent` throw.
 fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
-    let path = normalize_dot_segments(path);
-    let bytes = path.as_bytes();
+    // The URL parser treats `\` as `/` throughout a special-scheme URL, so
+    // the path portion may arrive with either separator; normalize before
+    // the dot-segment pass. `buf` holds any intermediate buffer so the
+    // borrowed fast path stays zero-copy.
+    let mut buf: Option<String> = None;
+    let mut cur: &str = path;
+
+    if cur.contains('\\') {
+        buf = Some(cur.replace('\\', "/"));
+        cur = buf.as_deref().unwrap_or_default();
+    }
+
+    if cur.split('/').any(|segment| dot_segment_kind(segment) != 0) {
+        let normalized = normalize_dot_segments(cur).into_owned();
+        buf = Some(normalized);
+        cur = buf.as_deref().unwrap_or_default();
+    }
+
+    let bytes = cur.as_bytes();
     let mut search_from = 0;
     while let Some(relative) = bytes[search_from..].iter().position(|&byte| byte == b'%') {
         let index = search_from + relative;
@@ -261,10 +278,13 @@ fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
             None => return None,
         }
     }
-    match percent_decode(&path) {
+    match percent_decode(cur) {
         // No escapes: the (possibly normalized) buffer is the result.
-        Some(Cow::Borrowed(_)) => Some(path),
-        Some(Cow::Owned(owned)) => Some(Cow::Owned(owned)),
+        Some(Cow::Borrowed(_)) => Some(match buf {
+            Some(buf) => Cow::Owned(buf),
+            None => Cow::Borrowed(path),
+        }),
+        Some(Cow::Owned(decoded)) => Some(Cow::Owned(decoded)),
         None => None,
     }
 }
@@ -684,6 +704,17 @@ mod tests {
         assert_eq!(
             url_to_path("file://server/share/%2E%2E/x.ts"),
             Some(PathBuf::from("\\\\server\\x.ts"))
+        );
+        // Backslashes are URL separators too, so dot segments written with
+        // them normalize the same way.
+        assert_eq!(
+            url_to_path("file://server\\a\\..\\share\\x.ts"),
+            Some(PathBuf::from("\\\\server\\share\\x.ts"))
+        );
+        assert_eq!(url_to_path("file:///C:\\a\\..\\b.ts"), Some(PathBuf::from("C:/b.ts")));
+        assert_eq!(
+            url_to_path("file://server\\share\\."),
+            Some(PathBuf::from("\\\\server\\share\\"))
         );
     }
 
