@@ -47,7 +47,7 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     // decodes the rest through IDNA to-ASCII before `fileURLToPath` maps it
     // back — so an allowed escape such as `%C3%BD` still reaches us as the
     // Unicode name the punycode authority denotes.
-    if has_forbidden_host_escape(host) {
+    if has_forbidden_host_escape(host) || has_forbidden_host_char(host) {
         return None;
     }
     let host = percent_decode(host)?;
@@ -184,6 +184,19 @@ fn has_forbidden_host_escape(host: &str) -> bool {
     false
 }
 
+/// True when the authority carries a raw character Node's URL parser
+/// forbids in a special-scheme host. Bracketed IPv6 literals (`[::1]`)
+/// keep their `:`, which is otherwise forbidden.
+fn has_forbidden_host_char(host: &str) -> bool {
+    if host.len() > 2 && host.starts_with('[') && host.ends_with(']') {
+        return false;
+    }
+    // `%` is legal inside a valid escape and policed by
+    // `has_forbidden_host_escape` instead — malformed there, forbidden when
+    // it decodes to a `%`.
+    host.bytes().any(|byte| byte != b'%' && forbidden_host_byte(byte))
+}
+
 /// Decode one `%XX` escape at `index`; `None` when it is malformed.
 fn hex_byte(bytes: &[u8], index: usize) -> Option<u8> {
     if bytes.len() - index < 3 {
@@ -193,8 +206,11 @@ fn hex_byte(bytes: &[u8], index: usize) -> Option<u8> {
 }
 
 fn forbidden_host_byte(byte: u8) -> bool {
+    // Matches the characters Node's parser rejects in file authorities
+    // (verified empirically): controls, space, `#` `%` `/` `:` `<` `>` `?`
+    // `@` `[` `\` `]` `^` `|` DEL. A raw `"` is accepted, so it is absent.
     matches!(byte,
-        0x00..=0x20 | 0x22 | 0x23 | 0x25 | 0x2f | 0x3a | 0x3c | 0x3e | 0x3f | 0x40 | 0x5b..=0x5d
+        0x00..=0x20 | 0x23 | 0x25 | 0x2f | 0x3a | 0x3c | 0x3e | 0x3f | 0x40 | 0x5b..=0x5d
             | 0x5e | 0x7c | 0x7f)
 }
 
@@ -385,6 +401,39 @@ mod tests {
         assert_eq!(url_to_path("file://server%2Fother/share/x.ts"), None);
         assert_eq!(url_to_path("file://my%20server/share/x.ts"), None);
         assert_eq!(url_to_path("file://ser%ver/share/x.ts"), None);
+    }
+
+    #[test]
+    fn windows_forbidden_host_characters_are_rejected() {
+        // Raw forbidden characters meet the same rejection; Node passes the
+        // specifier to the hook but its parser refuses the authority.
+        for host in [
+            "user@server",
+            "server:80",
+            "server|other",
+            "ser<ver",
+            "ser>ver",
+            "ser^ver",
+            "ser[ver",
+            "ser]ver",
+            "my server",
+        ] {
+            assert_eq!(url_to_path(&format!("file://{host}/share/x.ts")), None, "{host}");
+        }
+        // A raw `"` and bracketed IPv6 literals are accepted, matching
+        // `fileURLToPath`.
+        assert_eq!(
+            url_to_path("file://ser\"ver/share/x.ts"),
+            Some(PathBuf::from("\\\\ser\"ver\\share\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://[::1]/share/x.ts"),
+            Some(PathBuf::from("\\\\[::1]\\share\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://[2001:db8::1]/share/x.ts"),
+            Some(PathBuf::from("\\\\[2001:db8::1]\\share\\x.ts"))
+        );
     }
 
     #[test]
