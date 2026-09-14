@@ -851,7 +851,13 @@ pub fn create_resolve<'env>(
         RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone(), conditions.to_vec()));
 
     // A `file:` URL is an absolute path in every form Node.js hands over,
-    // UNC `file://server/…` included.
+    // UNC `file://server/…` included. Schemes are case-insensitive, so
+    // `FILE://…` qualifies too; only the Windows UNC handling needs that
+    // spelling, so other platforms keep the plain prefix check.
+    #[cfg(windows)]
+    let is_absolute_path =
+        specifier.get(..7).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"));
+    #[cfg(not(windows))]
     let is_absolute_path = specifier.starts_with("file://");
 
     // The importing file itself, when the parent URL is a file URL. Discovery

@@ -49,8 +49,9 @@ fn percent_decode(input: &str) -> Option<Cow<'_, str>> {
 /// Returns `None` for non-`file:` URLs and escapes that do not decode to
 /// valid UTF-8.
 pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
-    // The URL parser removes every ASCII tab or newline before parsing —
-    // authority and path alike — so `file://ser\tver/…` names `server`.
+    // Schemes are case-insensitive — `FILE://…` is a file URL like any
+    // other — and the URL parser removes every ASCII tab or newline before
+    // parsing, so `fi\tle://…` is one too.
     let cleaned;
     let url = if url.contains(['\t', '\n', '\r']) {
         cleaned = url.replace(['\t', '\n', '\r'], "");
@@ -58,7 +59,10 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     } else {
         url
     };
-    let rest = url.strip_prefix("file://")?;
+    if !url.get(..7).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://")) {
+        return None;
+    }
+    let rest = &url[7..];
     if rest.is_empty() {
         return None;
     }
@@ -954,6 +958,21 @@ mod tests {
         assert_eq!(url_to_path("file://localhost/c%7C/a.ts"), None);
         assert_eq!(url_to_path("file://localhost/share/a.ts"), None);
         assert_eq!(url_to_path("file://localhost/"), None);
+    }
+
+    #[test]
+    fn windows_scheme_is_case_insensitive() {
+        // URL schemes are case-insensitive: `FILE://…` is a file URL, and
+        // the parser's tab/newline removal applies to the scheme too.
+        assert_eq!(
+            url_to_path("FILE://server/share/x.ts"),
+            Some(PathBuf::from("\\\\server\\share\\x.ts"))
+        );
+        assert_eq!(url_to_path("fIlE:///C:/a.ts"), Some(PathBuf::from("C:/a.ts")));
+        assert_eq!(
+            url_to_path("fi\tle://server/share/x.ts"),
+            Some(PathBuf::from("\\\\server\\share\\x.ts"))
+        );
     }
 
     #[test]
