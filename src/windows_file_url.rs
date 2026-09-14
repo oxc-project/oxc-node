@@ -111,7 +111,7 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     let host = percent_decode(host)?;
     // UTS #46 host canonicalization comes first, matching the parser's
     // order — `１２７.１` maps to `127.1` and is then recognized as IPv4.
-    let host = canonicalize_host(&host);
+    let host = canonicalize_host(&host)?;
     // The forbidden-character check also runs on the mapped authority: a
     // fullwidth `％` maps to `%`, which the URL parser then rejects. Mapped
     // hosts hold no escapes, so the `%` exemption does not apply.
@@ -355,14 +355,22 @@ fn encode_host(host: &str) -> Cow<'_, str> {
 /// UTS #46 host canonicalization for a UNC authority, applied the way the
 /// URL parser applies `to-ascii` at parse time and `fileURLToPath` maps the
 /// name back: fullwidth and compatibility characters fold to their ASCII
-/// forms and valid `xn--` labels decode to Unicode. Node is lenient about
-/// invalid hosts (`file://xn--!!!/…` keeps its spelling), so an invalid
-/// result falls back to the literal label.
-fn canonicalize_host(host: &str) -> String {
+/// forms and valid `xn--` labels decode to Unicode. Mapping failures are
+/// split the way Node behaves: undecodable `xn--` labels keep their literal
+/// spelling, while disallowed characters (a zero-width joiner) and a host
+/// mapping to nothing (a lone soft hyphen) are rejected.
+fn canonicalize_host(host: &str) -> Option<String> {
     match idna::domain_to_ascii(host) {
-        Ok(ascii) => idna::domain_to_unicode(&ascii).0,
-        Err(_) => host.to_owned(),
+        Ok(ascii) if !ascii.is_empty() => Some(idna::domain_to_unicode(&ascii).0),
+        Ok(_) => None,
+        Err(_) if has_ace_label(host) => Some(host.to_owned()),
+        Err(_) => None,
     }
+}
+
+/// True when a label carries the `xn--` A-label prefix.
+fn has_ace_label(host: &str) -> bool {
+    host.split('.').any(|label| label.len() >= 4 && label[..4].eq_ignore_ascii_case("xn--"))
 }
 
 /// WHATWG URL path normalization, applied to the percent-encoded path: a
@@ -810,6 +818,14 @@ mod tests {
         assert_eq!(url_to_path("file://２５６.１/share/x.ts"), None);
         // A host whose mapping produces a forbidden character is rejected.
         assert_eq!(url_to_path("file://％/share/x.ts"), None);
+        // Disallowed characters and an empty mapping are rejected too; only
+        // undecodable xn-- labels keep their literal spelling.
+        assert_eq!(url_to_path("file://%E2%80%8D/share/x.ts"), None);
+        assert_eq!(url_to_path("file://%C2%AD/share/x.ts"), None);
+        assert_eq!(
+            url_to_path("file://xn--1/share/x.ts"),
+            Some(PathBuf::from("\\\\xn--1\\share\\x.ts"))
+        );
         // A leading pipe drive folds without any dot segment present, while
         // a pipe in a later segment stays literal.
         assert_eq!(
