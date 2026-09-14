@@ -251,11 +251,25 @@ const NODE_MODULES_PATH: &str = "/node_modules/";
 #[cfg(target_os = "windows")]
 const NODE_MODULES_PATH: &str = "\\node_modules\\";
 
-#[cfg(not(target_os = "windows"))]
+/// The `file:` URL scheme prefix; on POSIX the absolute path follows it
+/// directly.
+#[cfg(not(windows))]
 const PATH_PREFIX: &str = "file://";
 
-#[cfg(target_os = "windows")]
-const PATH_PREFIX: &str = "file:///";
+/// Convert a `file://` URL into a filesystem path, including the UNC
+/// authority form: `\\server\share\dir\module.ts` round trips as
+/// `file://server/share/dir/module.ts`, the form `pathToFileURL` produces, so
+/// the component between `file://` and the next `/` is the server name rather
+/// than a path segment. Reading it as one lost the host on the way in and
+/// wrote `file://///server/…` on the way out (issue #744).
+#[cfg(windows)]
+fn file_url_to_path(url: &str) -> Option<PathBuf> {
+    windows_file_url::url_to_path(url)
+}
+
+/// Windows `file:` URL rules (issue #744); see windows_file_url.rs.
+#[cfg(any(windows, test))]
+mod windows_file_url;
 
 /// Convert a `file://` URL into a filesystem path.
 ///
@@ -266,12 +280,9 @@ const PATH_PREFIX: &str = "file:///";
 /// past the project and finds nothing, and relative specifiers resolve against
 /// a directory that does not exist.
 ///
-/// The `file:///C:/…` form needs no special casing: [`PATH_PREFIX`] already
-/// carries the extra slash on Windows, so stripping it leaves the drive letter
-/// at the front where it belongs.
-///
 /// Returns `None` if `url` is not a `file://` URL, or if its escapes do not
 /// decode to valid UTF-8.
+#[cfg(not(windows))]
 fn file_url_to_path(url: &str) -> Option<PathBuf> {
     let path = url.strip_prefix(PATH_PREFIX)?;
     let bytes = path.as_bytes();
@@ -801,6 +812,23 @@ pub fn create_resolve<'env>(
     >,
 ) -> Result<Either<ResolveFnOutput, PromiseRaw<'env, ResolveFnOutput>>> {
     tracing::debug!(specifier = ?specifier, context = ?context);
+    // The URL parser removes ASCII tab or newline characters before
+    // parsing, so file-URL classification and conversion see the cleaned
+    // spelling — `fi\tle://…` is a file URL like any other. Every other
+    // specifier keeps its original spelling: Node hands `no\tde:fs` to the
+    // hook unchanged, and rewriting `lo\tdash` would resolve the wrong
+    // package.
+    #[cfg(windows)]
+    let cleaned;
+    #[cfg(windows)]
+    let file_specifier = if specifier.contains(['\t', '\n', '\r']) {
+        cleaned = specifier.replace(['\t', '\n', '\r'], "");
+        cleaned.as_str()
+    } else {
+        specifier.as_str()
+    };
+    #[cfg(not(windows))]
+    let file_specifier = specifier.as_str();
     if specifier.starts_with("node:") || specifier.starts_with("nodejs:") {
         tracing::debug!("short-circuiting builtin protocol resolve: {}", specifier);
         return add_short_circuit(specifier, Some("builtin"), context, next_resolve);
@@ -830,7 +858,15 @@ pub fn create_resolve<'env>(
     let (resolver, tsconfig_source) =
         RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone(), conditions.to_vec()));
 
-    let is_absolute_path = specifier.starts_with(PATH_PREFIX);
+    // A `file:` URL is an absolute path in every form Node.js hands over,
+    // UNC `file://server/…` included. Schemes are case-insensitive, so
+    // `FILE://…` qualifies too; only the Windows UNC handling needs that
+    // spelling, so other platforms keep the plain prefix check.
+    #[cfg(windows)]
+    let is_absolute_path =
+        file_specifier.get(..7).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"));
+    #[cfg(not(windows))]
+    let is_absolute_path = file_specifier.starts_with("file://");
 
     // The importing file itself, when the parent URL is a file URL. Discovery
     // needs the file rather than its directory, because `TsconfigDiscovery::Auto`
@@ -854,9 +890,30 @@ pub fn create_resolve<'env>(
 
     let resolution = match (is_absolute_path, tsconfig_source, parent_file) {
         (true, ..) => {
-            let specifier_path = file_url_to_path(&specifier)
+            let specifier_path = file_url_to_path(file_specifier)
                 .ok_or_else(|| Error::new(Status::GenericFailure, "Specifier is not a file URL"))?;
-            resolver.resolve(Path::new("/"), &specifier_path.to_string_lossy())
+            // The path is fully decoded, so a literal `#` in a file name would
+            // be parsed as a fragment here and a same-named prefix file would
+            // win (`a` over `a#b.ts`); the resolver's enhanced-resolve escape
+            // keeps the hash a filename character. The query/fragment are not
+            // part of the path — `file_url_to_path` drops them — so re-attach
+            // the raw suffix afterwards, where it stays module identity.
+            #[cfg(windows)]
+            {
+                let escaped = specifier_path.to_string_lossy().replace('#', "\u{0}#");
+                match file_specifier.find(['?', '#']) {
+                    Some(index) => {
+                        let mut with_suffix = escaped;
+                        with_suffix.push_str(&file_specifier[index..]);
+                        resolver.resolve(Path::new("/"), &with_suffix)
+                    }
+                    None => resolver.resolve(Path::new("/"), &escaped),
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                resolver.resolve(Path::new("/"), &specifier_path.to_string_lossy())
+            }
         }
         // `Resolver::resolve` only ever consults a *manually* configured tsconfig,
         // so under `TsconfigDiscovery::Auto` it would silently ignore `paths` and
@@ -1408,16 +1465,51 @@ fn url_path(url: &str) -> &str {
     &url[..end]
 }
 
+#[cfg(not(windows))]
 fn oxc_resolved_path_to_url(resolution: &Resolution) -> String {
-    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
-    let mut url = if resolution.query().is_some() || resolution.fragment().is_some() {
+    if resolution.query().is_some() || resolution.fragment().is_some() {
         format!("{PATH_PREFIX}{}", resolution.full_path().to_string_lossy())
     } else {
         format!("{PATH_PREFIX}{}", resolution.path().to_string_lossy())
-    };
-    #[cfg(target_os = "windows")]
-    {
-        url = url.replace("\\", "/");
+    }
+}
+
+#[cfg(windows)]
+fn oxc_resolved_path_to_url(resolution: &Resolution) -> String {
+    // The path goes through `path_to_file_url` on its own: its percent-encode
+    // set differs from the raw query and fragment, which must be appended
+    // verbatim or a `?`/`#` inside the path would be misparsed.
+    let mut url = path_to_file_url(&resolution.path().to_string_lossy());
+    if let Some(query) = resolution.query() {
+        url.push('?');
+        url.push_str(query);
+    }
+    if let Some(fragment) = resolution.fragment() {
+        url.push('#');
+        url.push_str(fragment);
     }
     url
+}
+
+#[cfg(windows)]
+fn path_to_file_url(path: &str) -> String {
+    windows_file_url::path_to_url(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    // The Windows `file:` URL matrix lives with the module in
+    // windows_file_url.rs; what remains here is the platform behavior this
+    // file owns.
+
+    #[cfg(not(windows))]
+    #[test]
+    fn non_windows_behavior_is_unchanged() {
+        assert_eq!(file_url_to_path("file:///a/b.ts"), Some(PathBuf::from("/a/b.ts")));
+        assert_eq!(file_url_to_path("file:///a%20b.ts"), Some(PathBuf::from("/a b.ts")));
+    }
 }
