@@ -414,7 +414,7 @@ fn normalize_dot_segments(path: &str) -> Cow<'_, str> {
     }
     let trailing_slash =
         path.rsplit('/').next().is_some_and(|segment| dot_segment_kind(segment) != 0);
-    let mut out: Vec<&str> = Vec::new();
+    let mut out: Vec<Cow<'_, str>> = Vec::new();
     for segment in path.split('/') {
         match dot_segment_kind(segment) {
             1 => {}
@@ -423,7 +423,16 @@ fn normalize_dot_segments(path: &str) -> Cow<'_, str> {
                     out.pop();
                 }
             }
-            _ => out.push(segment),
+            _ => {
+                // A kept drive segment normalizes its pipe spelling, like
+                // the URL parser does before dot-segment removal.
+                let bytes = segment.as_bytes();
+                if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b'|' {
+                    out.push(Cow::Owned(format!("{}:", bytes[0] as char)));
+                } else {
+                    out.push(Cow::Borrowed(segment));
+                }
+            }
         }
     }
     let mut normalized = out.join("/");
@@ -462,7 +471,7 @@ fn dot_segment_kind(segment: &str) -> u8 {
 
 fn is_drive_prefix(segment: &str) -> bool {
     let bytes = segment.as_bytes();
-    bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+    bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && matches!(bytes[1], b':' | b'|')
 }
 
 /// Percent-decode a URL path, refusing the escapes `fileURLToPath`
@@ -975,6 +984,14 @@ mod tests {
         // literal but not a `?`, and `?` is illegal in Windows file names.
         assert_eq!(url_to_path("file://server/share/coll%3Fide.ts"), None);
         assert_eq!(url_to_path("file:///C:/coll%3Fide.ts"), None);
+        // A pipe-form drive segment folds to the colon spelling and `..`
+        // cannot pop it, exactly like the URL parser's ordering.
+        assert_eq!(
+            url_to_path("file://server/C|/../share/app.js"),
+            Some(PathBuf::from("\\\\server\\C:\\share\\app.js"))
+        );
+        assert_eq!(url_to_path("file://server/C|/.."), Some(PathBuf::from("\\\\server\\C:\\")));
+        assert_eq!(url_to_path("file:///C|/../x.ts"), Some(PathBuf::from("C:/x.ts")));
         // A real query is still module identity, not part of the path.
         assert_eq!(
             url_to_path("file://server/share/a.ts?key=%2F"),
