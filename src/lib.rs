@@ -819,14 +819,13 @@ pub fn create_resolve<'env>(
     // hook unchanged, and rewriting `lo\tdash` would resolve the wrong
     // package.
     #[cfg(windows)]
-    let file_specifier = {
-        let cleaned;
-        if specifier.contains(['\t', '\n', '\r']) {
-            cleaned = specifier.replace(['\t', '\n', '\r'], "");
-            cleaned.as_str()
-        } else {
-            specifier.as_str()
-        }
+    let cleaned;
+    #[cfg(windows)]
+    let file_specifier = if specifier.contains(['\t', '\n', '\r']) {
+        cleaned = specifier.replace(['\t', '\n', '\r'], "");
+        cleaned.as_str()
+    } else {
+        specifier.as_str()
     };
     #[cfg(not(windows))]
     let file_specifier = specifier.as_str();
