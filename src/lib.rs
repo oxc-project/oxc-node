@@ -264,21 +264,7 @@ const NODE_MODULES_PATH: &str = "\\node_modules\\";
 /// decode to valid UTF-8.
 #[cfg(not(windows))]
 fn file_url_to_path(url: &str) -> Option<PathBuf> {
-    // The URL parser removes every ASCII tab or newline before parsing.
-    let cleaned;
-    let url = if url.contains(['\t', '\n', '\r']) {
-        cleaned = url.replace(['\t', '\n', '\r'], "");
-        &cleaned
-    } else {
-        url
-    };
     let rest = url.strip_prefix("file://")?;
-    // The query and fragment are not part of the filesystem path; Node
-    // decodes the pathname only.
-    let (rest, _suffix) = match rest.find(['?', '#']) {
-        Some(index) => (&rest[..index], &rest[index..]),
-        None => (rest, ""),
-    };
     percent_decode_to_path(rest)
 }
 
