@@ -105,18 +105,23 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     // decodes the rest through IDNA to-ASCII before `fileURLToPath` maps it
     // back — so an allowed escape such as `%C3%BD` still reaches us as the
     // Unicode name the punycode authority denotes.
-    if has_forbidden_host_escape(host) || has_forbidden_host_char(host) {
+    if has_forbidden_host_escape(host) || has_forbidden_host_char(host, true) {
         return None;
     }
     let host = percent_decode(host)?;
-    // WHATWG host parsing canonicalizes IPv4 authorities (`file://127.1/…`
-    // is `127.0.0.1`) and rejects anything that ends in a number without
-    // being a valid address (`256.1` is ERR_INVALID_URL). This runs before
-    // IDNA, matching the parser's order.
-    let mut host = match parse_ipv4_authority(&host) {
+    // UTS #46 host canonicalization comes first, matching the parser's
+    // order — `１２７.１` maps to `127.1` and is then recognized as IPv4.
+    let host = canonicalize_host(&host);
+    // The forbidden-character check also runs on the mapped authority: a
+    // fullwidth `％` maps to `%`, which the URL parser then rejects. Mapped
+    // hosts hold no escapes, so the `%` exemption does not apply.
+    if has_forbidden_host_char(&host, false) {
+        return None;
+    }
+    let mut host: Cow<'_, str> = match parse_ipv4_authority(&host) {
         Ipv4Authority::Address(address) => Cow::Owned(address.to_string()),
         Ipv4Authority::Invalid => return None,
-        Ipv4Authority::NotIpv4 => host,
+        Ipv4Authority::NotIpv4 => Cow::Owned(host),
     };
     // WHATWG canonicalizes IPv6 authorities: `[0:0:0:0:0:0:0:1]` is `[::1]`.
     if host.len() > 2 && host.starts_with('[') && host.ends_with(']') {
@@ -131,11 +136,6 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
             });
         }
     }
-    // UTS #46 host canonicalization, the way the URL parser applies
-    // `to-ascii` at parse time and `fileURLToPath` maps the name back:
-    // fullwidth and compatibility characters fold to their ASCII forms and
-    // valid `xn--` labels decode to Unicode.
-    let host = canonicalize_host(&host);
     if host.eq_ignore_ascii_case("localhost") {
         // `file://localhost/…` is the local drive form: `fileURLToPath`
         // requires an absolute drive path (`file://localhost/share/…` is
@@ -372,7 +372,18 @@ fn canonicalize_host(host: &str) -> String {
 /// segment leaves a trailing slash. `%2E` inside a longer segment stays a
 /// filename character, exactly as the URL parser treats it.
 fn normalize_dot_segments(path: &str) -> Cow<'_, str> {
-    if !path.split('/').any(|segment| dot_segment_kind(segment) != 0) {
+    // A leading pipe-form drive segment needs folding even when no dot
+    // segment is present; a pipe anywhere else stays literal.
+    let mut first = true;
+    let needs_work = path.split('/').any(|segment| {
+        let pipe_drive = first
+            && segment.len() == 2
+            && is_drive_prefix(segment)
+            && segment.as_bytes()[1] == b'|';
+        first = false;
+        dot_segment_kind(segment) != 0 || pipe_drive
+    });
+    if !needs_work {
         return Cow::Borrowed(path);
     }
     let trailing_slash =
@@ -387,10 +398,14 @@ fn normalize_dot_segments(path: &str) -> Cow<'_, str> {
                 }
             }
             _ => {
-                // A kept drive segment normalizes its pipe spelling, like
-                // the URL parser does before dot-segment removal.
+                // A kept leading drive segment normalizes its pipe spelling,
+                // like the URL parser does; later segments keep theirs.
                 let bytes = segment.as_bytes();
-                if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b'|' {
+                if out.is_empty()
+                    && bytes.len() == 2
+                    && bytes[0].is_ascii_alphabetic()
+                    && bytes[1] == b'|'
+                {
                     out.push(Cow::Owned(format!("{}:", bytes[0] as char)));
                 } else {
                     out.push(Cow::Borrowed(segment));
@@ -464,7 +479,10 @@ fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
         cur = buf.as_deref().unwrap_or_default();
     }
 
-    if cur.split('/').any(|segment| dot_segment_kind(segment) != 0) {
+    if cur.split('/').any(|segment| {
+        dot_segment_kind(segment) != 0
+            || (segment.len() == 2 && is_drive_prefix(segment) && segment.as_bytes()[1] == b'|')
+    }) {
         let normalized = normalize_dot_segments(cur).into_owned();
         buf = Some(normalized);
         cur = buf.as_deref().unwrap_or_default();
@@ -525,8 +543,10 @@ fn has_forbidden_host_escape(host: &str) -> bool {
 
 /// True when the authority carries a raw character Node's URL parser
 /// forbids in a special-scheme host. Bracketed IPv6 literals (`[::1]`)
-/// keep their `:`, which is otherwise forbidden.
-fn has_forbidden_host_char(host: &str) -> bool {
+/// keep their `:`, which is otherwise forbidden. `escapes_allowed` is
+/// false for the UTS #46-mapped authority, where no escapes remain and a
+/// literal `%` (mapped from `％`) is forbidden outright.
+fn has_forbidden_host_char(host: &str, escapes_allowed: bool) -> bool {
     if host.len() > 2 && host.starts_with('[') && host.ends_with(']') {
         // The bracket exception holds only for genuine IPv6 literals —
         // `file://[foo]/…` is ERR_INVALID_URL in Node, and the fallback
@@ -536,10 +556,9 @@ fn has_forbidden_host_char(host: &str) -> bool {
             return false;
         }
     }
-    // `%` is legal inside a valid escape and policed by
-    // `has_forbidden_host_escape` instead — malformed there, forbidden when
-    // it decodes to a `%`.
-    host.bytes().any(|byte| byte != b'%' && forbidden_host_byte(byte))
+    // `%` is legal inside a valid escape when escapes are allowed —
+    // malformed there, forbidden when it decodes to a `%`.
+    host.bytes().any(|byte| !(escapes_allowed && byte == b'%') && forbidden_host_byte(byte))
 }
 
 /// Decode one `%XX` escape at `index`; `None` when it is malformed.
@@ -778,6 +797,29 @@ mod tests {
             Some(PathBuf::from("\\\\server\\share\\x.ts"))
         );
         assert_eq!(url_to_path("file://℡/share/x.ts"), Some(PathBuf::from("\\\\tel\\share\\x.ts")));
+    }
+
+    #[test]
+    fn windows_mapping_interactions() {
+        // UTS #46 runs before IPv4 classification: fullwidth digits map
+        // first, and a mapped address that is out of range is rejected.
+        assert_eq!(
+            url_to_path("file://１２７.１/share/app.js"),
+            Some(PathBuf::from("\\\\127.0.0.1\\share\\app.js"))
+        );
+        assert_eq!(url_to_path("file://２５６.１/share/x.ts"), None);
+        // A host whose mapping produces a forbidden character is rejected.
+        assert_eq!(url_to_path("file://％/share/x.ts"), None);
+        // A leading pipe drive folds without any dot segment present, while
+        // a pipe in a later segment stays literal.
+        assert_eq!(
+            url_to_path("file://server/C|/share/app.js"),
+            Some(PathBuf::from("\\\\server\\C:\\share\\app.js"))
+        );
+        assert_eq!(
+            url_to_path("file://server/share/C|/x.ts"),
+            Some(PathBuf::from("\\\\server\\share\\C|\\x.ts"))
+        );
     }
 
     #[test]
