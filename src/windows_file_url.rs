@@ -126,8 +126,8 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
         };
         if let Ok(parsed) = address.parse::<std::net::Ipv6Addr>() {
             host = Cow::Owned(match zone {
-                Some(zone) => format!("[{parsed}%{zone}]"),
-                None => format!("[{parsed}]"),
+                Some(zone) => format!("[{}%{}]", serialize_ipv6(&parsed), zone),
+                None => format!("[{}]", serialize_ipv6(&parsed)),
             });
         }
     }
@@ -260,6 +260,52 @@ fn parse_ipv4_authority(host: &str) -> Ipv4Authority {
     Ipv4Authority::Address(std::net::Ipv4Addr::from(octets))
 }
 
+/// WHATWG IPv6 serializer: eight lowercase hex groups with the longest zero
+/// run compressed (first on ties, only when at least two groups). Unlike
+/// `Ipv6Addr`'s display, IPv4-mapped addresses serialize as plain groups —
+/// `[::ffff:c0a8:1]`, not `[::ffff:192.168.0.1]`.
+fn serialize_ipv6(address: &std::net::Ipv6Addr) -> String {
+    let segments = address.segments();
+    let mut best_start = 8;
+    let mut best_len = 0;
+    let mut index = 0;
+    while index < 8 {
+        if segments[index] != 0 {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < 8 && segments[index] == 0 {
+            index += 1;
+        }
+        if index - start > best_len {
+            best_start = start;
+            best_len = index - start;
+        }
+    }
+    if best_len < 2 {
+        best_start = 8;
+    }
+    let mut out = String::new();
+    let mut index = 0;
+    while index < 8 {
+        if index == best_start {
+            out.push_str("::");
+            index += best_len;
+            continue;
+        }
+        if !out.is_empty() && !out.ends_with(':') {
+            out.push(':');
+        }
+        out.push_str(&format!("{:x}", segments[index]));
+        index += 1;
+    }
+    if out.is_empty() {
+        out.push_str("::");
+    }
+    out
+}
+
 /// WHATWG ends-in-a-number: the label is non-empty and all ASCII digits,
 /// or a `0x` prefix followed by hex digits (a bare `0x` counts).
 fn ends_in_number(label: &str) -> bool {
@@ -302,7 +348,7 @@ fn encode_host(host: &str) -> Cow<'_, str> {
     // canonicalized the way the URL parser canonicalizes them.
     if host.len() > 2 && host.starts_with('[') && host.ends_with(']') {
         if let Ok(parsed) = host[1..host.len() - 1].parse::<std::net::Ipv6Addr>() {
-            return Cow::Owned(format!("[{parsed}]"));
+            return Cow::Owned(format!("[{}]", serialize_ipv6(&parsed)));
         }
         return Cow::Borrowed(host);
     }
@@ -336,13 +382,16 @@ fn domain_to_unicode(host: &str) -> Cow<'_, str> {
             && label[..4].eq_ignore_ascii_case("xn--")
             && let Some(unicode) = punycode_decode(&label[4..])
         {
-            // Controls and non-characters are DISALLOWED in every IDNA
-            // version, so a label decoding to one is kept literal — a loader
-            // should never be handed a control-character host.
-            if !unicode.chars().any(|c| {
-                matches!(c, '\u{0}'..='\u{1f}' | '\u{7f}'..='\u{9f}' | '\u{fdd0}'..='\u{fdef}')
-                    || (c as u32) & 0xfffe == 0xfffe
-            }) {
+            // A-labels must decode to a name containing non-ASCII characters
+            // (RFC 5890 — an all-ASCII decode is not a valid U-label) and no
+            // DISALLOWED code points; anything else keeps the literal label,
+            // matching `domainToUnicode`.
+            if !unicode.is_ascii()
+                && !unicode.chars().any(|c| {
+                    matches!(c, '\u{0}'..='\u{1f}' | '\u{7f}'..='\u{9f}' | '\u{fdd0}'..='\u{fdef}')
+                        || (c as u32) & 0xfffe == 0xfffe
+                })
+            {
                 decoded.push_str(&unicode);
                 changed = true;
                 continue;
@@ -802,10 +851,10 @@ mod tests {
             url_to_path("file://m%C3%BDserver/share/x.ts"),
             Some(PathBuf::from("\\\\mýserver\\share\\x.ts"))
         );
-        // A label that is not valid punycode, or that decodes to characters
-        // DISALLOWED in every IDNA version (controls, non-characters), is
-        // kept literal — `fileURLToPath` never hands the loader a
-        // control-character host.
+        // A label that is not valid punycode, decodes to an all-ASCII name
+        // (not a valid U-label, RFC 5890), or decodes to characters
+        // DISALLOWED in every IDNA version (controls, non-characters) is
+        // kept literal — `domainToUnicode` never decodes these either.
         assert_eq!(
             url_to_path("file://xn--!!!/share/x.ts"),
             Some(PathBuf::from("\\\\xn--!!!\\share\\x.ts"))
@@ -813,6 +862,10 @@ mod tests {
         assert_eq!(
             url_to_path("file://xn--a/share/x.ts"),
             Some(PathBuf::from("\\\\xn--a\\share\\x.ts"))
+        );
+        assert_eq!(
+            url_to_path("file://xn--abc-/share/x.ts"),
+            Some(PathBuf::from("\\\\xn--abc-\\share\\x.ts"))
         );
         // ASCII hosts take the fast path.
         assert_eq!(
@@ -939,6 +992,15 @@ mod tests {
         assert_eq!(
             url_to_path("file://[0:0:0:0:0:0:0:1]/share/x.ts"),
             Some(PathBuf::from("\\\\[::1]\\share\\x.ts"))
+        );
+        // IPv4-mapped addresses serialize as plain hex groups, not dotted quad.
+        assert_eq!(
+            url_to_path("file://[::ffff:192.168.0.1]/share/x.ts"),
+            Some(PathBuf::from("\\\\[::ffff:c0a8:1]\\share\\x.ts"))
+        );
+        assert_eq!(
+            path_to_url("\\\\[::ffff:192.168.0.1]\\share\\x.ts"),
+            "file://[::ffff:c0a8:1]/share/x.ts"
         );
         assert_eq!(
             path_to_url("\\\\[2001:db8::1]\\share\\x.ts"),
