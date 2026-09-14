@@ -813,14 +813,23 @@ pub fn create_resolve<'env>(
 ) -> Result<Either<ResolveFnOutput, PromiseRaw<'env, ResolveFnOutput>>> {
     tracing::debug!(specifier = ?specifier, context = ?context);
     // The URL parser removes ASCII tab or newline characters before
-    // parsing, so classify the cleaned spelling — `fi\tle://…` is a file
-    // URL like any other. Only the Windows UNC handling below needs it.
+    // parsing, so file-URL classification and conversion see the cleaned
+    // spelling — `fi\tle://…` is a file URL like any other. Every other
+    // specifier keeps its original spelling: Node hands `no\tde:fs` to the
+    // hook unchanged, and rewriting `lo\tdash` would resolve the wrong
+    // package.
     #[cfg(windows)]
-    let specifier = if specifier.contains(['\t', '\n', '\r']) {
-        specifier.replace(['\t', '\n', '\r'], "")
-    } else {
-        specifier
+    let file_specifier = {
+        let cleaned;
+        if specifier.contains(['\t', '\n', '\r']) {
+            cleaned = specifier.replace(['\t', '\n', '\r'], "");
+            cleaned.as_str()
+        } else {
+            specifier.as_str()
+        }
     };
+    #[cfg(not(windows))]
+    let file_specifier = specifier.as_str();
     if specifier.starts_with("node:") || specifier.starts_with("nodejs:") {
         tracing::debug!("short-circuiting builtin protocol resolve: {}", specifier);
         return add_short_circuit(specifier, Some("builtin"), context, next_resolve);
@@ -856,9 +865,9 @@ pub fn create_resolve<'env>(
     // spelling, so other platforms keep the plain prefix check.
     #[cfg(windows)]
     let is_absolute_path =
-        specifier.get(..7).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"));
+        file_specifier.get(..7).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"));
     #[cfg(not(windows))]
-    let is_absolute_path = specifier.starts_with("file://");
+    let is_absolute_path = file_specifier.starts_with("file://");
 
     // The importing file itself, when the parent URL is a file URL. Discovery
     // needs the file rather than its directory, because `TsconfigDiscovery::Auto`
@@ -882,7 +891,7 @@ pub fn create_resolve<'env>(
 
     let resolution = match (is_absolute_path, tsconfig_source, parent_file) {
         (true, ..) => {
-            let specifier_path = file_url_to_path(&specifier)
+            let specifier_path = file_url_to_path(file_specifier)
                 .ok_or_else(|| Error::new(Status::GenericFailure, "Specifier is not a file URL"))?;
             // The path is fully decoded, so a literal `#` in a file name would
             // be parsed as a fragment here and a same-named prefix file would
@@ -893,10 +902,10 @@ pub fn create_resolve<'env>(
             #[cfg(windows)]
             {
                 let escaped = specifier_path.to_string_lossy().replace('#', "\u{0}#");
-                match specifier.find(['?', '#']) {
+                match file_specifier.find(['?', '#']) {
                     Some(index) => {
                         let mut with_suffix = escaped;
-                        with_suffix.push_str(&specifier[index..]);
+                        with_suffix.push_str(&file_specifier[index..]);
                         resolver.resolve(Path::new("/"), &with_suffix)
                     }
                     None => resolver.resolve(Path::new("/"), &escaped),
