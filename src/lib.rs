@@ -832,6 +832,14 @@ pub fn create_resolve<'env>(
     >,
 ) -> Result<Either<ResolveFnOutput, PromiseRaw<'env, ResolveFnOutput>>> {
     tracing::debug!(specifier = ?specifier, context = ?context);
+    // The URL parser removes ASCII tab or newline characters before
+    // parsing, so classify the cleaned spelling — `fi\tle://…` is a file
+    // URL like any other.
+    let specifier = if specifier.contains(['\t', '\n', '\r']) {
+        specifier.replace(['\t', '\n', '\r'], "")
+    } else {
+        specifier
+    };
     if specifier.starts_with("node:") || specifier.starts_with("nodejs:") {
         tracing::debug!("short-circuiting builtin protocol resolve: {}", specifier);
         return add_short_circuit(specifier, Some("builtin"), context, next_resolve);
