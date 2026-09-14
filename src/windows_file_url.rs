@@ -355,22 +355,34 @@ fn encode_host(host: &str) -> Cow<'_, str> {
 /// UTS #46 host canonicalization for a UNC authority, applied the way the
 /// URL parser applies `to-ascii` at parse time and `fileURLToPath` maps the
 /// name back: fullwidth and compatibility characters fold to their ASCII
-/// forms and valid `xn--` labels decode to Unicode. Mapping failures are
-/// split the way Node behaves: undecodable `xn--` labels keep their literal
-/// spelling, while disallowed characters (a zero-width joiner) and a host
-/// mapping to nothing (a lone soft hyphen) are rejected.
+/// forms and valid `xn--` labels decode to Unicode. Lenient behavior is
+/// per-label, the way Node behaves: undecodable `xn--` labels keep their
+/// literal spelling, while labels that fail for any other reason (disallowed
+/// characters like a zero-width joiner) or map to nothing (a lone soft
+/// hyphen) reject the host.
 fn canonicalize_host(host: &str) -> Option<String> {
-    match idna::domain_to_ascii(host) {
-        Ok(ascii) if !ascii.is_empty() => Some(idna::domain_to_unicode(&ascii).0),
-        Ok(_) => None,
-        Err(_) if has_ace_label(host) => Some(host.to_owned()),
-        Err(_) => None,
+    let mut out = String::with_capacity(host.len());
+    for (index, label) in host.split('.').enumerate() {
+        if index > 0 {
+            out.push('.');
+        }
+        if label.is_empty() {
+            // Empty labels (a trailing dot) are kept as-is.
+            continue;
+        }
+        match idna::domain_to_ascii(label) {
+            Ok(ascii) if !ascii.is_empty() => out.push_str(&idna::domain_to_unicode(&ascii).0),
+            Ok(_) => return None,
+            Err(_) if is_ace_label(label) => out.push_str(label),
+            Err(_) => return None,
+        }
     }
+    Some(out)
 }
 
 /// True when a label carries the `xn--` A-label prefix.
-fn has_ace_label(host: &str) -> bool {
-    host.split('.').any(|label| label.len() >= 4 && label[..4].eq_ignore_ascii_case("xn--"))
+fn is_ace_label(label: &str) -> bool {
+    label.len() >= 4 && label.as_bytes()[..4].eq_ignore_ascii_case(b"xn--")
 }
 
 /// WHATWG URL path normalization, applied to the percent-encoded path: a
@@ -819,9 +831,12 @@ mod tests {
         // A host whose mapping produces a forbidden character is rejected.
         assert_eq!(url_to_path("file://％/share/x.ts"), None);
         // Disallowed characters and an empty mapping are rejected too; only
-        // undecodable xn-- labels keep their literal spelling.
+        // undecodable xn-- labels keep their literal spelling, per label —
+        // a sibling label's failure still rejects the host.
         assert_eq!(url_to_path("file://%E2%80%8D/share/x.ts"), None);
         assert_eq!(url_to_path("file://%C2%AD/share/x.ts"), None);
+        assert_eq!(url_to_path("file://xn--1.%E2%80%8D/share/x.ts"), None);
+        assert_eq!(url_to_path("file://%C3%A9a%E2%80%8D/share/x.ts"), None);
         assert_eq!(
             url_to_path("file://xn--1/share/x.ts"),
             Some(PathBuf::from("\\\\xn--1\\share\\x.ts"))
