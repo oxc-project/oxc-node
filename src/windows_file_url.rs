@@ -7,7 +7,41 @@
 use std::borrow::Cow;
 use std::path::PathBuf;
 
-use super::percent_decode;
+use super::hex_digit;
+
+/// Percent-decode one URL component, validating the decoded bytes as UTF-8.
+/// Two vectorised passes carry this function, and the byte loop only ever
+/// runs over the escaped tail: `memchr` finds the first escape, and
+/// `simdutf8` validates the decoded buffer.
+fn percent_decode(input: &str) -> Option<Cow<'_, str>> {
+    let bytes = input.as_bytes();
+    let Some(mut index) = memchr::memchr(b'%', bytes) else {
+        return Some(Cow::Borrowed(input));
+    };
+
+    let mut decoded = Vec::with_capacity(bytes.len());
+    decoded.extend_from_slice(&bytes[..index]);
+    while index < bytes.len() {
+        // A `%` that is not followed by two hex digits is not an escape. Node
+        // will not produce one, but a hand-written URL can, and copying it
+        // through verbatim beats refusing the whole path.
+        if bytes[index] == b'%'
+            && let Some(byte) = bytes
+                .get(index + 1)
+                .zip(bytes.get(index + 2))
+                .and_then(|(high, low)| Some(hex_digit(*high)? << 4 | hex_digit(*low)?))
+        {
+            decoded.push(byte);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+
+    let text = simdutf8::basic::from_utf8(&decoded).ok()?;
+    Some(Cow::Owned(text.to_owned()))
+}
 
 /// Convert a `file://` URL into a filesystem path: `file:///C:/…` keeps
 /// the drive form, and `file://server/share/…` maps its authority back to

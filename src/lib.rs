@@ -251,22 +251,10 @@ const NODE_MODULES_PATH: &str = "/node_modules/";
 #[cfg(target_os = "windows")]
 const NODE_MODULES_PATH: &str = "\\node_modules\\";
 
-/// Convert a `file://` URL into a filesystem path.
-///
-/// Node hands the loader hooks URLs, and a URL percent-encodes every character
-/// outside the unreserved set: a space arrives as `%20`, `õ` as `%C3%B5`.
-/// Slicing the scheme off without decoding leaves a string that still looks
-/// like a path but names a directory nobody has — so tsconfig discovery walks
-/// past the project and finds nothing, and relative specifiers resolve against
-/// a directory that does not exist.
-///
-/// Returns `None` if `url` is not a `file://` URL, or if its escapes do not
-/// decode to valid UTF-8.
+/// The `file:` URL scheme prefix; on POSIX the absolute path follows it
+/// directly.
 #[cfg(not(windows))]
-fn file_url_to_path(url: &str) -> Option<PathBuf> {
-    let rest = url.strip_prefix("file://")?;
-    percent_decode_to_path(rest)
-}
+const PATH_PREFIX: &str = "file://";
 
 /// Convert a `file://` URL into a filesystem path, including the UNC
 /// authority form: `\\server\share\dir\module.ts` round trips as
@@ -283,29 +271,31 @@ fn file_url_to_path(url: &str) -> Option<PathBuf> {
 #[cfg(any(windows, test))]
 mod windows_file_url;
 
-/// Decode one URL component straight into a path; see [`percent_decode`].
-fn percent_decode_to_path(input: &str) -> Option<PathBuf> {
-    match percent_decode(input) {
-        // The common case: no escapes, copy straight into the path buffer.
-        Some(Cow::Borrowed(text)) => Some(PathBuf::from(text)),
-        Some(Cow::Owned(text)) => Some(PathBuf::from(text)),
-        None => None,
-    }
-}
+/// Convert a `file://` URL into a filesystem path.
+///
+/// Node hands the loader hooks URLs, and a URL percent-encodes every character
+/// outside the unreserved set: a space arrives as `%20`, `õ` as `%C3%B5`.
+/// Slicing the scheme off without decoding leaves a string that still looks
+/// like a path but names a directory nobody has — so tsconfig discovery walks
+/// past the project and finds nothing, and relative specifiers resolve against
+/// a directory that does not exist.
+///
+/// Returns `None` if `url` is not a `file://` URL, or if its escapes do not
+/// decode to valid UTF-8.
+#[cfg(not(windows))]
+fn file_url_to_path(url: &str) -> Option<PathBuf> {
+    let path = url.strip_prefix(PATH_PREFIX)?;
+    let bytes = path.as_bytes();
 
-/// Percent-decode one URL component, validating the decoded bytes as UTF-8.
-///
-/// Two vectorised passes carry this function, and the byte loop only ever
-/// runs over the escaped tail.
-///
-/// `memchr` compares a vector register at a time, dispatching to SSE2 or
-/// AVX2 on x86 and NEON on aarch64 at runtime. Most URLs hold no escape at
-/// all, and for those this single scan is the whole function: no allocation,
-/// no copy, no decode loop.
-fn percent_decode(input: &str) -> Option<Cow<'_, str>> {
-    let bytes = input.as_bytes();
+    // Two vectorised passes carry this function, and the byte loop only ever
+    // runs over the escaped tail.
+    //
+    // `memchr` compares a vector register at a time, dispatching to SSE2 or
+    // AVX2 on x86 and NEON on aarch64 at runtime. Most URLs hold no escape at
+    // all, and for those this single scan is the whole function: no allocation,
+    // no copy, no decode loop.
     let Some(mut index) = memchr::memchr(b'%', bytes) else {
-        return Some(Cow::Borrowed(input));
+        return Some(PathBuf::from(path));
     };
 
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -336,8 +326,7 @@ fn percent_decode(input: &str) -> Option<Cow<'_, str>> {
     //
     // The decoded bytes are arbitrary, so they still need validating. This is
     // the second vectorised pass, and it is where escape-heavy paths win most.
-    let text = simdutf8::basic::from_utf8(&decoded).ok()?;
-    Some(Cow::Owned(text.to_owned()))
+    simdutf8::basic::from_utf8(&decoded).ok().map(PathBuf::from)
 }
 
 fn hex_digit(byte: u8) -> Option<u8> {
@@ -825,7 +814,8 @@ pub fn create_resolve<'env>(
     tracing::debug!(specifier = ?specifier, context = ?context);
     // The URL parser removes ASCII tab or newline characters before
     // parsing, so classify the cleaned spelling — `fi\tle://…` is a file
-    // URL like any other.
+    // URL like any other. Only the Windows UNC handling below needs it.
+    #[cfg(windows)]
     let specifier = if specifier.contains(['\t', '\n', '\r']) {
         specifier.replace(['\t', '\n', '\r'], "")
     } else {
@@ -894,14 +884,21 @@ pub fn create_resolve<'env>(
             // keeps the hash a filename character. The query/fragment are not
             // part of the path — `file_url_to_path` drops them — so re-attach
             // the raw suffix afterwards, where it stays module identity.
-            let escaped = specifier_path.to_string_lossy().replace('#', "\u{0}#");
-            match specifier.find(['?', '#']) {
-                Some(index) => {
-                    let mut with_suffix = escaped;
-                    with_suffix.push_str(&specifier[index..]);
-                    resolver.resolve(Path::new("/"), &with_suffix)
+            #[cfg(windows)]
+            {
+                let escaped = specifier_path.to_string_lossy().replace('#', "\u{0}#");
+                match specifier.find(['?', '#']) {
+                    Some(index) => {
+                        let mut with_suffix = escaped;
+                        with_suffix.push_str(&specifier[index..]);
+                        resolver.resolve(Path::new("/"), &with_suffix)
+                    }
+                    None => resolver.resolve(Path::new("/"), &escaped),
                 }
-                None => resolver.resolve(Path::new("/"), &escaped),
+            }
+            #[cfg(not(windows))]
+            {
+                resolver.resolve(Path::new("/"), &specifier_path.to_string_lossy())
             }
         }
         // `Resolver::resolve` only ever consults a *manually* configured tsconfig,
@@ -1454,6 +1451,16 @@ fn url_path(url: &str) -> &str {
     &url[..end]
 }
 
+#[cfg(not(windows))]
+fn oxc_resolved_path_to_url(resolution: &Resolution) -> String {
+    if resolution.query().is_some() || resolution.fragment().is_some() {
+        format!("{PATH_PREFIX}{}", resolution.full_path().to_string_lossy())
+    } else {
+        format!("{PATH_PREFIX}{}", resolution.path().to_string_lossy())
+    }
+}
+
+#[cfg(windows)]
 fn oxc_resolved_path_to_url(resolution: &Resolution) -> String {
     // The path goes through `path_to_file_url` on its own: its percent-encode
     // set differs from the raw query and fragment, which must be appended
@@ -1470,15 +1477,6 @@ fn oxc_resolved_path_to_url(resolution: &Resolution) -> String {
     url
 }
 
-/// Generate a `file:` URL from an absolute path.
-#[cfg(not(windows))]
-fn path_to_file_url(path: &str) -> String {
-    format!("file://{path}")
-}
-
-/// Generate a `file:` URL from an absolute path, following the `pathToFileURL`
-/// rules: a `\\` or `//` prefix makes the first component the UNC authority —
-/// percent-encoded — and everything else keeps the `file:///<drive>:/…` form.
 #[cfg(windows)]
 fn path_to_file_url(path: &str) -> String {
     windows_file_url::path_to_url(path)
@@ -1499,6 +1497,5 @@ mod tests {
     fn non_windows_behavior_is_unchanged() {
         assert_eq!(file_url_to_path("file:///a/b.ts"), Some(PathBuf::from("/a/b.ts")));
         assert_eq!(file_url_to_path("file:///a%20b.ts"), Some(PathBuf::from("/a b.ts")));
-        assert_eq!(path_to_file_url("/a/b.ts"), "file:///a/b.ts");
     }
 }
