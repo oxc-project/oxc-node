@@ -7,10 +7,6 @@ See [Conventional Commits](https://conventionalcommits.org) for commit guideline
 
 **Note:** Version bump only for package @oxc-node/core
 
-
-
-
-
 ## [0.1.1](https://github.com/oxc-project/oxc-node/compare/v0.1.0...v0.1.1) (2026-09-13)
 
 **Note:** Version bump only for package @oxc-node/core
