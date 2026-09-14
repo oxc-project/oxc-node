@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.1.2](https://github.com/oxc-project/oxc-node/compare/v0.1.1...v0.1.2) (2026-09-14)
+
+### Bug Fixes
+
+* handle Windows UNC file URLs ([#744](https://github.com/oxc-project/oxc-node/issues/744)) ([#760](https://github.com/oxc-project/oxc-node/issues/760)) ([116cbcd](https://github.com/oxc-project/oxc-node/commit/116cbcd86a4a96ecb9362634f30db57f451b09ad)), closes [hash#name](https://github.com/hash/issues/name) [#46](https://github.com/oxc-project/oxc-node/issues/46)
+
+
 ## [0.1.1](https://github.com/oxc-project/oxc-node/compare/v0.1.0...v0.1.1) (2026-09-13)
 
 ### Bug Fixes
