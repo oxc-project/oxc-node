@@ -109,11 +109,24 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     // is `127.0.0.1`) and rejects anything that ends in a number without
     // being a valid address (`256.1` is ERR_INVALID_URL). This runs before
     // IDNA, matching the parser's order.
-    let host = match parse_ipv4_authority(&host) {
+    let mut host = match parse_ipv4_authority(&host) {
         Ipv4Authority::Address(address) => Cow::Owned(address.to_string()),
         Ipv4Authority::Invalid => return None,
         Ipv4Authority::NotIpv4 => host,
     };
+    // WHATWG canonicalizes IPv6 authorities: `[0:0:0:0:0:0:0:1]` is `[::1]`.
+    if host.len() > 2 && host.starts_with('[') && host.ends_with(']') {
+        let (address, zone) = match host[1..host.len() - 1].split_once('%') {
+            Some((address, zone)) => (address, Some(zone)),
+            None => (&host[1..host.len() - 1], None),
+        };
+        if let Ok(parsed) = address.parse::<std::net::Ipv6Addr>() {
+            host = Cow::Owned(match zone {
+                Some(zone) => format!("[{parsed}%{zone}]"),
+                None => format!("[{parsed}]"),
+            });
+        }
+    }
     // `pathToFileURL` writes a non-ASCII server name as punycode, and
     // `fileURLToPath` runs the host through IDNA to-Unicode
     // (`domainToUnicode`) — `\\mýserver\share` round trips as
@@ -132,7 +145,11 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
         let mut raw = path;
         let normalized;
         let raw_bytes = raw.as_bytes();
-        if raw_bytes.len() >= 2 && raw_bytes[0].is_ascii_alphabetic() && raw_bytes[1] == b'|' {
+        if raw_bytes.len() >= 2
+            && raw_bytes[0].is_ascii_alphabetic()
+            && raw_bytes[1] == b'|'
+            && (raw_bytes.len() == 2 || raw_bytes[2] == b'/' || raw_bytes[2] == b'\\')
+        {
             normalized = format!("{}:{}", raw_bytes[0] as char, &raw[2..]);
             raw = &normalized;
         }
@@ -277,8 +294,12 @@ fn ipv4_number(part: &str) -> Option<u64> {
 /// matching what `pathToFileURL` writes for a host such as `my server`.
 fn encode_host(host: &str) -> Cow<'_, str> {
     // Bracketed IPv6 literals keep their authority syntax — percent-encoding
-    // the brackets produces a URL Node rejects (ERR_INVALID_URL).
+    // the brackets produces a URL Node rejects (ERR_INVALID_URL) — and are
+    // canonicalized the way the URL parser canonicalizes them.
     if host.len() > 2 && host.starts_with('[') && host.ends_with(']') {
+        if let Ok(parsed) = host[1..host.len() - 1].parse::<std::net::Ipv6Addr>() {
+            return Cow::Owned(format!("[{parsed}]"));
+        }
         return Cow::Borrowed(host);
     }
     percent_encode(host, &[])
@@ -883,9 +904,15 @@ mod tests {
 
     #[test]
     fn windows_ipv6_host_keeps_its_authority_syntax() {
-        // `pathToFileURL` emits bracketed IPv6 authorities verbatim;
-        // percent-encoding the brackets is ERR_INVALID_URL in Node.
+        // `pathToFileURL` emits bracketed IPv6 authorities verbatim and
+        // canonicalized; percent-encoding the brackets is ERR_INVALID_URL in
+        // Node.
         assert_eq!(path_to_url("\\\\[::1]\\share\\x.ts"), "file://[::1]/share/x.ts");
+        assert_eq!(path_to_url("\\\\[0:0:0:0:0:0:0:1]\\share\\x.ts"), "file://[::1]/share/x.ts");
+        assert_eq!(
+            url_to_path("file://[0:0:0:0:0:0:0:1]/share/x.ts"),
+            Some(PathBuf::from("\\\\[::1]\\share\\x.ts"))
+        );
         assert_eq!(
             path_to_url("\\\\[2001:db8::1]\\share\\x.ts"),
             "file://[2001:db8::1]/share/x.ts"
@@ -916,11 +943,12 @@ mod tests {
         // it, so escapes and case do not defeat the localhost special case.
         assert_eq!(url_to_path("file://%6cocalhost/C:/a.ts"), Some(PathBuf::from("C:/a.ts")));
         assert_eq!(url_to_path("file://LOCALHOST/C:/a.ts"), Some(PathBuf::from("C:/a.ts")));
-        // The localhost form still has to name a drive, and the `c|` spelling
-        // normalizes to `c:` — everything else is `must be absolute`. The
-        // drive letter may itself be percent-encoded; an encoded pipe is
-        // decoded too late and rejected.
+        // The localhost form still has to name a drive; the `c|` spelling
+        // normalizes only with a separator (or nothing) after the pipe —
+        // `C|foo.ts` is rejected — and only a literal `:` survives decoding.
         assert_eq!(url_to_path("file://localhost/c|/a.ts"), Some(PathBuf::from("c:/a.ts")));
+        assert_eq!(url_to_path("file://localhost/c|"), Some(PathBuf::from("c:")));
+        assert_eq!(url_to_path("file://localhost/c|foo.ts"), None);
         assert_eq!(url_to_path("file://localhost/%43%3A/a.ts"), Some(PathBuf::from("C:/a.ts")));
         assert_eq!(url_to_path("file://localhost/C%3A/a.ts"), Some(PathBuf::from("C:/a.ts")));
         assert_eq!(url_to_path("file://localhost/c%7C/a.ts"), None);
