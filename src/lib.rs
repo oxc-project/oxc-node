@@ -285,7 +285,12 @@ mod windows_file_url;
 
 /// Decode one URL component straight into a path; see [`percent_decode`].
 fn percent_decode_to_path(input: &str) -> Option<PathBuf> {
-    percent_decode(input).map(|text| PathBuf::from(text.into_owned()))
+    match percent_decode(input) {
+        // The common case: no escapes, copy straight into the path buffer.
+        Some(Cow::Borrowed(text)) => Some(PathBuf::from(text)),
+        Some(Cow::Owned(text)) => Some(PathBuf::from(text)),
+        None => None,
+    }
 }
 
 /// Percent-decode one URL component, validating the decoded bytes as UTF-8.
