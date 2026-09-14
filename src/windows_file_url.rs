@@ -460,12 +460,26 @@ fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
         }
     }
     match percent_decode(cur) {
-        // No escapes: the (possibly normalized) buffer is the result.
-        Some(Cow::Borrowed(_)) => Some(match buf {
-            Some(buf) => Cow::Owned(buf),
-            None => Cow::Borrowed(path),
-        }),
-        Some(Cow::Owned(decoded)) => Some(Cow::Owned(decoded)),
+        // A decoded `?` cannot be handed to the resolver: its `\0` escape
+        // exists only for `#`, so it would be parsed as a query and a
+        // same-named prefix file could win. `?` is illegal in Windows file
+        // names anyway, so the literal name can only fail — Node fails too
+        // (ENOENT) — and failing here matches that.
+        Some(Cow::Borrowed(_)) => {
+            if cur.contains('?') {
+                return None;
+            }
+            Some(match buf {
+                Some(buf) => Cow::Owned(buf),
+                None => Cow::Borrowed(path),
+            })
+        }
+        Some(Cow::Owned(decoded)) => {
+            if decoded.contains('?') {
+                return None;
+            }
+            Some(Cow::Owned(decoded))
+        }
         None => None,
     }
 }
@@ -903,6 +917,15 @@ mod tests {
         assert_eq!(
             url_to_path("file://server\\share\\."),
             Some(PathBuf::from("\\\\server\\share\\"))
+        );
+        // A decoded `?` is rejected outright: the resolver can keep a `#`
+        // literal but not a `?`, and `?` is illegal in Windows file names.
+        assert_eq!(url_to_path("file://server/share/coll%3Fide.ts"), None);
+        assert_eq!(url_to_path("file:///C:/coll%3Fide.ts"), None);
+        // A real query is still module identity, not part of the path.
+        assert_eq!(
+            url_to_path("file://server/share/a.ts?key=%2F"),
+            Some(PathBuf::from("\\\\server\\share\\a.ts"))
         );
     }
 
