@@ -373,7 +373,13 @@ fn canonicalize_host(host: &str) -> Option<String> {
         match idna::domain_to_ascii(label) {
             Ok(ascii) if !ascii.is_empty() => out.push_str(&idna::domain_to_unicode(&ascii).0),
             Ok(_) => return None,
-            Err(_) if is_ace_label(label) => out.push_str(label),
+            // Node keeps an undecodable `xn--` label only while its payload
+            // is valid as an ordinary label; a payload carrying disallowed
+            // characters (a zero-width joiner) rejects the host. The prefix
+            // is four ASCII bytes, so `label[4..]` is a char boundary.
+            Err(_) if is_ace_label(label) && idna::domain_to_ascii(&label[4..]).is_ok() => {
+                out.push_str(label)
+            }
             Err(_) => return None,
         }
     }
@@ -837,6 +843,7 @@ mod tests {
         assert_eq!(url_to_path("file://%C2%AD/share/x.ts"), None);
         assert_eq!(url_to_path("file://xn--1.%E2%80%8D/share/x.ts"), None);
         assert_eq!(url_to_path("file://%C3%A9a%E2%80%8D/share/x.ts"), None);
+        assert_eq!(url_to_path("file://xn--a%E2%80%8D/share/x.ts"), None);
         assert_eq!(
             url_to_path("file://xn--1/share/x.ts"),
             Some(PathBuf::from("\\\\xn--1\\share\\x.ts"))
