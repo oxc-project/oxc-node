@@ -131,14 +131,11 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
             });
         }
     }
-    // `pathToFileURL` writes a non-ASCII server name as punycode, and
-    // `fileURLToPath` runs the host through IDNA to-Unicode
-    // (`domainToUnicode`) — `\\mýserver\share` round trips as
-    // `file://xn--mserver-v2a/share`. Match that, or the decoded host
-    // names a server nobody has. The URL parser also lowercases and
-    // canonicalizes the authority first, so `file://%6cocalhost/C:/…`
-    // is the local drive path just like `file://localhost/C:/…`.
-    let host = domain_to_unicode(&host);
+    // UTS #46 host canonicalization, the way the URL parser applies
+    // `to-ascii` at parse time and `fileURLToPath` maps the name back:
+    // fullwidth and compatibility characters fold to their ASCII forms and
+    // valid `xn--` labels decode to Unicode.
+    let host = canonicalize_host(&host);
     if host.eq_ignore_ascii_case("localhost") {
         // `file://localhost/…` is the local drive form: `fileURLToPath`
         // requires an absolute drive path (`file://localhost/share/…` is
@@ -355,51 +352,17 @@ fn encode_host(host: &str) -> Cow<'_, str> {
     percent_encode(host, &[])
 }
 
-/// IDNA to-Unicode for a UNC host, the conversion `fileURLToPath` applies
-/// through `domainToUnicode`: `xn--` labels are punycode-decoded, labels
-/// that do not decode are kept as-is, and non-ASCII input is untouched —
-/// the URL parser has already mapped those labels to their punycode form.
-fn domain_to_unicode(host: &str) -> Cow<'_, str> {
-    if !host.is_ascii() {
-        return Cow::Borrowed(host);
+/// UTS #46 host canonicalization for a UNC authority, applied the way the
+/// URL parser applies `to-ascii` at parse time and `fileURLToPath` maps the
+/// name back: fullwidth and compatibility characters fold to their ASCII
+/// forms and valid `xn--` labels decode to Unicode. Node is lenient about
+/// invalid hosts (`file://xn--!!!/…` keeps its spelling), so an invalid
+/// result falls back to the literal label.
+fn canonicalize_host(host: &str) -> String {
+    match idna::domain_to_ascii(host) {
+        Ok(ascii) => idna::domain_to_unicode(&ascii).0,
+        Err(_) => host.to_owned(),
     }
-    // The URL parser canonicalizes the authority to lowercase before
-    // `fileURLToPath` maps it back, so uppercase never survives.
-    let host = if host.bytes().any(|byte| byte.is_ascii_uppercase()) {
-        Cow::Owned(host.to_ascii_lowercase())
-    } else {
-        Cow::Borrowed(host)
-    };
-    let mut decoded = String::with_capacity(host.len());
-    let mut changed = false;
-    let mut first_label = true;
-    for label in host.split('.') {
-        if !first_label {
-            decoded.push('.');
-        }
-        first_label = false;
-        if label.len() > 4
-            && label[..4].eq_ignore_ascii_case("xn--")
-            && let Some(unicode) = punycode_decode(&label[4..])
-        {
-            // A-labels must decode to a name containing non-ASCII characters
-            // (RFC 5890 — an all-ASCII decode is not a valid U-label) and no
-            // DISALLOWED code points; anything else keeps the literal label,
-            // matching `domainToUnicode`.
-            if !unicode.is_ascii()
-                && !unicode.chars().any(|c| {
-                    matches!(c, '\u{0}'..='\u{1f}' | '\u{7f}'..='\u{9f}' | '\u{fdd0}'..='\u{fdef}')
-                        || (c as u32) & 0xfffe == 0xfffe
-                })
-            {
-                decoded.push_str(&unicode);
-                changed = true;
-                continue;
-            }
-        }
-        decoded.push_str(label);
-    }
-    if changed { Cow::Owned(decoded) } else { host }
 }
 
 /// WHATWG URL path normalization, applied to the percent-encoded path: a
@@ -602,97 +565,6 @@ fn encode_path(path: &str) -> Cow<'_, str> {
     percent_encode(path, b"/")
 }
 
-/// RFC 3492 punycode decode. `None` on malformed input or overflow, so a
-/// hostile host can never panic the loader — the caller falls back to the
-/// literal label.
-fn punycode_decode(input: &str) -> Option<String> {
-    const BASE: u32 = 36;
-    const TMIN: u32 = 1;
-    const TMAX: u32 = 26;
-    const INITIAL_BIAS: u32 = 72;
-    const INITIAL_N: u32 = 128;
-
-    let mut n = INITIAL_N;
-    let mut i: u32 = 0;
-    let mut bias = INITIAL_BIAS;
-    let mut output: Vec<char> = Vec::with_capacity(input.len());
-
-    // Code points before the last delimiter are copied verbatim; an
-    // absent delimiter means the whole input is the encoded section.
-    let input: Vec<char> = input.chars().collect();
-    let encoded = match input.iter().rposition(|&c| c == '-') {
-        Some(index) => {
-            output.extend_from_slice(&input[..index]);
-            &input[index + 1..]
-        }
-        None => &input[..],
-    };
-
-    let mut index = 0;
-    while index < encoded.len() {
-        let old_i = i;
-        let mut w: u32 = 1;
-        let mut k = BASE;
-        loop {
-            let digit = match encoded.get(index) {
-                Some(&c) => {
-                    index += 1;
-                    decode_digit(c)?
-                }
-                None => return None,
-            };
-            i = i.checked_add(digit.checked_mul(w)?)?;
-            let t = if k <= bias {
-                TMIN
-            } else if k >= bias + TMAX {
-                TMAX
-            } else {
-                k - bias
-            };
-            if digit < t {
-                break;
-            }
-            w = w.checked_mul(BASE - t)?;
-            k += BASE;
-        }
-        let out_len = (output.len() as u32).checked_add(1)?;
-        bias = adapt(i - old_i, out_len, old_i == 0);
-        n = n.checked_add(i / out_len)?;
-        i %= out_len;
-        output.insert(i as usize, char::from_u32(n)?);
-        i += 1;
-    }
-
-    let mut decoded = String::with_capacity(output.len());
-    decoded.extend(output);
-    Some(decoded)
-}
-
-fn decode_digit(c: char) -> Option<u32> {
-    match c {
-        '0'..='9' => Some(u32::from(c) - u32::from('0') + 26),
-        'a'..='z' => Some(u32::from(c) - u32::from('a')),
-        'A'..='Z' => Some(u32::from(c) - u32::from('A')),
-        _ => None,
-    }
-}
-
-fn adapt(mut delta: u32, num_points: u32, first: bool) -> u32 {
-    const BASE: u32 = 36;
-    const TMIN: u32 = 1;
-    const TMAX: u32 = 26;
-    const SKEW: u32 = 38;
-    const DAMP: u32 = 700;
-    delta = if first { delta / DAMP } else { delta / 2 };
-    delta += delta / num_points;
-    let mut k = 0;
-    while delta > ((BASE - TMIN) * TMAX) / 2 {
-        delta /= BASE - TMIN;
-        k += BASE;
-    }
-    k + ((BASE - TMIN + 1) * delta) / (delta + SKEW)
-}
-
 fn percent_encode<'a>(input: &'a str, extra_allowed: &[u8]) -> Cow<'a, str> {
     fn unreserved(byte: u8) -> bool {
         byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
@@ -890,6 +762,22 @@ mod tests {
             url_to_path("file://server.example.com/share/x.ts"),
             Some(PathBuf::from("\\\\server.example.com\\share\\x.ts"))
         );
+    }
+
+    #[test]
+    fn windows_hosts_pass_through_uts46_mapping() {
+        // UTS #46 canonicalization, like the URL parser applies it:
+        // fullwidth and compatibility characters fold to their ASCII forms
+        // before the localhost special case and UNC mapping.
+        assert_eq!(
+            url_to_path("file://ｌｏｃａｌｈｏｓｔ/C:/app.js"),
+            Some(PathBuf::from("C:/app.js"))
+        );
+        assert_eq!(
+            url_to_path("file://ｓｅｒｖｅｒ/share/x.ts"),
+            Some(PathBuf::from("\\\\server\\share\\x.ts"))
+        );
+        assert_eq!(url_to_path("file://℡/share/x.ts"), Some(PathBuf::from("\\\\tel\\share\\x.ts")));
     }
 
     #[test]

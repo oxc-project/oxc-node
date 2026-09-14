@@ -38,6 +38,15 @@ mimalloc-safe = { version = "0.1", features = ["skip_collect_on_exit"] }
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 mimalloc-safe = { version = "0.1", features = ["skip_collect_on_exit", "local_dynamic_tls"] }
 
+# UTS #46 host canonicalization for the Windows UNC authority handling; only
+# Windows production builds compile it. It is also a dev-dependency so the
+# `#[cfg(any(windows, test))]` module's unit tests link on every platform.
+[target.'cfg(windows)'.dependencies]
+idna = "1.1.0"
+
+[dev-dependencies]
+idna = "1.1.0"
+
 [build-dependencies]
 napi-build = "2"
 
