@@ -237,6 +237,27 @@ describe("a CommonJS package", () => {
     expect(run(root, "./entry.ts")).toContain("type-only: true true");
   });
 
+  test("`require()` completes an extensionless TypeScript specifier", () => {
+    // `module.registerHooks()` routes `require()` through the resolve hook, where
+    // `nextResolve` is Node.js' CommonJS resolver — and that resolver only completes
+    // `./dep` to `./dep.ts`, or `./sub` to `./sub/index.ts`, for extensions present in
+    // `Module._extensions`. The `pirates` hook is what puts them there, so it has to be
+    // installed before the hooks are registered. Move it after and both requires below
+    // fail with MODULE_NOT_FOUND, which nothing else here would catch.
+    const root = fixture({
+      "package.json": COMMONJS,
+      // Type annotations, so the files cannot run at all unless they were transformed.
+      "dep.ts": 'const value: string = "dep-ok";\nexports.dep = value;\n',
+      "sub/index.ts": 'const value: string = "sub-ok";\nexports.sub = value;\n',
+      "entry.ts": [
+        'const { dep } = require("./dep");',
+        'const { sub } = require("./sub");',
+        'console.log("require:", dep, sub);',
+      ].join("\n"),
+    });
+    expect(run(root, "./entry.ts")).toContain("require: dep-ok sub-ok");
+  });
+
   test("a .cts file is CommonJS by contract and never flips", () => {
     const root = fixture({
       "package.json": COMMONJS,
