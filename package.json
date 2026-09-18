@@ -16,11 +16,11 @@
     "@oxc-node/cli": "workspace:*",
     "@oxc-node/core": "workspace:*",
     "@oxc-project/runtime": "^0.150.0",
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.6.1",
     "emnapi": "^2.0.0-alpha.5",
     "lerna": "^10.0.1",
     "typescript": "^7.0.2",
     "vite-plus": "catalog:"
   },
-  "packageManager": "pnpm@12.4.1"
+  "packageManager": "pnpm@12.4.2"
 }

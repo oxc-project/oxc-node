@@ -18,4 +18,14 @@ overrides:
 verifyDepsBeforeRun: install
 
 minimumReleaseAgeExclude:
+  - "@napi-rs/*"
   - "@oxc-project/*"
+  - "@oxfmt/*"
+  - "@oxlint/*"
+  - "@oxlint-tsgolint/*"
+  - "@vitest/*"
+  - "@voidzero-dev/*"
+  - oxfmt
+  - oxlint
+  - vite-plus
+  - vitest
