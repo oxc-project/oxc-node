@@ -1203,6 +1203,25 @@ fn transform_output(
             let ext = src_path.extension().and_then(|ext| ext.to_str());
             let is_json = ext.is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
 
+            // A CommonJS result whose source is not valid UTF-8 is not source code this
+            // loader can transform: a `.node` addon resolves as `commonjs` and arrives as
+            // a binary, and a legacy CommonJS file may be latin-1. Node.js' asynchronous
+            // default load never handed those over — it returns no source for `commonjs`
+            // and lets the CommonJS machinery read the file — but the synchronous
+            // `defaultLoadSync` behind `module.registerHooks()` always reads it. Drop the
+            // bytes and defer the same way instead of failing to decode them.
+            if !is_json
+                && output.format.starts_with("commonjs")
+                && output.source.as_ref().unwrap().try_as_str().is_err()
+            {
+                tracing::debug!("Not UTF-8, deferring to the CommonJS loader {}", url);
+                return Ok(LoadFnOutput {
+                    format: output.format,
+                    source: None,
+                    response_url: Some(url),
+                });
+            }
+
             // Turning JSON into a module is not a code transform, so it happens for
             // dependencies too — `OXC_TRANSFORM_ALL` decides whether their *source* is
             // transpiled, and skipping this would hand Node.js raw JSON to run as an ES

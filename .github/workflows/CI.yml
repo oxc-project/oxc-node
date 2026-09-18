@@ -262,6 +262,9 @@ jobs:
         node:
           - "22"
           - "24"
+          # The synchronous `module.registerHooks()` path only runs from v26.2.0 up, so
+          # without a 26 job nothing here exercises it.
+          - "26"
         transform_all:
           - "true"
           - "false"
