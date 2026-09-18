@@ -1027,8 +1027,12 @@ fn json_format(context: &ResolveContext) -> &'static str {
 pub struct LoadContext {
     /// Export conditions of the relevant `package.json`
     pub conditions: Option<Vec<String>>,
-    /// The format optionally supplied by the `resolve` hook chain
-    pub format: Either<String, Null>,
+    /// The format optionally supplied by the `resolve` hook chain. Node.js passes it as
+    /// `undefined`, not `null`, when the chain reported none — a `.node` or `.wasm` file
+    /// resolved without its flag, any extension Node.js does not know — and a required
+    /// field would reject the whole context with "Missing field `format`" instead of
+    /// letting Node.js raise its own `ERR_UNKNOWN_FILE_EXTENSION`.
+    pub format: Option<Either<String, Null>>,
     /// An object whose key-value pairs represent the assertions for the module to import
     pub import_attributes: HashMap<String, String>,
 }
@@ -1055,7 +1059,9 @@ pub fn load<'env>(
     tracing::debug!(url = ?url, context = ?context, "load");
     if url.starts_with("data:") || {
         match context.format {
-            Either::A(ref format) => format == "builtin" || format == "json" || format == "wasm",
+            Some(Either::A(ref format)) => {
+                format == "builtin" || format == "json" || format == "wasm"
+            }
             _ => true,
         }
     } {
@@ -1194,7 +1200,13 @@ fn transform_output(
                 return Ok(loaded);
             }
             tracing::debug!("No source code to transform {}", url);
-            Ok(LoadFnOutput { format: output.format, source: None, response_url: Some(url) })
+            // The `null` Node.js handed over is handed back as-is: its `addon`
+            // translator asserts `source === null`, and an `undefined` fails it.
+            Ok(LoadFnOutput {
+                format: output.format,
+                source: Some(Either4::D(Null)),
+                response_url: Some(url),
+            })
         }
         Some(Either4::A(_) | Either4::B(_) | Either4::C(_)) => {
             // `url` is a URL, so a `?query` or `#fragment` has to be stripped before it can
@@ -1210,14 +1222,16 @@ fn transform_output(
             // and lets the CommonJS machinery read the file — but the synchronous
             // `defaultLoadSync` behind `module.registerHooks()` always reads it. Drop the
             // bytes and defer the same way instead of failing to decode them.
+            // `commonjs-typescript` is not deferred: Node.js' type-stripping translator
+            // needs the source, and handing it `null` is an invalid return shape.
             if !is_json
-                && output.format.starts_with("commonjs")
+                && output.format == "commonjs"
                 && output.source.as_ref().unwrap().try_as_str().is_err()
             {
                 tracing::debug!("Not UTF-8, deferring to the CommonJS loader {}", url);
                 return Ok(LoadFnOutput {
                     format: output.format,
-                    source: None,
+                    source: Some(Either4::D(Null)),
                     response_url: Some(url),
                 });
             }

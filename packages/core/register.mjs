@@ -103,8 +103,11 @@ function load(url, context, nextLoad) {
   // `.cts` entry gets reported at the transformed position rather than the original one.
   // Asking `oxcLoad` first is what keeps a CommonJS-reported file that actually contains
   // ESM syntax running as an ES module. `commonjs-typescript` — Node.js' own format for a
-  // `.ts` file it strips types from — belongs on that same path, hence the prefix test.
-  if (result.format.startsWith("commonjs")) {
+  // `.ts` file it strips types from — is not deferred, because that translator needs the
+  // source and rejects `null`; it is passed through untouched so Node.js reports its own
+  // error (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`) for a `.ts` dependency instead
+  // of one blaming the hook.
+  if (result.format === "commonjs") {
     // A null source is what `module.register()`'s asynchronous default load returned for
     // every CommonJS module, and it is the one shape that keeps `require()` inside such a
     // module working on every runtime: a source-bearing result made Node.js short-circuit
