@@ -29,8 +29,14 @@ export declare function load(url: string, context: LoadContext, nextLoad: (arg0:
 export interface LoadContext {
   /** Export conditions of the relevant `package.json` */
   conditions?: Array<string>
-  /** The format optionally supplied by the `resolve` hook chain */
-  format: string | null
+  /**
+   * The format optionally supplied by the `resolve` hook chain. Node.js passes it as
+   * `undefined`, not `null`, when the chain reported none — a `.node` or `.wasm` file
+   * resolved without its flag, any extension Node.js does not know — and a required
+   * field would reject the whole context with "Missing field `format`" instead of
+   * letting Node.js raise its own `ERR_UNKNOWN_FILE_EXTENSION`.
+   */
+  format?: string | null
   /** An object whose key-value pairs represent the assertions for the module to import */
   importAttributes: Record<string, string>
 }

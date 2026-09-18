@@ -1027,8 +1027,12 @@ fn json_format(context: &ResolveContext) -> &'static str {
 pub struct LoadContext {
     /// Export conditions of the relevant `package.json`
     pub conditions: Option<Vec<String>>,
-    /// The format optionally supplied by the `resolve` hook chain
-    pub format: Either<String, Null>,
+    /// The format optionally supplied by the `resolve` hook chain. Node.js passes it as
+    /// `undefined`, not `null`, when the chain reported none — a `.node` or `.wasm` file
+    /// resolved without its flag, any extension Node.js does not know — and a required
+    /// field would reject the whole context with "Missing field `format`" instead of
+    /// letting Node.js raise its own `ERR_UNKNOWN_FILE_EXTENSION`.
+    pub format: Option<Either<String, Null>>,
     /// An object whose key-value pairs represent the assertions for the module to import
     pub import_attributes: HashMap<String, String>,
 }
@@ -1055,7 +1059,9 @@ pub fn load<'env>(
     tracing::debug!(url = ?url, context = ?context, "load");
     if url.starts_with("data:") || {
         match context.format {
-            Either::A(ref format) => format == "builtin" || format == "json" || format == "wasm",
+            Some(Either::A(ref format)) => {
+                format == "builtin" || format == "json" || format == "wasm"
+            }
             _ => true,
         }
     } {

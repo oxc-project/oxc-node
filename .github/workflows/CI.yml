@@ -320,9 +320,15 @@ jobs:
         node:
           - "22"
           - "24"
+          # The synchronous `module.registerHooks()` path only runs from v26.2.0 up, so
+          # without a 26 job no Linux target exercises it.
+          - "26"
         exclude:
           - target: armv7-unknown-linux-gnueabihf
             node: "24"
+          # `node:26-slim` ships no arm/v7 image either.
+          - target: armv7-unknown-linux-gnueabihf
+            node: "26"
     # Node.js on qemu segfaults on s390x and arm64v8 when using 24.04
     # See also https://github.com/actions/runner-images/issues/11471
     runs-on: ${{ contains(matrix.target, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
