@@ -53,24 +53,30 @@ addHook(
  *
  * `module.register()` never showed `require()` to the hooks; `module.registerHooks()`
  * does. Those requests stay on Node.js' own CommonJS resolution and the `pirates` hook
- * above — exactly where they were before — because the CommonJS `resolve`/`load`
- * context carries no `importAttributes`, which both `createResolve` and `load` require
- * and reject the request without. Node.js resolves them correctly on its own: the
- * `pirates` hook registers the TypeScript extensions in `Module._extensions`, which is
- * what lets its CommonJS resolver complete `require('./foo')` to `./foo.ts`.
+ * above — exactly where they were before. Node.js resolves them correctly on its own:
+ * the `pirates` hook registers the TypeScript extensions in `Module._extensions`, which
+ * is what lets its CommonJS resolver complete `require('./foo')` to `./foo.ts`.
  *
- * @param {readonly string[] | undefined} conditions
+ * The discriminator is `importAttributes`, the field that decides whether the native
+ * hooks can run at all: `createResolve` and `load` both take it as a required property
+ * and reject a context without it. A CommonJS context never carries it, an ESM context
+ * always does — even when empty. `conditions` cannot be used for this: `--conditions`
+ * appends its values to *every* request, so `--conditions=require` would send imports
+ * down the CommonJS path (`ERR_MODULE_NOT_FOUND` for an extensionless specifier) and
+ * `--conditions=import` would send `require()` down the ESM one.
+ *
+ * @param {{ importAttributes?: Record<string, string> } | undefined} context
  * @returns {boolean}
  */
-function isCommonJsRequire(conditions) {
-  return conditions !== undefined && conditions.includes("require");
+function isCommonJsRequire(context) {
+  return context?.importAttributes === undefined;
 }
 
 /**
  * @type {import('node:module').ResolveHook}
  */
 function resolve(specifier, context, nextResolve) {
-  if (isCommonJsRequire(context?.conditions)) {
+  if (isCommonJsRequire(context)) {
     return nextResolve(specifier, context);
   }
   return createResolve(
@@ -87,18 +93,23 @@ function resolve(specifier, context, nextResolve) {
  * @type {import('node:module').LoadHook}
  */
 function load(url, context, nextLoad) {
-  if (isCommonJsRequire(context?.conditions)) {
+  if (isCommonJsRequire(context)) {
     return nextLoad(url, context);
   }
   const result = oxcLoad(url, context, nextLoad);
-  // Anything oxc-node itself settles on as CommonJS is compiled by the `pirates` hook
-  // above, whose inline source map is the accurate one. Returning the transformed
-  // source from here instead costs stack trace precision: a throw in a `.cts` entry
-  // gets reported at the transformed position rather than the original one. Asking
-  // `oxcLoad` first is what keeps a CommonJS-reported file that actually contains ESM
-  // syntax running as an ES module.
-  if (result.format === "commonjs") {
-    return nextLoad(url, context);
+  // Anything oxc-node itself settles on as CommonJS is left to the CommonJS machinery,
+  // which compiles it through the `pirates` hook above and its accurate inline source
+  // map. Returning source from here instead costs stack trace precision: a throw in a
+  // `.cts` entry gets reported at the transformed position rather than the original one.
+  // Asking `oxcLoad` first is what keeps a CommonJS-reported file that actually contains
+  // ESM syntax running as an ES module. `commonjs-typescript` — Node.js' own format for a
+  // `.ts` file it strips types from — belongs on that same path, hence the prefix test.
+  if (result.format.startsWith("commonjs")) {
+    // A null source is what `module.register()`'s asynchronous default load returned for
+    // every CommonJS module, and it is the one shape that keeps `require()` inside such a
+    // module working on every runtime: a source-bearing result made Node.js short-circuit
+    // it incorrectly until https://github.com/nodejs/node/pull/62920.
+    return { format: result.format, source: null, responseURL: result.responseURL ?? url };
   }
   return result;
 }
@@ -115,11 +126,15 @@ function load(url, context, nextLoad) {
  *   provide an export named 'jsx'". Fixed in v24.5.0, backported to v22.19.0, and never
  *   backported to the end-of-life 23.x line.
  * - Until https://github.com/nodejs/node/pull/62920 `require()` inside an imported
- *   CommonJS module short-circuited incorrectly, so a `.ts` entry point in a CommonJS
- *   package could not `require()` its own files. Fixed in v26.2.0.
+ *   CommonJS module short-circuited incorrectly whenever a synchronous load hook handed
+ *   back source for it, so a `.ts` entry point in a CommonJS package could not
+ *   `require()` its own files. Fixed in v26.2.0. The `load` hook above never returns
+ *   source for CommonJS, so this defect does not reach it — v26.2.0 is kept as the floor
+ *   anyway, because it is the first release where the synchronous hooks are complete
+ *   regardless of what a hook returns, and every runtime below it keeps exactly the
+ *   behaviour it has today.
  *
- * v26.2.0 is therefore the first release where the synchronous hooks cover both the ESM
- * and the CommonJS paths. Below it `module.register()` is still the only option.
+ * Below v26.2.0 `module.register()` therefore stays in use, deprecation warning included.
  *
  * @returns {boolean}
  */

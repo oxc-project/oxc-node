@@ -241,9 +241,9 @@ describe("a CommonJS package", () => {
     // `module.registerHooks()` routes `require()` through the resolve hook, where
     // `nextResolve` is Node.js' CommonJS resolver — and that resolver only completes
     // `./dep` to `./dep.ts`, or `./sub` to `./sub/index.ts`, for extensions present in
-    // `Module._extensions`. The `pirates` hook is what puts them there, so it has to be
-    // installed before the hooks are registered. Move it after and both requires below
-    // fail with MODULE_NOT_FOUND, which nothing else here would catch.
+    // `Module._extensions`. The `pirates` hook is what puts them there, so dropping it
+    // makes both requires below fail with MODULE_NOT_FOUND, which nothing else here
+    // would catch.
     const root = fixture({
       "package.json": COMMONJS,
       // Type annotations, so the files cannot run at all unless they were transformed.
