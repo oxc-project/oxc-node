@@ -58,7 +58,7 @@ function fixture(files: Record<string, string | Uint8Array>): string {
   return root;
 }
 
-function run(root: string, args: string[]): string {
+function spawn(root: string, args: string[]): { status: number | null; output: string } {
   const result = spawnSync(
     process.execPath,
     // A bare specifier resolves through the symlinked node_modules on every platform,
@@ -79,7 +79,12 @@ function run(root: string, args: string[]): string {
   );
   const output = `${result.stdout}${result.stderr}`;
   expect(result.error, result.error?.message).toBeFalsy();
-  expect(result.status, output).toBe(0);
+  return { status: result.status, output };
+}
+
+function run(root: string, args: string[]): string {
+  const { status, output } = spawn(root, args);
+  expect(status, output).toBe(0);
   return output;
 }
 
@@ -119,6 +124,53 @@ describe("a source that is not UTF-8", () => {
       ].join("\n"),
     });
     expect(run(root, ["./entry.mts"])).toContain("latin1: 4");
+  });
+});
+
+describe("a source Node.js hands over without bytes", () => {
+  // Not specific to the synchronous hooks — the asynchronous default load returned the
+  // same `null` — but it lives here for the fixture helpers. A `.node` addon under
+  // node_modules resolves without a format, so Node.js decides `addon` and hands the load
+  // hook `source: null`. Its `addon` translator asserts exactly `null` on the way back:
+  // an `undefined`, which is what a dropped `Option` serialised to, fails with
+  // ERR_INVALID_RETURN_PROPERTY_VALUE.
+  const addon = readdirSync(CORE).find((name) => name.endsWith(".node"));
+
+  test.skipIf(addon === undefined)("an addon imported from a dependency still loads", () => {
+    const root = fixture({
+      "package.json": COMMONJS,
+      "node_modules/addon-dep/package.json": JSON.stringify({
+        name: "addon-dep",
+        main: "addon.node",
+      }),
+      "node_modules/addon-dep/addon.node": readFileSync(join(CORE, addon!)),
+      "entry.mts": [
+        'import addon from "addon-dep";',
+        'console.log("addon:", typeof addon.transform);',
+      ].join("\n"),
+    });
+    // Unflagged on v26; v22 and v24 need the flag, and v26 still accepts it.
+    expect(run(root, ["--experimental-addon-modules", "./entry.mts"])).toContain("addon: function");
+  });
+
+  test("a TypeScript dependency gets Node.js' own error, not one blaming the hook", () => {
+    // `.cts` under node_modules is `commonjs-typescript` to Node.js, a format whose
+    // translator needs the source: deferring it with `source: null` like plain `commonjs`
+    // is an invalid return shape. Node.js refuses type stripping in node_modules on every
+    // path, so what has to hold is that *its* error is the one reported.
+    const root = fixture({
+      "package.json": COMMONJS,
+      "node_modules/ts-dep/package.json": JSON.stringify({
+        name: "ts-dep",
+        exports: "./index.cts",
+      }),
+      "node_modules/ts-dep/index.cts": "const c: number = 3;\nexport { c };\n",
+      "entry.mts": ['import { c } from "ts-dep";', 'console.log("cts:", c);'].join("\n"),
+    });
+    const { status, output } = spawn(root, ["./entry.mts"]);
+    expect(status, output).not.toBe(0);
+    expect(output).toContain("ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING");
+    expect(output).not.toContain("ERR_INVALID_RETURN_PROPERTY_VALUE");
   });
 });
 
