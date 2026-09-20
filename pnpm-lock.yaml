@@ -231,8 +231,8 @@ importers:
         specifier: ^6.1.4
         version: 6.2.0
       typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
+        specifier: ^7.0.0
+        version: 7.0.2
 
   packages/cli:
     dependencies:
