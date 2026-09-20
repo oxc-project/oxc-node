@@ -164,7 +164,7 @@ jobs:
           version: 0.16.0
           use-cache: false
       - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        uses: taiki-e/install-action@76c2e6406e52637deed7160d77bded76bd83e06e # v2.87.14
         if: ${{ contains(matrix.settings.target, 'musl') || contains(matrix.settings.target, 'freebsd') }}
         with:
           tool: cargo-zigbuild
@@ -217,7 +217,7 @@ jobs:
           name: bindings-x86_64-unknown-freebsd
           path: ./packages/core
       - name: Start VM
-        uses: cross-platform-actions/action@faa0c6197e94aacf1c5956460152c8380d3560a5 # v1.5.0
+        uses: cross-platform-actions/action@e0b9770014ba65d5e0815f15b74031c3a635f641 # v1.6.0
         with:
           operating_system: freebsd
           version: "15.0"
@@ -384,7 +384,7 @@ jobs:
         run: pnpm --filter=@oxc-node/core export-oxc-runtime
       - name: Set up QEMU
         if: ${{ !contains(matrix.target, 'aarch64') }}
-        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: all
           image: tonistiigi/binfmt:qemu-v10.0.4
