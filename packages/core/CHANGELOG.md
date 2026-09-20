@@ -7,9 +7,8 @@ See [Conventional Commits](https://conventionalcommits.org) for commit guideline
 
 ### Bug Fixes
 
-* hand Node.js' null source back as null; cover the load hook's dependency and addon edge cases ([#767](https://github.com/oxc-project/oxc-node/issues/767)) ([09a6bfb](https://github.com/oxc-project/oxc-node/commit/09a6bfb1aeb117e828659d9d9e48cd5f28c7f6f3)), closes [#764](https://github.com/oxc-project/oxc-node/issues/764) [#764](https://github.com/oxc-project/oxc-node/issues/764) [#764](https://github.com/oxc-project/oxc-node/issues/764)
-* register module hooks synchronously on Node.js >= 26.2.0 ([#764](https://github.com/oxc-project/oxc-node/issues/764)) ([ab4ac78](https://github.com/oxc-project/oxc-node/commit/ab4ac78cd532de1d3592d5a7a82b5af4b8e94532)), closes [#759](https://github.com/oxc-project/oxc-node/issues/759)
-
+- hand Node.js' null source back as null; cover the load hook's dependency and addon edge cases ([#767](https://github.com/oxc-project/oxc-node/issues/767)) ([09a6bfb](https://github.com/oxc-project/oxc-node/commit/09a6bfb1aeb117e828659d9d9e48cd5f28c7f6f3)), closes [#764](https://github.com/oxc-project/oxc-node/issues/764) [#764](https://github.com/oxc-project/oxc-node/issues/764) [#764](https://github.com/oxc-project/oxc-node/issues/764)
+- register module hooks synchronously on Node.js >= 26.2.0 ([#764](https://github.com/oxc-project/oxc-node/issues/764)) ([ab4ac78](https://github.com/oxc-project/oxc-node/commit/ab4ac78cd532de1d3592d5a7a82b5af4b8e94532)), closes [#759](https://github.com/oxc-project/oxc-node/issues/759)
 
 ## [0.1.2](https://github.com/oxc-project/oxc-node/compare/v0.1.1...v0.1.2) (2026-09-14)
 
