@@ -15,7 +15,7 @@ crate-type = ["cdylib", "rlib"]
 memchr = "2"
 napi = { version = "3.12.2", default-features = false, features = ["serde-json", "napi3"] }
 napi-derive = { version = "3.6.3", default-features = false, features = ["type-def"] }
-oxc = { version = "0.150.0", features = [
+oxc = { version = "0.151.0", features = [
   "codegen",
   "transformer",
   "semantic",
