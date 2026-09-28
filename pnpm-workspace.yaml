@@ -9,7 +9,7 @@ allowBuilds:
 
 catalog:
   "@napi-rs/cli": 3.10.5
-  vite-plus: 0.3.3
+  vite-plus: 1.0.0
 
 overrides:
   "@emnapi/core": ^2.0.0-alpha.5
