@@ -22,7 +22,7 @@ oxc = { version = "0.151.0", features = [
   "regular_expression",
 ] }
 oxc_resolver = { version = "11.24.3" }
-oxc_sourcemap = "8"
+oxc_sourcemap = "9"
 phf = { version = "0.14", features = ["macros"] }
 serde_json = "1"
 simdutf8 = "0.1"
