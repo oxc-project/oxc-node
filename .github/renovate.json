@@ -7,6 +7,11 @@
       "matchDepNames": ["oxc", "oxc_resolver", "@oxc-project/runtime"],
       "groupName": "oxc",
       "schedule": ["at any time"]
+    },
+    {
+      "matchFileNames": ["packages/bench/package.json"],
+      "matchDepNames": ["typescript"],
+      "allowedVersions": "<7"
     }
   ]
 }
