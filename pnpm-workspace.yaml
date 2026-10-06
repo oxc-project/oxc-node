@@ -16,6 +16,9 @@ overrides:
   "@emnapi/runtime": ^2.0.0-alpha.5
 
 verifyDepsBeforeRun: install
+# CI installs on the host and tests foreign arch/libc targets in containers,
+# so --force must fetch optional native deps for all platforms.
+forceIgnoresPlatform: true
 
 minimumReleaseAgeExclude:
   - "@napi-rs/*"
