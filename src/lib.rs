@@ -736,7 +736,13 @@ fn transform_program<'a>(
                     .and_then(|c| c.rewrite_relative_import_extensions)
                     .unwrap_or_default()
                     .then_some(RewriteExtensionsMode::Rewrite),
-                only_remove_type_imports: false,
+                // `verbatimModuleSyntax` makes `tsc` (and Node's own type stripping)
+                // emit every non-`type` import verbatim, even when the binding is
+                // unused — the module's side effects still have to run. That is
+                // exactly oxc's "only remove type imports" mode.
+                only_remove_type_imports: compiler_options
+                    .and_then(|c| c.verbatim_module_syntax)
+                    .unwrap_or(false),
                 // With `[[Set]]` semantics, `tsc` also drops class fields that have no
                 // initializer instead of assigning `undefined` through the prototype chain
                 // (which would fire an inherited setter). oxc only does that when asked.
