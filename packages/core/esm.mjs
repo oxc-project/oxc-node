@@ -43,12 +43,6 @@ const HELPER_RESOLVERS = Symbol.for("@oxc-node/core:helperResolvers");
 const helperResolvers = (globalThis[HELPER_RESOLVERS] ??= {});
 helperResolvers[HELPER_TAG] = (subpath) => requireHelper.resolve(`@oxc-node/core/${subpath}`);
 
-function isHelperSpecifier(specifier) {
-  return (
-    specifier.startsWith(HELPER_SPECIFIER_PREFIX) || specifier.startsWith(HELPER_TAGGED_PREFIX)
-  );
-}
-
 function resolveHelperPath(specifier) {
   if (specifier.startsWith(HELPER_TAGGED_PREFIX)) {
     const helperIndex = specifier.indexOf("/helpers/");
@@ -75,7 +69,7 @@ function resolveHelperPath(specifier) {
  * @type {import('node:module').ResolveHook}
  */
 function resolve(specifier, context, nextResolve) {
-  if (isHelperSpecifier(specifier)) {
+  if (specifier.startsWith(HELPER_TAGGED_PREFIX)) {
     // The resolver table runs Node.js' own `createRequire` lookups, never the hook
     // chain, so an earlier-registered copy's resolve hook cannot re-claim a specifier.
     // The resolved URL is still passed down the chain so format detection and any
@@ -88,6 +82,26 @@ function resolve(specifier, context, nextResolve) {
     // The tagged copy is not registered here — let the specifier fail (or resolve)
     // the way it would have before the patch.
     return nextResolve(specifier, context);
+  }
+  if (specifier.startsWith(HELPER_SPECIFIER_PREFIX)) {
+    // An untagged specifier was emitted by an older copy — an inner hook in this chain
+    // may be that very copy and will resolve it to itself — or by the public
+    // `transform` API inside a user project, whose own resolution goes first too.
+    // `module.register()` hooks are asynchronous, so the fallback waits on a
+    // rejected promise instead of a thrown error.
+    const fallback = (error) => {
+      const resolved = resolveHelperPath(specifier);
+      if (resolved !== undefined) {
+        return nextResolve(pathToFileURL(resolved).href, context);
+      }
+      throw error;
+    };
+    try {
+      const result = nextResolve(specifier, context);
+      return result && typeof result.then === "function" ? result.then((r) => r, fallback) : result;
+    } catch (error) {
+      return fallback(error);
+    }
   }
   return createResolve(
     {

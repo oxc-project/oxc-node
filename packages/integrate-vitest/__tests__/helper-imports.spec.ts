@@ -85,6 +85,10 @@ function runRaw(root: string, entry: string, imports: string[] = [REGISTER_URL.h
     env: {
       ...process.env,
       NODE_OPTIONS: undefined,
+      // Vitest exports the workspace's node_modules through NODE_PATH, which would
+      // make project-scoped resolution find the repo's own @oxc-node/core from a
+      // temp project.
+      NODE_PATH: undefined,
       // An explicit tsconfig from the environment wins over every fixture's own
       // tsconfig.json, so inheriting one would silently rewrite the matrix — or
       // neutralise it entirely if it also turns helper injection off.
@@ -325,12 +329,15 @@ describe.skipIf(!hasNativeBinding)("two registered copies of the loader", () => 
       pathToFileURL(join(copyB, "register.mjs")).href,
     ];
 
-    // CommonJS specifiers carry the `register.mjs` tag, ESM ones the `esm.mjs` tag —
-    // each realm registered its own resolver under its own tag.
+    // CommonJS specifiers carry the `register.mjs` tag. ESM ones carry the `esm.mjs`
+    // tag under `module.register`, but on Node.js ≥26.2 `register.mjs` serves both
+    // realms through `registerHooks`, so its tag is used there too.
     const tagA = moduleTag(join(copyA, "register.mjs"));
     const tagB = moduleTag(join(copyB, "register.mjs"));
-    const tagAEsm = moduleTag(join(copyA, "esm.mjs"));
-    const tagBEsm = moduleTag(join(copyB, "esm.mjs"));
+    const [nodeMajor, nodeMinor] = process.versions.node.split(".", 2).map(Number);
+    const syncHooks = nodeMajor > 26 || (nodeMajor === 26 && nodeMinor >= 2);
+    const tagAEsm = moduleTag(join(copyA, syncHooks ? "register.mjs" : "esm.mjs"));
+    const tagBEsm = moduleTag(join(copyB, syncHooks ? "register.mjs" : "esm.mjs"));
 
     writeFileSync(
       join(root, "entry.cts"),

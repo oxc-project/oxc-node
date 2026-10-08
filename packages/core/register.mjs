@@ -90,17 +90,38 @@ const resolveFilename = Module._resolveFilename;
 const HELPER_RESOLVING = Symbol.for("@oxc-node/core:resolvingHelper");
 Module._resolveFilename = function (request, parent, isMain, options) {
   if (!globalThis[HELPER_RESOLVING] && isHelperSpecifier(request)) {
-    globalThis[HELPER_RESOLVING] = true;
-    try {
-      const resolved = resolveHelperPath(request);
-      if (resolved !== undefined) {
-        return resolved;
+    if (request.startsWith(HELPER_TAGGED_PREFIX)) {
+      globalThis[HELPER_RESOLVING] = true;
+      try {
+        const resolved = resolveHelperPath(request);
+        if (resolved !== undefined) {
+          return resolved;
+        }
+        // The tagged copy is not registered here — fall through to Node.js' own
+        // resolution so the request fails (or succeeds) as it would have before
+        // the patch.
+      } finally {
+        globalThis[HELPER_RESOLVING] = false;
       }
-      // The tagged copy is not registered here — fall back to Node.js' own
-      // resolution so the request fails (or succeeds) exactly as it would have
-      // before the patch.
-    } finally {
-      globalThis[HELPER_RESOLVING] = false;
+    } else {
+      // An untagged specifier was emitted by an older copy, which cannot be named,
+      // or by the public `transform` API running inside a user project — so the
+      // project-scoped resolution a `require` would normally do goes first, and
+      // registered copies supply it only when the project itself cannot.
+      try {
+        return resolveFilename.call(this, request, parent, isMain, options);
+      } catch {
+        globalThis[HELPER_RESOLVING] = true;
+        try {
+          const resolved = resolveHelperPath(request);
+          if (resolved !== undefined) {
+            return resolved;
+          }
+        } finally {
+          globalThis[HELPER_RESOLVING] = false;
+        }
+        throw new Error(`Cannot find module '${request}'`);
+      }
     }
   }
   return resolveFilename.call(this, request, parent, isMain, options);
@@ -167,7 +188,7 @@ function resolve(specifier, context, nextResolve) {
     // `Module._resolveFilename` patch above claims the helper specifiers.
     return nextResolve(specifier, context);
   }
-  if (isHelperSpecifier(specifier)) {
+  if (specifier.startsWith(HELPER_TAGGED_PREFIX)) {
     // The resolver table runs Node.js' own `createRequire` lookups, never the hook
     // chain, so an earlier-registered copy's resolve hook cannot re-claim a specifier.
     // The resolved URL is still passed down the chain so format detection and any
@@ -180,6 +201,20 @@ function resolve(specifier, context, nextResolve) {
     // The tagged copy is not registered here — let the specifier fail (or resolve)
     // the way it would have before the patch.
     return nextResolve(specifier, context);
+  }
+  if (specifier.startsWith(HELPER_SPECIFIER_PREFIX)) {
+    // An untagged specifier was emitted by an older copy — an inner hook in this chain
+    // may be that very copy and will resolve it to itself — or by the public
+    // `transform` API inside a user project, whose own resolution goes first too.
+    try {
+      return nextResolve(specifier, context);
+    } catch (error) {
+      const resolved = resolveHelperPath(specifier);
+      if (resolved !== undefined) {
+        return nextResolve(pathToFileURL(resolved).href, context);
+      }
+      throw error;
+    }
   }
   return createResolve(
     {
