@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.1.5](https://github.com/oxc-project/oxc-node/compare/v0.1.4...v0.1.5) (2026-10-08)
+
+### Bug Fixes
+
+* **core:** evaluate enum member values for the transformer ([#802](https://github.com/oxc-project/oxc-node/issues/802)) ([70d16e1](https://github.com/oxc-project/oxc-node/commit/70d16e180bc7a62c3587d3c03c5f994fd390dd98)), closes [#795](https://github.com/oxc-project/oxc-node/issues/795) [oxc-project/oxc#21667](https://github.com/oxc-project/oxc/issues/21667) [#795](https://github.com/oxc-project/oxc-node/issues/795)
+* **core:** honor tsconfig `verbatimModuleSyntax` ([#800](https://github.com/oxc-project/oxc-node/issues/800)) ([03f8086](https://github.com/oxc-project/oxc-node/commit/03f808677a374866b4d7f39256e69b1f615216fb)), closes [#798](https://github.com/oxc-project/oxc-node/issues/798)
+* **core:** map tsconfig `compilerOptions.jsx` values to JsxOptions ([#799](https://github.com/oxc-project/oxc-node/issues/799)) ([6aaa39a](https://github.com/oxc-project/oxc-node/commit/6aaa39ac98182ec08970949d49ae61baa5a45b3a)), closes [#796](https://github.com/oxc-project/oxc-node/issues/796)
+* **core:** resolve helper imports against the loader, not the user file ([#803](https://github.com/oxc-project/oxc-node/issues/803)) ([cfc5900](https://github.com/oxc-project/oxc-node/commit/cfc5900349f29d4be7fd12353cecc17caba74e22)), closes [#794](https://github.com/oxc-project/oxc-node/issues/794) [#794](https://github.com/oxc-project/oxc-node/issues/794)
+* **core:** run `.jsx`/`.tsx` in `type: module` packages as ES modules ([#801](https://github.com/oxc-project/oxc-node/issues/801)) ([28ccab0](https://github.com/oxc-project/oxc-node/commit/28ccab0e831df9e2d2e1e1acc00901ded2ecbde6)), closes [#797](https://github.com/oxc-project/oxc-node/issues/797) [#800](https://github.com/oxc-project/oxc-node/issues/800) [#797](https://github.com/oxc-project/oxc-node/issues/797)
+
+
 ## [0.1.4](https://github.com/oxc-project/oxc-node/compare/v0.1.3...v0.1.4) (2026-10-06)
 
 **Note:** Version bump only for package oxc-node
