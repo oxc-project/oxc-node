@@ -43,7 +43,7 @@ function fixture(files: Record<string, string>): string {
   return root;
 }
 
-function run(root: string, entry: string): string {
+function run(root: string, entry: string, extraEnv: Record<string, string> = {}): string {
   const result = spawnSync(
     process.execPath,
     // A bare specifier resolves through the symlinked node_modules on every
@@ -58,6 +58,7 @@ function run(root: string, entry: string): string {
         OXC_LOG: undefined,
         TS_NODE_PROJECT: undefined,
         OXC_TSCONFIG_PATH: undefined,
+        ...extraEnv,
       },
       timeout: 30_000,
     },
@@ -267,4 +268,21 @@ describe("resolved module format (issue #797)", () => {
       expect([undefined, null, "commonjs"]).toContain(emitResolve(root, dep).format);
     },
   );
+
+  test("OXC_TRANSFORM_ALL runs a .tsx dependency in a type:module node_modules package as ESM", () => {
+    // The resolve hook normally defers `node_modules` paths to Node.js' own
+    // format lookup, so a `.tsx` dependency died with ERR_UNKNOWN_FILE_EXTENSION
+    // before `load` could transform it. With OXC_TRANSFORM_ALL set the hook
+    // answers the format, the dep transforms, and it runs as an ES module.
+    const root = fixture({
+      "package.json": TYPE_MODULE,
+      "entry.ts": `await import("dep/index.tsx");\n`,
+      "node_modules/dep/package.json":
+        '{ "name": "dep", "type": "module", "main": "./index.tsx" }\n',
+      "node_modules/dep/index.tsx": `${probe("dep/index.tsx")}\n`,
+    });
+    expect(run(root, "./entry.ts", { OXC_TRANSFORM_ALL: "1" })).toContain(
+      "dep/index.tsx: module undefined undefined",
+    );
+  });
 });

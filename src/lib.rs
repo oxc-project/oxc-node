@@ -1006,7 +1006,26 @@ pub fn create_resolve<'env>(
         tracing::debug!(resolution = ?resolution, "resolved");
         let p = resolution.path();
         let url = oxc_resolved_path_to_url(&resolution);
-        if !p.to_str().map(|p| p.contains(NODE_MODULES_PATH)).unwrap_or(false) {
+        // `node_modules` files keep the `null` format so Node.js delegates `load`
+        // to its own implementation — the load hook cannot report "skip"
+        // otherwise (see #189). The exception: under `OXC_TRANSFORM_ALL`, files
+        // Node.js could never classify (`.jsx`/`.tsx`, other registered source
+        // extensions, extensionless) need our format or they die with
+        // `ERR_UNKNOWN_FILE_EXTENSION` before `load` can transform them. Formats
+        // Node.js does classify (`.ts`/`.cts`/`.mts`, `.wasm`, addons) stay
+        // deferred either way.
+        let transformable_dependency = || {
+            env::var_os("OXC_TRANSFORM_ALL").is_some()
+                && p.to_str().map(|p| p.contains(NODE_MODULES_PATH)).unwrap_or(false)
+                && match p.extension().and_then(|ext| ext.to_str()) {
+                    None => true,
+                    Some("jsx" | "tsx" | "es" | "es6") => true,
+                    Some(_) => false,
+                }
+        };
+        if !p.to_str().map(|p| p.contains(NODE_MODULES_PATH)).unwrap_or(false)
+            || transformable_dependency()
+        {
             let format = {
                 let ext = p.extension().and_then(|ext| ext.to_str());
 
