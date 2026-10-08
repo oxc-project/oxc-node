@@ -5,7 +5,7 @@ import { addHook } from "pirates";
 import { OxcTransformer, createResolve, initTracing, load as oxcLoad } from "./index.js";
 
 // Destructure from NodeModule namespace to support older Node.js versions
-const { register, registerHooks, setSourceMapsSupport } = NodeModule;
+const { Module, createRequire, register, registerHooks, setSourceMapsSupport } = NodeModule;
 
 const DEFAULT_EXTENSIONS = new Set([
   ".js",
@@ -19,6 +19,34 @@ const DEFAULT_EXTENSIONS = new Set([
   ".es6",
   ".es",
 ]);
+
+const HELPER_SPECIFIER_PREFIX = "@oxc-node/core/helpers/";
+
+// The transformer's helpers are versioned with this package, so the specifiers it
+// emits always resolve against this copy — a user file is not expected to have
+// `@oxc-node/core` in scope at all (global install, `node --import`).
+const requireHelper = createRequire(import.meta.url);
+
+// `require()` never reaches `module.register()`'s hooks, and `registerHooks()`
+// forwards it to Node.js' own CommonJS resolution, which funnels through
+// `Module._resolveFilename` — patching it is the one mechanism that covers every
+// supported runtime.
+const resolveFilename = Module._resolveFilename;
+// `requireHelper.resolve()` re-enters this hook through `Module._resolveFilename`;
+// the flag lets that inner call fall through to the original resolver, where
+// `createRequire`'s synthetic parent resolves the specifier from this package.
+let resolvingHelper = false;
+Module._resolveFilename = function (request, parent, isMain, options) {
+  if (!resolvingHelper && request.startsWith(HELPER_SPECIFIER_PREFIX)) {
+    resolvingHelper = true;
+    try {
+      return requireHelper.resolve(request);
+    } finally {
+      resolvingHelper = false;
+    }
+  }
+  return resolveFilename.call(this, request, parent, isMain, options);
+};
 
 if (typeof setSourceMapsSupport === "function") {
   setSourceMapsSupport(true, { nodeModules: true, generatedCode: true });
@@ -76,6 +104,13 @@ function isCommonJsRequire(context) {
  * @type {import('node:module').ResolveHook}
  */
 function resolve(specifier, context, nextResolve) {
+  if (specifier.startsWith(HELPER_SPECIFIER_PREFIX)) {
+    // Resolve from this file so package self-reference finds the loader's own
+    // `@oxc-node/core`, not a copy near the transformed file — which may not
+    // exist at all (global install, `node --import`). Placed first it also
+    // resolves require-context helper specifiers correctly under registerHooks.
+    return nextResolve(specifier, { ...context, parentURL: import.meta.url });
+  }
   if (isCommonJsRequire(context)) {
     return nextResolve(specifier, context);
   }

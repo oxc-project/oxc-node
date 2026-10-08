@@ -47,7 +47,7 @@ afterAll(() => {
   }
 });
 
-function fixture(files: Record<string, string>): string {
+function fixture(files: Record<string, string>, { linkCore = true } = {}): string {
   const root = mkdtempSync(join(tmpdir(), "oxc-node-helpers-"));
   roots.push(root);
   for (const [name, contents] of Object.entries(files)) {
@@ -55,18 +55,20 @@ function fixture(files: Record<string, string>): string {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, contents);
   }
-  mkdirSync(join(root, "node_modules", "@oxc-node"), { recursive: true });
-  symlinkSync(
-    CORE,
-    join(root, "node_modules", "@oxc-node", "core"),
-    // `junction` is the only link type Windows allows without elevated privileges.
-    process.platform === "win32" ? "junction" : "dir",
-  );
+  if (linkCore) {
+    mkdirSync(join(root, "node_modules", "@oxc-node"), { recursive: true });
+    symlinkSync(
+      CORE,
+      join(root, "node_modules", "@oxc-node", "core"),
+      // `junction` is the only link type Windows allows without elevated privileges.
+      process.platform === "win32" ? "junction" : "dir",
+    );
+  }
   return root;
 }
 
-function run(root: string, entry: string): string {
-  const result = spawnSync(process.execPath, ["--import", REGISTER_URL.href, entry], {
+function runRaw(root: string, entry: string) {
+  return spawnSync(process.execPath, ["--import", REGISTER_URL.href, entry], {
     cwd: root,
     encoding: "utf8",
     env: {
@@ -81,6 +83,10 @@ function run(root: string, entry: string): string {
     },
     timeout: 30_000,
   });
+}
+
+function run(root: string, entry: string): string {
+  const result = runRaw(root, entry);
   const output = `${result.stdout}${result.stderr}`;
   expect(result.error, result.error?.message).toBeFalsy();
   expect(result.status, output).toBe(0);
@@ -146,5 +152,102 @@ describe("injected runtime helpers", () => {
     const output = run(root, "./entry.ts");
     expect(output).toContain("field: 1");
     expect(output).toContain("format: module");
+  });
+});
+
+// https://github.com/oxc-project/oxc-node/issues/794 — with no `@oxc-node/core`
+// reachable from the transformed file (a global `oxnode`, or `node --import` on a
+// script outside a project), the emitted `require("@oxc-node/core/helpers/*")`
+// and `import` specifiers must resolve against the loader's own copy instead.
+// `linkCore: false` plus invoking register.mjs by absolute file URL simulates the
+// global install: register.mjs is self-contained (node: builtins, `pirates`, and
+// `./index.js`), so it needs nothing from the user's node_modules.
+describe("global install (no @oxc-node/core in the project)", () => {
+  test("a bare directory: issue #794 repro", () => {
+    const root = fixture(
+      {
+        "counter.ts": [
+          "class Counter {",
+          "  count = 1;",
+          "}",
+          'console.log("count:", new Counter().count);',
+        ].join("\n"),
+      },
+      { linkCore: false },
+    );
+    const output = run(root, "./counter.ts");
+    expect(output).toContain("count: 1");
+  });
+
+  test("ESM helper imports resolve from the loader's copy", () => {
+    const root = fixture(
+      {
+        "package.json": JSON.stringify({ name: "fx", private: true, type: "module" }),
+        "tsconfig.json": tsconfig("ESNext"),
+        // Module syntax, so oxc emits an `import` for the helper and Node.js' ESM
+        // resolver — the loader's `resolve` hook — sees the specifier.
+        "dep.ts": [...NEEDS_HELPER, "globalThis.__report = report;", "export {};"].join("\n"),
+        "entry.mts": [
+          'import "./dep.ts";',
+          "(globalThis as Record<string, any>).__report();",
+          'console.log("format:", "module");',
+        ].join("\n"),
+      },
+      { linkCore: false },
+    );
+    const output = run(root, "./entry.mts");
+    expect(output).toContain("field: 1");
+    expect(output).toContain("format: module");
+  });
+
+  test("unrelated specifiers still resolve — and still fail — from the project", () => {
+    const root = fixture(
+      {
+        "package.json": JSON.stringify({ name: "fx", private: true, type: "module" }),
+        "tsconfig.json": tsconfig("ESNext"),
+        "node_modules/fixture-pkg/package.json": JSON.stringify({
+          name: "fixture-pkg",
+          version: "0.0.0",
+          type: "module",
+          exports: { ".": "./index.js" },
+        }),
+        "node_modules/fixture-pkg/index.js": 'export const msg = "fixture-pkg ok";',
+        "entry.mts": ['import { msg } from "fixture-pkg";', "console.log(msg);"].join("\n"),
+        "missing.mts": 'import "not-installed-pkg";',
+      },
+      { linkCore: false },
+    );
+    expect(run(root, "./entry.mts")).toContain("fixture-pkg ok");
+
+    const result = runRaw(root, "./missing.mts");
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("ERR_MODULE_NOT_FOUND");
+  });
+
+  test("a poisoned project copy cannot shadow the loader's helpers", () => {
+    const root = fixture(
+      {
+        // The project-visible `@oxc-node/core` only exports ".", so it has no
+        // helpers subtree — resolution that consulted it would throw
+        // ERR_PACKAGE_PATH_NOT_EXPORTED.
+        "node_modules/@oxc-node/core/package.json": JSON.stringify({
+          name: "@oxc-node/core",
+          version: "0.0.0",
+          exports: { ".": "./index.js" },
+        }),
+        "node_modules/@oxc-node/core/index.js": 'module.exports = { marker: "stub" };',
+        "entry.ts": [
+          ...NEEDS_HELPER,
+          "report();",
+          // Only `helpers/*` specifiers are redirected; the package root still
+          // resolves from the project's own node_modules.
+          'console.log("marker:", require("@oxc-node/core").marker);',
+        ].join("\n"),
+      },
+      { linkCore: false },
+    );
+    const output = run(root, "./entry.ts");
+    expect(output).toContain("field: 1");
+    expect(output).toContain("marker: stub");
   });
 });
