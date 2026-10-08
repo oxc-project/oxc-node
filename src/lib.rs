@@ -403,7 +403,7 @@ impl Output {
 
 #[napi]
 pub fn transform(path: String, source: Either<String, &[u8]>) -> Result<Output> {
-    let transformer = OxcTransformer::new(None);
+    let transformer = OxcTransformer::new(None, None);
     transformer.transform(path, source)
 }
 
@@ -412,12 +412,13 @@ pub fn transform_async(
     path: String,
     source: Either3<String, Uint8Array, Buffer>,
 ) -> AsyncTask<TransformTask> {
-    let transformer = OxcTransformer::new(None);
+    let transformer = OxcTransformer::new(None, None);
     transformer.transform_async(path, source)
 }
 
 pub struct TransformTask {
     cwd: String,
+    helper_module_name: Option<String>,
     path: String,
     source: Either3<String, Uint8Array, Buffer>,
 }
@@ -444,6 +445,7 @@ impl Task for TransformTask {
             // The `pirates` hook and this public API both target CommonJS, so keep letting
             // the extension and the source decide.
             false,
+            self.helper_module_name.as_deref(),
         )
         .map(|(output, _)| output)
     }
@@ -461,17 +463,22 @@ impl Task for TransformTask {
 #[napi]
 pub struct OxcTransformer {
     cwd: String,
+    /// The module name emitted for helper imports — the loaders pass a copy-tagged one
+    /// (`@oxc-node/core@<tag>`) so the resolver hands each copy's helpers back to it;
+    /// `None` keeps the bare `@oxc-node/core` specifier the public API has always emitted.
+    helper_module_name: Option<String>,
 }
 
 #[napi]
 impl OxcTransformer {
     #[napi(constructor)]
-    pub fn new(cwd: Option<String>) -> Self {
+    pub fn new(cwd: Option<String>, helper_module_name: Option<String>) -> Self {
         Self {
             cwd: match cwd {
                 Some(cwd) => cwd,
                 None => env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap(),
             },
+            helper_module_name,
         }
     }
 
@@ -491,6 +498,7 @@ impl OxcTransformer {
             Some(Module::CommonJS),
             true,
             false,
+            self.helper_module_name.as_deref(),
         )
         .map(|(output, _)| output)
     }
@@ -501,7 +509,12 @@ impl OxcTransformer {
         path: String,
         source: Either3<String, Uint8Array, Buffer>,
     ) -> AsyncTask<TransformTask> {
-        AsyncTask::new(TransformTask { path, source, cwd: self.cwd.clone() })
+        AsyncTask::new(TransformTask {
+            path,
+            source,
+            cwd: self.cwd.clone(),
+            helper_module_name: self.helper_module_name.clone(),
+        })
     }
 }
 
@@ -626,6 +639,9 @@ fn parse_source<'a>(
     Parsed { program, diagnostics, module_record, only_module_parse: false }
 }
 
+// The callers pass a grab-bag of parse and transform decisions; grouping them into a
+// struct would shuffle more code than it clarifies.
+#[allow(clippy::too_many_arguments)]
 fn oxc_transform<S: TryAsStr>(
     src_path: &Path,
     code: &S,
@@ -633,6 +649,7 @@ fn oxc_transform<S: TryAsStr>(
     module_target: Option<Module>,
     enable_top_level_await: bool,
     is_es_module: bool,
+    helper_module_name: Option<&str>,
 ) -> Result<(Output, bool)> {
     let allocator = Allocator::default();
     // `.js`, `.jsx`, `.ts` and `.tsx` are ambiguous: oxc decides between a script and an ES
@@ -685,6 +702,7 @@ fn oxc_transform<S: TryAsStr>(
         compiler_options,
         effective_module,
         enable_top_level_await && !flip_to_module,
+        helper_module_name,
     )?;
     Ok((output, flip_to_module))
 }
@@ -692,6 +710,7 @@ fn oxc_transform<S: TryAsStr>(
 /// Semantic analysis, transform and codegen for an already-parsed program. Split from
 /// parsing so the CommonJS sniff path can decide from the parse result and transform
 /// straight away, without a second parse.
+#[allow(clippy::too_many_arguments)]
 fn transform_program<'a>(
     allocator: &'a Allocator,
     src_path: &Path,
@@ -700,6 +719,7 @@ fn transform_program<'a>(
     compiler_options: Option<&CompilerOptions>,
     module_target: Option<Module>,
     enable_top_level_await: bool,
+    helper_module_name: Option<&str>,
 ) -> Result<Output> {
     // `with_enum_eval` pre-computes each enum member's value for the transformer.
     // Without it, a member that initializes another member (e.g. `Default = Theme.Light`)
@@ -792,7 +812,12 @@ fn transform_program<'a>(
             },
             proposals: ProposalOptions {},
             helper_loader: HelperLoaderOptions {
-                module_name: Cow::Borrowed("@oxc-node/core"),
+                // The module name carries a tag for the loading copy when one was given —
+                // `@oxc-node/core@<tag>/helpers/x` — so several registered copies each get
+                // their own helpers back instead of racing on one shared specifier. The
+                // resolve side maps it to `@oxc-node/core`'s real `exports` subpath.
+                module_name: helper_module_name
+                    .map_or(Cow::Borrowed("@oxc-node/core"), |name| Cow::Owned(name.to_owned())),
                 ..Default::default()
             },
             ..Default::default()
@@ -1153,6 +1178,7 @@ pub fn load<'env>(
         FnArgs<(String, Option<LoadContext>)>,
         Either<LoadFnOutput, PromiseRaw<'env, LoadFnOutput>>,
     >,
+    helper_module_name: Option<String>,
 ) -> Result<Either<LoadFnOutput, PromiseRaw<'env, LoadFnOutput>>> {
     tracing::debug!(url = ?url, context = ?context, "load");
     if url.starts_with("data:") || {
@@ -1184,6 +1210,7 @@ pub fn load<'env>(
             url,
             output,
             tsconfig.as_ref().map(|tsconfig| &tsconfig.compiler_options),
+            helper_module_name,
         )?)),
         // The config is owned, so move it into the callback and borrow from it
         // there; the callback outlives this function and must be `'static`.
@@ -1193,6 +1220,7 @@ pub fn load<'env>(
                     url,
                     ctx.value,
                     tsconfig.as_ref().map(|tsconfig| &tsconfig.compiler_options),
+                    helper_module_name,
                 )
             })
             .map(Either::B),
@@ -1211,6 +1239,7 @@ fn load_commonjs_esm(
     url: &str,
     output: &LoadFnOutput,
     resolved_compiler_options: Option<&CompilerOptions>,
+    helper_module_name: Option<String>,
 ) -> Result<Option<LoadFnOutput>> {
     if output.format != "commonjs" {
         return Ok(None);
@@ -1260,6 +1289,7 @@ fn load_commonjs_esm(
         resolved_compiler_options,
         Some(Module::Esm),
         false,
+        helper_module_name.as_deref(),
     )?;
     tracing::debug!("loaded {} format: module", url);
     Ok(Some(LoadFnOutput {
@@ -1290,10 +1320,13 @@ fn transform_output(
     url: String,
     output: LoadFnOutput,
     resolved_compiler_options: Option<&CompilerOptions>,
+    helper_module_name: Option<String>,
 ) -> Result<LoadFnOutput> {
     match &output.source {
         Some(Either4::D(_)) | None => {
-            if let Some(loaded) = load_commonjs_esm(&url, &output, resolved_compiler_options)? {
+            if let Some(loaded) =
+                load_commonjs_esm(&url, &output, resolved_compiler_options, helper_module_name)?
+            {
                 return Ok(loaded);
             }
             tracing::debug!("No source code to transform {}", url);
@@ -1386,6 +1419,7 @@ fn transform_output(
                 Some(Module::Preserve),
                 !is_es_module,
                 is_es_module,
+                helper_module_name.as_deref(),
             )?;
             // A CommonJS-reported file that turned out to be an ES module is handed back
             // as one, so Node.js never tries to compile its `import`/`export` as CommonJS.

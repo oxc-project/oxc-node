@@ -23,7 +23,7 @@ export declare class Output {
 }
 
 export declare class OxcTransformer {
-  constructor(cwd?: string | undefined | null)
+  constructor(cwd?: string | undefined | null, helperModuleName?: string | undefined | null)
   transform(path: string, source: string | Uint8Array): Output
   transformAsync(path: string, source: string | Uint8Array | Buffer): Promise<Output>
 }
@@ -32,7 +32,7 @@ export declare function createResolve(options: OxcResolveOptions, specifier: str
 
 export declare function initTracing(): void
 
-export declare function load(url: string, context: LoadContext, nextLoad: (arg0: string, arg1?: LoadContext | undefined | null) => LoadFnOutput | Promise<LoadFnOutput>): LoadFnOutput | Promise<LoadFnOutput>
+export declare function load(url: string, context: LoadContext, nextLoad: (arg0: string, arg1?: LoadContext | undefined | null) => LoadFnOutput | Promise<LoadFnOutput>, helperModuleName?: string | undefined | null): LoadFnOutput | Promise<LoadFnOutput>
 
 export interface LoadContext {
   /** Export conditions of the relevant `package.json` */
