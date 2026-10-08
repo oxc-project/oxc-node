@@ -7,8 +7,7 @@ See [Conventional Commits](https://conventionalcommits.org) for commit guideline
 
 ### Bug Fixes
 
-* **core:** resolve helper imports against the loader, not the user file ([#803](https://github.com/oxc-project/oxc-node/issues/803)) ([cfc5900](https://github.com/oxc-project/oxc-node/commit/cfc5900349f29d4be7fd12353cecc17caba74e22)), closes [#794](https://github.com/oxc-project/oxc-node/issues/794) [#794](https://github.com/oxc-project/oxc-node/issues/794)
-
+- **core:** resolve helper imports against the loader, not the user file ([#803](https://github.com/oxc-project/oxc-node/issues/803)) ([cfc5900](https://github.com/oxc-project/oxc-node/commit/cfc5900349f29d4be7fd12353cecc17caba74e22)), closes [#794](https://github.com/oxc-project/oxc-node/issues/794) [#794](https://github.com/oxc-project/oxc-node/issues/794)
 
 ## [0.1.4](https://github.com/oxc-project/oxc-node/compare/v0.1.3...v0.1.4) (2026-10-06)
 
