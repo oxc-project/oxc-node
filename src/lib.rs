@@ -25,8 +25,9 @@ use oxc::{
     },
 };
 use oxc_resolver::{
-    CompilerOptions, EnforceExtension, ModuleType, Resolution, ResolveContext as ResolverContext,
-    ResolveOptions, Resolver, TsConfig, TsconfigDiscovery, TsconfigOptions, TsconfigReferences,
+    CompilerOptions, EnforceExtension, ModuleType, PackageType, Resolution,
+    ResolveContext as ResolverContext, ResolveOptions, Resolver, TsConfig, TsconfigDiscovery,
+    TsconfigOptions, TsconfigReferences,
 };
 use oxc_sourcemap::SourceMap;
 use phf::Set;
@@ -250,6 +251,15 @@ const NODE_MODULES_PATH: &str = "/node_modules/";
 
 #[cfg(target_os = "windows")]
 const NODE_MODULES_PATH: &str = "\\node_modules\\";
+
+/// `OXC_TRANSFORM_ALL` is enabled by presence with an explicit opt-out: absent,
+/// empty, `"0"`, or `"false"` all mean disabled — matching Node.js-style flag
+/// semantics where setting it to a false value must not enable it.
+fn transform_all_enabled() -> bool {
+    env::var("OXC_TRANSFORM_ALL")
+        .map(|value| !value.is_empty() && value != "0" && value != "false")
+        .unwrap_or(false)
+}
 
 /// The `file:` URL scheme prefix; on POSIX the absolute path follows it
 /// directly.
@@ -1005,13 +1015,32 @@ pub fn create_resolve<'env>(
         tracing::debug!(resolution = ?resolution, "resolved");
         let p = resolution.path();
         let url = oxc_resolved_path_to_url(&resolution);
-        if !p.to_str().map(|p| p.contains(NODE_MODULES_PATH)).unwrap_or(false) {
+        // `node_modules` files keep the `null` format so Node.js delegates `load`
+        // to its own implementation — the load hook cannot report "skip"
+        // otherwise (see #189). The exception: under `OXC_TRANSFORM_ALL`, files
+        // Node.js could never classify (`.jsx`/`.tsx`, other registered source
+        // extensions, extensionless) need our format or they die with
+        // `ERR_UNKNOWN_FILE_EXTENSION` before `load` can transform them. Formats
+        // Node.js does classify (`.ts`/`.cts`/`.mts`, `.wasm`, addons) stay
+        // deferred either way.
+        let transformable_dependency = || {
+            transform_all_enabled()
+                && p.to_str().map(|p| p.contains(NODE_MODULES_PATH)).unwrap_or(false)
+                && match p.extension().and_then(|ext| ext.to_str()) {
+                    None => true,
+                    Some("jsx" | "tsx" | "es" | "es6") => true,
+                    Some(_) => false,
+                }
+        };
+        if !p.to_str().map(|p| p.contains(NODE_MODULES_PATH)).unwrap_or(false)
+            || transformable_dependency()
+        {
             let format = {
                 let ext = p.extension().and_then(|ext| ext.to_str());
 
                 let format = ext
                     .and_then(|ext| match ext {
-                        "cjs" | "cts" | "node" => None,
+                        "cjs" | "cts" | "node" => Some("commonjs"),
                         "mts" | "mjs" => Some("module"),
                         _ => {
                             // The format describes the *resolved* file, so it is
@@ -1027,9 +1056,35 @@ pub fn create_resolve<'env>(
                             match resolution.module_type() {
                                 Some(ModuleType::Module) => Some("module"),
                                 Some(ModuleType::CommonJs) => Some("commonjs"),
-                                _ => None,
+                                // `.wasm` and other non-JavaScript formats have their
+                                // own answer; keep the previous CommonJS default
+                                // rather than reclassify them by package type.
+                                Some(_) => Some("commonjs"),
+                                // `esm_file_format` consults the package `type` only
+                                // for `.js`/`.ts`, and Node's own ESM_FILE_FORMAT
+                                // also answers with it for extensionless files.
+                                // Extend the fallback to the other source
+                                // extensions oxc registers; every other extension
+                                // keeps the CommonJS default.
+                                None => match ext {
+                                    "js" | "ts" | "jsx" | "tsx" | "es" | "es6" => None,
+                                    _ => Some("commonjs"),
+                                },
                             }
                         }
+                    })
+                    // Extensions the loader accepts but the resolver does not
+                    // classify (`.jsx`/`.tsx`/`.es`/`.es6`), plus extensionless
+                    // files, fall back to the resolved package.json `type`:
+                    // `"type": "module"` files run as ESM.
+                    .or_else(|| {
+                        resolution
+                            .package_json()
+                            .and_then(|package_json| package_json.r#type())
+                            .map(|ty| match ty {
+                                PackageType::Module => "module",
+                                PackageType::CommonJs => "commonjs",
+                            })
                     })
                     .unwrap_or("commonjs");
                 tracing::debug!(path = ?p, format = ?format);
@@ -1155,11 +1210,7 @@ fn load_commonjs_esm(
         return Ok(None);
     }
     // The same skip as the transform below: dependencies are left alone unless asked for.
-    if env::var("OXC_TRANSFORM_ALL")
-        .map(|value| value.is_empty() || value == "0" || value == "false")
-        .unwrap_or(true)
-        && url.contains("/node_modules/")
-    {
+    if !transform_all_enabled() && url.contains("/node_modules/") {
         return Ok(None);
     }
     // A `?query` or `#fragment` suffix belongs to the module URL, not to the file on disk.
@@ -1280,12 +1331,7 @@ fn transform_output(
             // dependencies too — `OXC_TRANSFORM_ALL` decides whether their *source* is
             // transpiled, and skipping this would hand Node.js raw JSON to run as an ES
             // module.
-            if !is_json
-                && env::var("OXC_TRANSFORM_ALL")
-                    .map(|value| value.is_empty() || value == "0" || value == "false")
-                    .unwrap_or(true)
-                && url.contains("/node_modules/")
-            {
+            if !is_json && !transform_all_enabled() && url.contains("/node_modules/") {
                 tracing::debug!("Skip transforming node_modules {}", url);
                 return Ok(output);
             }
