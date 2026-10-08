@@ -1,10 +1,12 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   cpSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -265,13 +267,30 @@ describe("global install (no @oxc-node/core in the project)", () => {
 // while a global `oxnode` adds another — used to resolve every helper from the
 // *first*-registered copy: its `resolve` hook re-claimed the specifier inside
 // `nextResolve`, and its `Module._resolveFilename` wrapper re-claimed it inside
-// `requireHelper.resolve`. The last-registered copy is the one whose transform hooks
-// wrap all subsequently loaded code, so it owns the helpers; each copy marks its own
-// `defineProperty` here so the executed code reports which copy supplied it.
+// `requireHelper.resolve`. Each copy now tags the helper specifiers it emits
+// (`@oxc-node/core@<tag>/helpers/x`), so a helper resolves against the copy whose
+// transformer emitted it; each copy marks its own `defineProperty` here so the
+// executed code reports which copy supplied it.
+//
+// Which copy emits is the first-registered one on both paths: pirates' `addHook`
+// chains by wrapping `mod._compile`, and `module.register`'s load hooks wrap each
+// other — in both cases the first copy transforms the raw source and the second
+// sees already-lowered output with nothing left to emit.
+//
 // A second copy only works where the binding is a file inside this package: the WASI
 // job's `oxc-node.wasi.cjs` needs `@oxc-node/core-wasm32-wasi` and `@napi-rs/wasm-runtime`
 // from the workspace store, which a bare copy of this directory does not have.
 const hasNativeBinding = readdirSync(CORE).some((name) => name.endsWith(".node"));
+
+// The tag a copy stamps into its helper specifiers is the hash of its own module URL,
+// which Node.js realpaths — `/tmp` is `/private/tmp` on macOS — so the same function
+// derives it here to write tagged specifiers into test files.
+const moduleTag = (file: string) =>
+  "c" +
+  createHash("sha256")
+    .update(pathToFileURL(realpathSync(file)).href)
+    .digest("hex")
+    .slice(0, 12);
 
 describe.skipIf(!hasNativeBinding)("two registered copies of the loader", () => {
   // Copies must be real directories, not symlinks to one path: Node.js keys the module
@@ -288,38 +307,97 @@ describe.skipIf(!hasNativeBinding)("two registered copies of the loader", () => 
         `globalThis.__helperCopy = ${JSON.stringify(name)};\n${readFileSync(helper, "utf8")}`,
       );
     }
-    return pathToFileURL(join(copy, "register.mjs")).href;
+    return copy;
   }
 
-  test("the last-registered copy supplies the helpers (CommonJS and ESM)", () => {
+  test("helpers resolve to the copy whose transformer emitted them", () => {
     const root = fixture(
       {
         "package.json": JSON.stringify({ name: "fx", private: true, type: "commonjs" }),
         "tsconfig.json": tsconfig("ESNext"),
-        // .cts with module syntax → require() of the helper through the
-        // `_resolveFilename` patch; .mts → an ESM import through the `resolve` hooks.
-        "entry.cts": [
-          ...NEEDS_HELPER,
-          "report();",
-          'console.log("cjs-helper:", (globalThis as Record<string, any>).__helperCopy);',
-        ].join("\n"),
-        "entry.mts": [
-          ...NEEDS_HELPER,
-          "report();",
-          'console.log("esm-helper:", (globalThis as Record<string, any>).__helperCopy);',
-          "export {};",
-        ].join("\n"),
       },
       { linkCore: false },
     );
-    const imports = [copyOfCore(root, "copy-a"), copyOfCore(root, "copy-b")];
+    const copyA = copyOfCore(root, "copy-a");
+    const copyB = copyOfCore(root, "copy-b");
+    const imports = [
+      pathToFileURL(join(copyA, "register.mjs")).href,
+      pathToFileURL(join(copyB, "register.mjs")).href,
+    ];
+
+    // CommonJS specifiers carry the `register.mjs` tag, ESM ones the `esm.mjs` tag —
+    // each realm registered its own resolver under its own tag.
+    const tagA = moduleTag(join(copyA, "register.mjs"));
+    const tagB = moduleTag(join(copyB, "register.mjs"));
+    const tagAEsm = moduleTag(join(copyA, "esm.mjs"));
+    const tagBEsm = moduleTag(join(copyB, "esm.mjs"));
+
+    writeFileSync(
+      join(root, "entry.cts"),
+      [
+        ...NEEDS_HELPER,
+        // The emitted require() came from the first-registered copy's transform.
+        'console.log("emitted:", (globalThis as Record<string, any>).__helperCopy);',
+        // A tagged specifier resolves through its owner's resolver.
+        `console.log("tagA:", require.resolve("@oxc-node/core@${tagA}/helpers/defineProperty"));`,
+        `console.log("tagB:", require.resolve("@oxc-node/core@${tagB}/helpers/defineProperty"));`,
+        // Untagged specifiers — what older published copies emit — try every
+        // registered resolver, newest first.
+        'console.log("untagged:", require.resolve("@oxc-node/core/helpers/defineProperty"));',
+        "report();",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(root, "entry.mts"),
+      [
+        'import "./emitted.mts";',
+        `import "@oxc-node/core@${tagAEsm}/helpers/defineProperty";`,
+        'import "./report-a.mts";',
+        `import "@oxc-node/core@${tagBEsm}/helpers/defineProperty";`,
+        'import "./report-b.mts";',
+        'import "@oxc-node/core/helpers/defineProperty";',
+        'import "./report-u.mts";',
+        ...NEEDS_HELPER,
+        "report();",
+        "export {};",
+      ].join("\n"),
+    );
+    // The class goes in the imported file: an emitted helper import lands after the
+    // importer's own import declarations, so asserting from a plain dep would race it.
+    writeFileSync(
+      join(root, "emitted.mts"),
+      [
+        ...NEEDS_HELPER,
+        'console.log("emitted:", (globalThis as Record<string, any>).__helperCopy);',
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(root, "report-a.mts"),
+      'console.log("tagA:", (globalThis as Record<string, any>).__helperCopy);',
+    );
+    writeFileSync(
+      join(root, "report-b.mts"),
+      'console.log("tagB:", (globalThis as Record<string, any>).__helperCopy);',
+    );
+    writeFileSync(
+      join(root, "report-u.mts"),
+      'console.log("untagged:", (globalThis as Record<string, any>).__helperCopy);',
+    );
 
     const cjs = run(root, "./entry.cts", imports);
     expect(cjs).toContain("field: 1");
-    expect(cjs).toContain("cjs-helper: copy-b");
+    expect(cjs).toContain("emitted: copy-a");
+    const helperA = realpathSync(join(copyA, "src/helpers/defineProperty.js"));
+    const helperB = realpathSync(join(copyB, "src/helpers/defineProperty.js"));
+    expect(cjs).toContain(`tagA: ${helperA}`);
+    expect(cjs).toContain(`tagB: ${helperB}`);
+    expect(cjs).toContain(`untagged: ${helperB}`);
 
     const esm = run(root, "./entry.mts", imports);
     expect(esm).toContain("field: 1");
-    expect(esm).toContain("esm-helper: copy-b");
+    expect(esm).toContain("emitted: copy-a");
+    expect(esm).toContain("tagA: copy-a");
+    expect(esm).toContain("tagB: copy-b");
+    expect(esm).toContain("untagged: copy-b");
   });
 });

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as NodeModule from "node:module";
 import { pathToFileURL } from "node:url";
 
@@ -21,32 +22,83 @@ const DEFAULT_EXTENSIONS = new Set([
   ".es",
 ]);
 
+// The transformer emits `@oxc-node/core/helpers/<name>` specifiers for its runtime
+// helpers. They are versioned with this package and must resolve against the copy
+// whose transformer emitted them — a user file is not expected to have
+// `@oxc-node/core` in scope at all (global install, `node --import`). Two copies can
+// also be registered in one process (`NODE_OPTIONS` preloading one while a global
+// `oxnode` adds another), so each copy tags the module name it passes to the
+// transformer and registers a resolver for that tag: a tagged specifier only ever
+// resolves against the copy that emitted it.
 const HELPER_SPECIFIER_PREFIX = "@oxc-node/core/helpers/";
+const HELPER_TAGGED_PREFIX = "@oxc-node/core@";
+const HELPER_TAG =
+  "c" +
+  createHash("sha256")
+    .update(import.meta.url)
+    .digest("hex")
+    .slice(0, 12);
+const HELPER_MODULE_NAME = `${HELPER_TAGGED_PREFIX}${HELPER_TAG}`;
 
-// The transformer's helpers are versioned with this package, so the specifiers it
-// emits always resolve against the registering copy — a user file is not expected to
-// have `@oxc-node/core` in scope at all (global install, `node --import`).
 const requireHelper = createRequire(import.meta.url);
+
+// Each copy's resolver lives in a realm-wide registry keyed by its tag. Tagged
+// specifiers take exactly their owner's resolver; untagged ones — emitted by older
+// published copies that know nothing of tagging — try every registered resolver,
+// newest registration first.
+const HELPER_RESOLVERS = Symbol.for("@oxc-node/core:helperResolvers");
+const helperResolvers = (globalThis[HELPER_RESOLVERS] ??= {});
+helperResolvers[HELPER_TAG] = (subpath) => requireHelper.resolve(`@oxc-node/core/${subpath}`);
+
+function isHelperSpecifier(specifier) {
+  return (
+    specifier.startsWith(HELPER_SPECIFIER_PREFIX) || specifier.startsWith(HELPER_TAGGED_PREFIX)
+  );
+}
+
+function resolveHelperPath(specifier) {
+  if (specifier.startsWith(HELPER_TAGGED_PREFIX)) {
+    const helperIndex = specifier.indexOf("/helpers/");
+    if (helperIndex === -1) {
+      return undefined;
+    }
+    const tag = specifier.slice(HELPER_TAGGED_PREFIX.length, helperIndex);
+    const subpath = specifier.slice(helperIndex + 1); // "helpers/<name>"
+    return helperResolvers[tag]?.(subpath);
+  }
+  const subpath = specifier.slice("@oxc-node/core/".length); // "helpers/<name>"
+  const resolvers = Object.values(helperResolvers).reverse();
+  for (const resolve of resolvers) {
+    try {
+      return resolve(subpath);
+    } catch {
+      // That copy does not export this helper; the next one might.
+    }
+  }
+  return undefined;
+}
 
 // `require()` never reaches `module.register()`'s hooks, and `registerHooks()`
 // forwards it to Node.js' own CommonJS resolution, which funnels through
 // `Module._resolveFilename` — patching it is the one mechanism that covers every
 // supported runtime.
 const resolveFilename = Module._resolveFilename;
-// `requireHelper.resolve()` re-enters `Module._resolveFilename`, so an in-flight flag
-// lets that inner call fall through to the original resolver, where `createRequire`'s
-// synthetic parent resolves the specifier from this copy. Two copies can be
-// registered in one process — `NODE_OPTIONS` plus a global `oxnode`, a project and a
-// global install — each wrapping the previous function, so the flag is shared
-// process-wide: `Symbol.for` makes the inner call fall through every copy's wrapper,
-// not just its own, and the outermost (most recently registered) copy owns the
-// resolution — the same copy whose transform hooks wrapped the importing file.
+// Resolving a helper re-enters `Module._resolveFilename`, so an in-flight flag lets
+// that inner call fall through to the original resolver. The flag is shared
+// process-wide via `Symbol.for`: with several copies registered, each one wraps the
+// previous function, and the inner call has to pass them all.
 const HELPER_RESOLVING = Symbol.for("@oxc-node/core:resolvingHelper");
 Module._resolveFilename = function (request, parent, isMain, options) {
-  if (!globalThis[HELPER_RESOLVING] && request.startsWith(HELPER_SPECIFIER_PREFIX)) {
+  if (!globalThis[HELPER_RESOLVING] && isHelperSpecifier(request)) {
     globalThis[HELPER_RESOLVING] = true;
     try {
-      return requireHelper.resolve(request);
+      const resolved = resolveHelperPath(request);
+      if (resolved !== undefined) {
+        return resolved;
+      }
+      // The tagged copy is not registered here — fall back to Node.js' own
+      // resolution so the request fails (or succeeds) exactly as it would have
+      // before the patch.
     } finally {
       globalThis[HELPER_RESOLVING] = false;
     }
@@ -60,7 +112,7 @@ if (typeof setSourceMapsSupport === "function") {
   process.setSourceMapsEnabled(true);
 }
 
-const transformer = new OxcTransformer(process.cwd());
+const transformer = new OxcTransformer(process.cwd(), HELPER_MODULE_NAME);
 const SOURCEMAP_PREFIX = "\n//# sourceMappingURL=";
 const SOURCEMAP_MIME = "data:application/json;charset=utf-8;base64,";
 
@@ -115,14 +167,19 @@ function resolve(specifier, context, nextResolve) {
     // `Module._resolveFilename` patch above claims the helper specifiers.
     return nextResolve(specifier, context);
   }
-  if (specifier.startsWith(HELPER_SPECIFIER_PREFIX)) {
-    // Resolve from this file's own copy — `createRequire` uses Node.js' resolver
-    // without consulting the hook chain, so an earlier-registered copy's resolve hook
-    // cannot re-claim the specifier. The resolved URL is still passed down the chain
-    // so format detection and any other hooks run on it. The specifier is not
-    // forwarded: that is exactly what let an inner hook rewrite `parentURL` to its
-    // own module.
-    return nextResolve(pathToFileURL(requireHelper.resolve(specifier)).href, context);
+  if (isHelperSpecifier(specifier)) {
+    // The resolver table runs Node.js' own `createRequire` lookups, never the hook
+    // chain, so an earlier-registered copy's resolve hook cannot re-claim a specifier.
+    // The resolved URL is still passed down the chain so format detection and any
+    // other hooks run on it; a specifier forwarded as-is is exactly what let an inner
+    // hook rewrite `parentURL` to its own module.
+    const resolved = resolveHelperPath(specifier);
+    if (resolved !== undefined) {
+      return nextResolve(pathToFileURL(resolved).href, context);
+    }
+    // The tagged copy is not registered here — let the specifier fail (or resolve)
+    // the way it would have before the patch.
+    return nextResolve(specifier, context);
   }
   return createResolve(
     {
@@ -141,7 +198,7 @@ function load(url, context, nextLoad) {
   if (isCommonJsRequire(context)) {
     return nextLoad(url, context);
   }
-  const result = oxcLoad(url, context, nextLoad);
+  const result = oxcLoad(url, context, nextLoad, HELPER_MODULE_NAME);
   // Anything oxc-node itself settles on as CommonJS is left to the CommonJS machinery,
   // which compiles it through the `pirates` hook above and its accurate inline source
   // map. Returning source from here instead costs stack trace precision: a throw in a
