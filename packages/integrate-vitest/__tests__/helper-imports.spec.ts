@@ -1,8 +1,16 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, describe, expect, test } from "vitest";
 
 /**
@@ -67,8 +75,8 @@ function fixture(files: Record<string, string>, { linkCore = true } = {}): strin
   return root;
 }
 
-function runRaw(root: string, entry: string) {
-  return spawnSync(process.execPath, ["--import", REGISTER_URL.href, entry], {
+function runRaw(root: string, entry: string, imports: string[] = [REGISTER_URL.href]) {
+  return spawnSync(process.execPath, [...imports.flatMap((i) => ["--import", i]), entry], {
     cwd: root,
     encoding: "utf8",
     env: {
@@ -85,8 +93,8 @@ function runRaw(root: string, entry: string) {
   });
 }
 
-function run(root: string, entry: string): string {
-  const result = runRaw(root, entry);
+function run(root: string, entry: string, imports?: string[]): string {
+  const result = runRaw(root, entry, imports);
   const output = `${result.stdout}${result.stderr}`;
   expect(result.error, result.error?.message).toBeFalsy();
   expect(result.status, output).toBe(0);
@@ -249,5 +257,63 @@ describe("global install (no @oxc-node/core in the project)", () => {
     const output = run(root, "./entry.ts");
     expect(output).toContain("field: 1");
     expect(output).toContain("marker: stub");
+  });
+});
+
+// Two copies of the loader registered in one process — `NODE_OPTIONS` preloading one
+// while a global `oxnode` adds another — used to resolve every helper from the
+// *first*-registered copy: its `resolve` hook re-claimed the specifier inside
+// `nextResolve`, and its `Module._resolveFilename` wrapper re-claimed it inside
+// `requireHelper.resolve`. The last-registered copy is the one whose transform hooks
+// wrap all subsequently loaded code, so it owns the helpers; each copy marks its own
+// `defineProperty` here so the executed code reports which copy supplied it.
+describe("two registered copies of the loader", () => {
+  // Copies must be real directories, not symlinks to one path: Node.js keys the module
+  // registry on realpaths, so two links to the same core would be a single copy.
+  function copyOfCore(root: string, name: string): string {
+    const copy = join(root, name);
+    // `dereference` matters: pnpm links this package's own deps (`pirates`, the
+    // napi helpers) as relative symlinks, which would dangle at the new location.
+    cpSync(CORE, copy, { recursive: true, dereference: true });
+    for (const variant of ["src/helpers", "src/helpers/esm"]) {
+      const helper = join(copy, variant, "defineProperty.js");
+      writeFileSync(
+        helper,
+        `globalThis.__helperCopy = ${JSON.stringify(name)};\n${readFileSync(helper, "utf8")}`,
+      );
+    }
+    return pathToFileURL(join(copy, "register.mjs")).href;
+  }
+
+  test("the last-registered copy supplies the helpers (CommonJS and ESM)", () => {
+    const root = fixture(
+      {
+        "package.json": JSON.stringify({ name: "fx", private: true, type: "commonjs" }),
+        "tsconfig.json": tsconfig("ESNext"),
+        // .cts with module syntax → require() of the helper through the
+        // `_resolveFilename` patch; .mts → an ESM import through the `resolve` hooks.
+        "entry.cts": [
+          ...NEEDS_HELPER,
+          "report();",
+          'console.log("cjs-helper:", (globalThis as Record<string, any>).__helperCopy);',
+        ].join("\n"),
+        "entry.mts": [
+          ...NEEDS_HELPER,
+          "report();",
+          'console.log("esm-helper:", (globalThis as Record<string, any>).__helperCopy);',
+          "export {};",
+        ].join("\n"),
+      },
+      { linkCore: false },
+    );
+    const imports = [copyOfCore(root, "copy-a"), copyOfCore(root, "copy-b")];
+
+    const cjs = run(root, "./entry.cts", imports);
+    expect(cjs).toContain("field: 1");
+    expect(cjs).toContain("cjs-helper: copy-b");
+
+    const esm = run(root, "./entry.mts", imports);
+    expect(esm).toContain("field: 1");
+    expect(esm).toContain("esm-helper: copy-b");
   });
 });
