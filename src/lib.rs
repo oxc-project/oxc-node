@@ -1028,16 +1028,27 @@ pub fn create_resolve<'env>(
                             match resolution.module_type() {
                                 Some(ModuleType::Module) => Some("module"),
                                 Some(ModuleType::CommonJs) => Some("commonjs"),
-                                _ => None,
+                                // `.wasm` and other non-JavaScript formats have their
+                                // own answer; keep the previous CommonJS default
+                                // rather than reclassify them by package type.
+                                Some(_) => Some("commonjs"),
+                                // `esm_file_format` consults the package `type` only
+                                // for `.js`/`.ts`, and Node's own ESM_FILE_FORMAT
+                                // also answers with it for extensionless files.
+                                // Extend the fallback to the other source
+                                // extensions oxc registers; every other extension
+                                // keeps the CommonJS default.
+                                None => match ext {
+                                    "js" | "ts" | "jsx" | "tsx" | "es" | "es6" => None,
+                                    _ => Some("commonjs"),
+                                },
                             }
                         }
                     })
-                    // Node's ESM_FILE_FORMAT falls back to the package `type` for
-                    // extensions it does not classify — and files with none — but
-                    // `esm_file_format` only consults it for `.js`/`.ts`, leaving
-                    // `.jsx`/`.tsx`, `.es`/`.es6` and extensionless files without an
-                    // answer. Supply it here: `"type": "module"` files run as ESM
-                    // regardless of extension.
+                    // Extensions the loader accepts but the resolver does not
+                    // classify (`.jsx`/`.tsx`/`.es`/`.es6`), plus extensionless
+                    // files, fall back to the resolved package.json `type`:
+                    // `"type": "module"` files run as ESM.
                     .or_else(|| {
                         resolution
                             .package_json()

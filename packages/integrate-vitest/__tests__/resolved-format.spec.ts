@@ -68,6 +68,38 @@ function run(root: string, entry: string): string {
   return output;
 }
 
+function emitResolve(root: string, specifier: string): { format: string | null | undefined } {
+  // `createResolve` runs the same format decision the resolve hook reports; the
+  // subprocess shares the fixture's node_modules symlink through its cwd.
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { createResolve } from "@oxc-node/core";
+const out = await createResolve({}, "${specifier}", { conditions: ["node", "import"], importAttributes: {} }, (s, c) => ({ url: s, format: c?.format }));
+console.log(JSON.stringify({ format: out.format }));`,
+    ],
+    {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NODE_OPTIONS: undefined,
+        OXC_LOG: undefined,
+        TS_NODE_PROJECT: undefined,
+        OXC_TSCONFIG_PATH: undefined,
+      },
+      timeout: 30_000,
+    },
+  );
+  expect(result.error, result.error?.message).toBeFalsy();
+  // stderr can carry platform noise such as Node's WASI ExperimentalWarning;
+  // only a nonzero exit or unreadable output means the resolve failed.
+  expect(result.status, `resolve subprocess failed for ${specifier}: ${result.stderr}`).toBe(0);
+  return JSON.parse(result.stdout);
+}
+
 // The format a file ran as, plus the globals that prove it: `require` and `module`
 // only exist in a CommonJS scope, and `typeof` does not throw on the missing binding.
 const probe = (name: string) =>
@@ -217,4 +249,22 @@ describe("resolved module format (issue #797)", () => {
     });
     expect(run(commonjs, "./entry.ts")).toContain("dep: commonjs function object");
   });
+
+  test.each(["./asset.txt", "./asset.wasm"])(
+    "%s keeps its prior classification even in a type:module package",
+    (dep) => {
+      // The package-type fallback covers only the source extensions the loader
+      // registers plus extensionless files. A `.wasm` carries a non-JS module type
+      // and an unknown textual extension is not a source file at all, so neither
+      // may be reported "module". Depending on the build the hook either reports
+      // "commonjs" or defers (format undefined) — both keep Node.js' own error
+      // path instead of feeding a non-source file through the transformer.
+      const root = fixture({
+        "package.json": TYPE_MODULE,
+        [dep.slice(2)]: "not javascript\n",
+        "entry.ts": `await import("${dep}");\n`,
+      });
+      expect([undefined, null, "commonjs"]).toContain(emitResolve(root, dep).format);
+    },
+  );
 });
