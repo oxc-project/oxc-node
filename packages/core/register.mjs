@@ -110,7 +110,7 @@ Module._resolveFilename = function (request, parent, isMain, options) {
       // registered copies supply it only when the project itself cannot.
       try {
         return resolveFilename.call(this, request, parent, isMain, options);
-      } catch {
+      } catch (error) {
         globalThis[HELPER_RESOLVING] = true;
         try {
           const resolved = resolveHelperPath(request);
@@ -120,7 +120,7 @@ Module._resolveFilename = function (request, parent, isMain, options) {
         } finally {
           globalThis[HELPER_RESOLVING] = false;
         }
-        throw new Error(`Cannot find module '${request}'`);
+        throw error;
       }
     }
   }
