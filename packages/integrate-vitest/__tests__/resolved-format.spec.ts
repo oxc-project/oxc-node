@@ -8,10 +8,11 @@ import { afterAll, describe, expect, test } from "vitest";
 /**
  * The `format` the resolve hook reports decides whether Node.js runs the file as an
  * ES module or as CommonJS. oxc_resolver only consults the nearest `package.json`
- * `"type"` for `.js` and `.ts`, so `.jsx` and `.tsx` arrived with no module type and
- * fell through to `"commonjs"` — in a `"type": "module"` package they ran with
- * `require`/`module` in scope, and a transform that emits `require(".../jsx-runtime")`
- * bypassed the resolve hook entirely, so tsconfig `paths` never applied (issue #797).
+ * `"type"` for `.js` and `.ts`, so `.jsx`, `.tsx`, `.es`, `.es6` and extensionless
+ * files arrived with no module type and fell through to `"commonjs"` — in a
+ * `"type": "module"` package they ran with `require`/`module` in scope, and a
+ * transform that emits `require(".../jsx-runtime")` bypassed the resolve hook
+ * entirely, so tsconfig `paths` never applied (issue #797).
  */
 
 const CORE = dirname(fileURLToPath(new URL("../../core/register.mjs", import.meta.url)));
@@ -174,5 +175,46 @@ describe("resolved module format (issue #797)", () => {
       "entry.tsx": "console.log(<div />);\n",
     });
     expect(run(root, "./entry.tsx")).toContain("CUSTOM-RUNTIME: div");
+  });
+
+  test.each(["./dep.es", "./dep.es6"])(
+    "an unclassified %s file follows the package type",
+    (dep) => {
+      // `register.mjs` treats `.es`/`.es6` as source extensions, but ESM_FILE_FORMAT
+      // does not classify them: Node.js runs them as the package type, so the
+      // fallback decides. In `type: module` they are ES modules — code relying on
+      // the old CommonJS default here was already broken under plain Node.js.
+      const typeModule = fixture({
+        "package.json": TYPE_MODULE,
+        [dep.slice(2)]: `${probe(dep)}\n`,
+        "entry.ts": `await import("${dep}");\n`,
+      });
+      expect(run(typeModule, "./entry.ts")).toContain(`${dep}: module undefined undefined`);
+
+      const commonjs = fixture({
+        "package.json": JSON.stringify({ name: "fx", private: true, type: "commonjs" }),
+        [dep.slice(2)]: `${probe(dep)}\n`,
+        "entry.ts": `await import("${dep}");\n`,
+      });
+      expect(run(commonjs, "./entry.ts")).toContain(`${dep}: commonjs function object`);
+    },
+  );
+
+  test("an extensionless resolved file follows the package type", () => {
+    // `./dep` resolves to the extensionless `dep` file; Node's ESM_FILE_FORMAT
+    // answers it with the package type, the same fallback `.jsx`/`.tsx` use.
+    const typeModule = fixture({
+      "package.json": TYPE_MODULE,
+      dep: `${probe("dep")}\n`,
+      "entry.ts": 'await import("./dep");\n',
+    });
+    expect(run(typeModule, "./entry.ts")).toContain("dep: module undefined undefined");
+
+    const commonjs = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true, type: "commonjs" }),
+      dep: `${probe("dep")}\n`,
+      "entry.ts": 'await import("./dep");\n',
+    });
+    expect(run(commonjs, "./entry.ts")).toContain("dep: commonjs function object");
   });
 });
