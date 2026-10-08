@@ -99,6 +99,11 @@ describe("injected runtime helpers", () => {
     // only `.mts` says so through its extension.
     ["module", "entry.ts", "no module syntax"],
     ["module", "entry.mts", "no module syntax"],
+    // `.jsx` arrives with no module type at all — oxc_resolver only consults the
+    // package `type` for `.js` and `.ts` — so this row needs the package.json
+    // fallback that fixed #797. A `.tsx` row would not exercise it: the file's
+    // own tsconfig claims it and its `module` value answers first.
+    ["module", "entry.jsx", "no module syntax"],
     ["module", "entry.ts", "with an export"],
     ["commonjs", "entry.ts", "no module syntax"],
     ["commonjs", "entry.cts", "no module syntax"],

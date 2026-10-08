@@ -25,8 +25,9 @@ use oxc::{
     },
 };
 use oxc_resolver::{
-    CompilerOptions, EnforceExtension, ModuleType, Resolution, ResolveContext as ResolverContext,
-    ResolveOptions, Resolver, TsConfig, TsconfigDiscovery, TsconfigOptions, TsconfigReferences,
+    CompilerOptions, EnforceExtension, ModuleType, PackageType, Resolution,
+    ResolveContext as ResolverContext, ResolveOptions, Resolver, TsConfig, TsconfigDiscovery,
+    TsconfigOptions, TsconfigReferences,
 };
 use oxc_sourcemap::SourceMap;
 use phf::Set;
@@ -1027,7 +1028,20 @@ pub fn create_resolve<'env>(
                             match resolution.module_type() {
                                 Some(ModuleType::Module) => Some("module"),
                                 Some(ModuleType::CommonJs) => Some("commonjs"),
-                                _ => None,
+                                Some(_) => None,
+                                // `esm_file_format` consults the package `type` only
+                                // for `.js` and `.ts`, so `.jsx`/`.tsx` (and unknown
+                                // or extensionless files) arrive here with no module
+                                // type at all. The resolved package.json then
+                                // supplies Node's rule: `"type": "module"` files run
+                                // as ESM regardless of extension.
+                                None => resolution
+                                    .package_json()
+                                    .and_then(|package_json| package_json.r#type())
+                                    .map(|ty| match ty {
+                                        PackageType::Module => "module",
+                                        PackageType::CommonJs => "commonjs",
+                                    }),
                             }
                         }
                     })
