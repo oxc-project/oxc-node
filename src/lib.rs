@@ -658,13 +658,22 @@ fn oxc_transform<S: TryAsStr>(
     let flip_to_module =
         only_module_parse || (allow_module_retry && parsed_as_esm(&program, &module_record));
 
+    // `Module::Esm` and `Module::Preserve` emit identically for ES module input; the only
+    // difference is that `Esm` makes the `import =` / `export =` lowerings report a
+    // transform error instead of emitting a bare `require()` / `module.exports` that would
+    // crash at run time in a file Node.js runs as ESM. tsc rejects the same constructs in
+    // ES module output (TS1202/TS1203), and Node's own type stripping rejects them at load
+    // time. A `.cts` file keeps `Preserve` — its `import =` needs `require()`.
+    let effective_module =
+        if is_es_module || flip_to_module { Some(Module::Esm) } else { module_target };
+
     let output = transform_program(
         &allocator,
         src_path,
         &mut program,
         source_str,
         compiler_options,
-        module_target,
+        effective_module,
         enable_top_level_await && !flip_to_module,
     )?;
     Ok((output, flip_to_module))
@@ -1182,14 +1191,17 @@ fn load_commonjs_esm(
             format!("Failed to parse {}: {}", path.display(), msg),
         ));
     }
-    // A module keeps its top-level awaits, hence the last `false`.
+    // A module keeps its top-level awaits, hence the last `false`. `Module::Esm` emits
+    // identically to `Preserve` for ES module input but reports the `import =` /
+    // `export =` lowerings as transform errors instead of emitting bare `require()` /
+    // `module.exports` that would crash at run time in an ES module.
     let transformed = transform_program(
         &allocator,
         &path,
         &mut program,
         source,
         resolved_compiler_options,
-        Some(Module::Preserve),
+        Some(Module::Esm),
         false,
     )?;
     tracing::debug!("loaded {} format: module", url);

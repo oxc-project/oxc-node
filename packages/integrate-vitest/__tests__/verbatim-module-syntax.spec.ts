@@ -348,4 +348,28 @@ console.log("main.ts");
     expect(removed.stderr, "dump should not fail").toBe("");
     expect(removed.stdout).not.toContain("dep.ts");
   });
+
+  // The load-hook counterpart of the case above: verbatim preservation must surface
+  // `import =` in an ES module as a transform error (TS1202, matching `tsc` and Node's
+  // own type stripping), never as a `ReferenceError: require is not defined` at run
+  // time — which is what keeping the lowered `require()` verbatim produced before.
+  test("an `import =` kept verbatim in an ES module fails at load, not at run time", () => {
+    const root = createProject({
+      "package.json": '{ "type": "module" }\n',
+      "tsconfig.json": tsconfig({ verbatimModuleSyntax: true }),
+      "dep.ts": `const dep = 1;
+export = dep;
+`,
+      "main.ts": `import foo = require("./dep.ts");
+console.log("main.ts");
+`,
+    });
+
+    const ran = runWithHooks(root, "./main.ts");
+    expect(ran.status).not.toBe(0);
+    expect(ran.stderr, "the failure must be the TS1202 transform error").toContain(
+      "Import assignment cannot be used when targeting ECMAScript modules",
+    );
+    expect(ran.stderr).not.toContain("require is not defined");
+  });
 });
