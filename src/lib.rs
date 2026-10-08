@@ -252,6 +252,15 @@ const NODE_MODULES_PATH: &str = "/node_modules/";
 #[cfg(target_os = "windows")]
 const NODE_MODULES_PATH: &str = "\\node_modules\\";
 
+/// `OXC_TRANSFORM_ALL` is enabled by presence with an explicit opt-out: absent,
+/// empty, `"0"`, or `"false"` all mean disabled — matching Node.js-style flag
+/// semantics where setting it to a false value must not enable it.
+fn transform_all_enabled() -> bool {
+    env::var("OXC_TRANSFORM_ALL")
+        .map(|value| !value.is_empty() && value != "0" && value != "false")
+        .unwrap_or(false)
+}
+
 /// The `file:` URL scheme prefix; on POSIX the absolute path follows it
 /// directly.
 #[cfg(not(windows))]
@@ -1015,7 +1024,7 @@ pub fn create_resolve<'env>(
         // Node.js does classify (`.ts`/`.cts`/`.mts`, `.wasm`, addons) stay
         // deferred either way.
         let transformable_dependency = || {
-            env::var_os("OXC_TRANSFORM_ALL").is_some()
+            transform_all_enabled()
                 && p.to_str().map(|p| p.contains(NODE_MODULES_PATH)).unwrap_or(false)
                 && match p.extension().and_then(|ext| ext.to_str()) {
                     None => true,
@@ -1201,11 +1210,7 @@ fn load_commonjs_esm(
         return Ok(None);
     }
     // The same skip as the transform below: dependencies are left alone unless asked for.
-    if env::var("OXC_TRANSFORM_ALL")
-        .map(|value| value.is_empty() || value == "0" || value == "false")
-        .unwrap_or(true)
-        && url.contains("/node_modules/")
-    {
+    if !transform_all_enabled() && url.contains("/node_modules/") {
         return Ok(None);
     }
     // A `?query` or `#fragment` suffix belongs to the module URL, not to the file on disk.
@@ -1326,12 +1331,7 @@ fn transform_output(
             // dependencies too — `OXC_TRANSFORM_ALL` decides whether their *source* is
             // transpiled, and skipping this would hand Node.js raw JSON to run as an ES
             // module.
-            if !is_json
-                && env::var("OXC_TRANSFORM_ALL")
-                    .map(|value| value.is_empty() || value == "0" || value == "false")
-                    .unwrap_or(true)
-                && url.contains("/node_modules/")
-            {
+            if !is_json && !transform_all_enabled() && url.contains("/node_modules/") {
                 tracing::debug!("Skip transforming node_modules {}", url);
                 return Ok(output);
             }
