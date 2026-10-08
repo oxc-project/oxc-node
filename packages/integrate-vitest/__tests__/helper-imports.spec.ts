@@ -3,6 +3,7 @@ import {
   cpSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -267,7 +268,12 @@ describe("global install (no @oxc-node/core in the project)", () => {
 // `requireHelper.resolve`. The last-registered copy is the one whose transform hooks
 // wrap all subsequently loaded code, so it owns the helpers; each copy marks its own
 // `defineProperty` here so the executed code reports which copy supplied it.
-describe("two registered copies of the loader", () => {
+// A second copy only works where the binding is a file inside this package: the WASI
+// job's `oxc-node.wasi.cjs` needs `@oxc-node/core-wasm32-wasi` and `@napi-rs/wasm-runtime`
+// from the workspace store, which a bare copy of this directory does not have.
+const hasNativeBinding = readdirSync(CORE).some((name) => name.endsWith(".node"));
+
+describe.skipIf(!hasNativeBinding)("two registered copies of the loader", () => {
   // Copies must be real directories, not symlinks to one path: Node.js keys the module
   // registry on realpaths, so two links to the same core would be a single copy.
   function copyOfCore(root: string, name: string): string {
