@@ -639,6 +639,9 @@ fn parse_source<'a>(
     Parsed { program, diagnostics, module_record, only_module_parse: false }
 }
 
+// The callers pass a grab-bag of parse and transform decisions; grouping them into a
+// struct would shuffle more code than it clarifies.
+#[allow(clippy::too_many_arguments)]
 fn oxc_transform<S: TryAsStr>(
     src_path: &Path,
     code: &S,
@@ -707,6 +710,7 @@ fn oxc_transform<S: TryAsStr>(
 /// Semantic analysis, transform and codegen for an already-parsed program. Split from
 /// parsing so the CommonJS sniff path can decide from the parse result and transform
 /// straight away, without a second parse.
+#[allow(clippy::too_many_arguments)]
 fn transform_program<'a>(
     allocator: &'a Allocator,
     src_path: &Path,
