@@ -514,6 +514,24 @@ fn use_define_for_class_fields(compiler_options: Option<&CompilerOptions>) -> bo
         .is_none_or(target_has_native_class_fields)
 }
 
+/// Maps a tsconfig `compilerOptions.jsx` value to the [`JsxRuntime`] plus the
+/// `development` flag. The values are `tsc`'s — `react`, `react-jsx`, `react-jsxdev`,
+/// `preserve` and `react-native` — matched case-insensitively because `tsc` accepts any
+/// casing of enum options and `oxc_resolver` hands us the verbatim string.
+/// `react-jsxdev` is the automatic runtime in development mode, which emits `jsxDEV` from
+/// `{jsxImportSource}/jsx-dev-runtime` and enables the `__self`/`__source` plugins.
+/// `preserve` and `react-native` have no runnable equivalent under Node.js — this pipeline
+/// cannot leave JSX untranspiled — so like any unknown value they fall back to the
+/// automatic runtime. The Babel spellings `automatic`/`classic` stay accepted for anyone
+/// passing them directly.
+fn jsx_runtime(jsx: &str) -> (JsxRuntime, bool) {
+    match jsx.to_ascii_lowercase().as_str() {
+        "react" | "classic" => (JsxRuntime::Classic, false),
+        "react-jsxdev" => (JsxRuntime::Automatic, true),
+        _ => (JsxRuntime::Automatic, false),
+    }
+}
+
 /// Whether a TypeScript `target` is `ES2022` or later, `ESNext` included.
 fn target_has_native_class_fields(target: &str) -> bool {
     if target.eq_ignore_ascii_case("esnext") {
@@ -684,19 +702,23 @@ fn transform_program<'a>(
                     .and_then(|c| c.strict_null_checks)
                     .unwrap_or(false),
             },
-            jsx: JsxOptions {
-                runtime: compiler_options
-                    .and_then(|c| c.jsx.as_ref())
-                    .map(|s| match s.as_str() {
-                        "automatic" => JsxRuntime::Automatic,
-                        "classic" => JsxRuntime::Classic,
-                        _ => JsxRuntime::default(),
-                    })
-                    .unwrap_or_default(),
-                import_source: compiler_options.and_then(|c| c.jsx_import_source.clone()),
-                pragma: compiler_options.and_then(|c| c.jsx_factory.clone()),
-                pragma_frag: compiler_options.and_then(|c| c.jsx_fragment_factory.clone()),
-                ..Default::default()
+            jsx: {
+                // `compilerOptions.jsx` holds `tsc`'s values (`react`, `react-jsx`,
+                // `react-jsxdev`, ...), not Babel's runtime names — mapping them is what
+                // `jsx_runtime` is for. `(JsxRuntime::Automatic, false)` is `Default`, so
+                // an unset option reproduces the automatic production runtime.
+                let (runtime, development) = compiler_options
+                    .and_then(|c| c.jsx.as_deref())
+                    .map(jsx_runtime)
+                    .unwrap_or_default();
+                JsxOptions {
+                    runtime,
+                    development,
+                    import_source: compiler_options.and_then(|c| c.jsx_import_source.clone()),
+                    pragma: compiler_options.and_then(|c| c.jsx_factory.clone()),
+                    pragma_frag: compiler_options.and_then(|c| c.jsx_fragment_factory.clone()),
+                    ..Default::default()
+                }
             },
             typescript: TypeScriptOptions {
                 // `TypeScriptOptions` holds `Cow<'static, str>`, and the compiler
