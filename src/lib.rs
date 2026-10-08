@@ -701,7 +701,13 @@ fn transform_program<'a>(
     module_target: Option<Module>,
     enable_top_level_await: bool,
 ) -> Result<Output> {
-    let scoping = SemanticBuilder::new().build(program).semantic.into_scoping();
+    // `with_enum_eval` pre-computes each enum member's value for the transformer.
+    // Without it, a member that initializes another member (e.g. `Default = Theme.Light`)
+    // emits a reverse mapping `Theme[Theme["Default"] = Theme.Light] = "Default"` that
+    // overwrites the aliased key at run time (issue #795, oxc#21667); debug builds of
+    // `oxc_transformer` assert on the missing flag outright.
+    let scoping =
+        SemanticBuilder::new().with_enum_eval(true).build(program).semantic.into_scoping();
 
     let use_define_for_class_fields = use_define_for_class_fields(compiler_options);
     // `useDefineForClassFields` selects `[[Define]]` semantics; oxc's `setPublicClassFields`
