@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     env, fs, mem,
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex, OnceLock, PoisonError},
 };
 
 use napi::bindgen_prelude::*;
@@ -246,6 +246,27 @@ fn tsconfig_lookup_path<'a>(cwd: &Path, path: &'a Path) -> Cow<'a, Path> {
 
 static RESOLVER_AND_TSCONFIG: OnceLock<(Resolver, TsconfigSource)> = OnceLock::new();
 
+/// Resolvers for the export conditions resolve requests have asked for so far,
+/// each cloned from the base [`RESOLVER_AND_TSCONFIG`] resolver so they all
+/// share its caches. Conditions are part of every request, so the base resolver
+/// must not keep whichever set its first caller happened to pass: a `require()`
+/// of a TypeScript file initialises it with none, and a later `import()` would
+/// then pick a package's `default` export over `import`.
+static CONDITION_RESOLVERS: Mutex<Vec<(Vec<String>, Arc<Resolver>)>> = Mutex::new(Vec::new());
+
+fn resolver_for_conditions(base: &Resolver, conditions: &[String]) -> Arc<Resolver> {
+    let mut resolvers = CONDITION_RESOLVERS.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, resolver)) = resolvers.iter().find(|(names, _)| names == conditions) {
+        return Arc::clone(resolver);
+    }
+    let resolver = Arc::new(base.clone_with_options(ResolveOptions {
+        condition_names: conditions.to_vec(),
+        ..base.options().clone()
+    }));
+    resolvers.push((conditions.to_vec(), Arc::clone(&resolver)));
+    resolver
+}
+
 #[cfg(not(target_os = "windows"))]
 const NODE_MODULES_PATH: &str = "/node_modules/";
 
@@ -433,8 +454,7 @@ impl Task for TransformTask {
         let cwd = PathBuf::from(&self.cwd);
         // Worked out before `cwd` is moved into the initialiser.
         let lookup_path = tsconfig_lookup_path(&cwd, src_path).into_owned();
-        let (resolver, tsconfig_source) =
-            RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd, vec![]));
+        let (resolver, tsconfig_source) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd));
         let resolved_tsconfig = tsconfig_source.for_path(resolver, &lookup_path);
         oxc_transform(
             src_path,
@@ -488,8 +508,7 @@ impl OxcTransformer {
         let src_path = Path::new(&path);
         // Worked out before `cwd` is moved into the initialiser.
         let lookup_path = tsconfig_lookup_path(&cwd, src_path).into_owned();
-        let (resolver, tsconfig_source) =
-            RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd, vec![]));
+        let (resolver, tsconfig_source) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd));
         let resolved_tsconfig = tsconfig_source.for_path(resolver, &lookup_path);
         oxc_transform(
             src_path,
@@ -931,10 +950,10 @@ pub fn create_resolve<'env>(
     #[cfg(not(target_family = "wasm"))]
     let cwd = env::current_dir()?;
 
-    let conditions = context.conditions.as_slice();
-
-    let (resolver, tsconfig_source) =
-        RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone(), conditions.to_vec()));
+    let (base_resolver, tsconfig_source) =
+        RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone()));
+    let resolver = resolver_for_conditions(base_resolver, &context.conditions);
+    let resolver = resolver.as_ref();
 
     // A `file:` URL is an absolute path in every form Node.js hands over,
     // UNC `file://server/…` included. Schemes are case-insensitive, so
@@ -1510,7 +1529,7 @@ fn default_module_from_tsconfig(tsconfig: Option<&TsConfig>) -> Option<&'static 
     .then_some("module")
 }
 
-fn init_resolver(cwd: PathBuf, conditions: Vec<String>) -> (Resolver, TsconfigSource) {
+fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
     // An explicitly requested config always wins over discovery.
     let explicit_tsconfig =
         non_empty_env("TS_NODE_PROJECT").or_else(|| non_empty_env("OXC_TSCONFIG_PATH"));
@@ -1542,7 +1561,6 @@ fn init_resolver(cwd: PathBuf, conditions: Vec<String>) -> (Resolver, TsconfigSo
 
     let resolver = Resolver::new(ResolveOptions {
         tsconfig,
-        condition_names: conditions,
         extension_alias: vec![
             (".js".to_owned(), vec![".js".to_owned(), ".ts".to_owned(), ".tsx".to_owned()]),
             (".mjs".to_owned(), vec![".mjs".to_owned(), ".mts".to_owned()]),
