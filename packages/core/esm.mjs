@@ -25,12 +25,8 @@ if (!isMainThread) {
 // resolves against the copy that emitted it.
 const HELPER_SPECIFIER_PREFIX = "@oxc-node/core/helpers/";
 const HELPER_TAGGED_PREFIX = "@oxc-node/core@";
-const HELPER_TAG =
-  "c" +
-  createHash("sha256")
-    .update(import.meta.url)
-    .digest("hex")
-    .slice(0, 12);
+const helperTag = (url) => "c" + createHash("sha256").update(url).digest("hex").slice(0, 12);
+const HELPER_TAG = helperTag(import.meta.url);
 const HELPER_MODULE_NAME = `${HELPER_TAGGED_PREFIX}${HELPER_TAG}`;
 
 const requireHelper = createRequire(import.meta.url);
@@ -42,6 +38,12 @@ const requireHelper = createRequire(import.meta.url);
 const HELPER_RESOLVERS = Symbol.for("@oxc-node/core:helperResolvers");
 const helperResolvers = (globalThis[HELPER_RESOLVERS] ??= {});
 helperResolvers[HELPER_TAG] = (subpath) => requireHelper.resolve(`@oxc-node/core/${subpath}`);
+// `require()` of a `.cts` file with module syntax is transformed by the `pirates` hook in
+// this copy's register.mjs, so its helper imports carry register.mjs's tag, and Node.js
+// then runs the output as an ES module whose imports resolve through these hooks. Both
+// files ship in one package and share its helpers, so that tag resolves here too.
+helperResolvers[helperTag(new URL("register.mjs", import.meta.url).href)] =
+  helperResolvers[HELPER_TAG];
 
 function resolveHelperPath(specifier) {
   if (specifier.startsWith(HELPER_TAGGED_PREFIX)) {

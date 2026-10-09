@@ -603,20 +603,37 @@ fn has_esm_syntax(program: &Program<'_>, module_record: &ModuleRecord<'_>) -> bo
         })
 }
 
-/// A parsed source, plus whether it became valid only when parsed as a module — a
-/// top-level `for await` without any `import`/`export`/`import.meta`, which oxc cannot
-/// resolve to a module on its own.
+/// A parsed source, plus whether it was reparsed as a module: either it became valid only
+/// when parsed as one — a top-level `for await` without any `import`/`export`/
+/// `import.meta`, which oxc cannot resolve to a module on its own — or it is a `.cts` file
+/// with module syntax (see [`is_cts`]).
 struct Parsed<'a> {
     program: Program<'a>,
     diagnostics: Diagnostics,
     module_record: ModuleRecord<'a>,
-    only_module_parse: bool,
+    module_reparse: bool,
+}
+
+/// Whether the source type is a `.cts` file, CommonJS TypeScript.
+///
+/// tsc (`module: nodenext`) and tsx compile a `.cts` file's `import`/`export` to
+/// CommonJS, but oxc has no ESM-to-CommonJS module transform, so the declarations would
+/// reach Node.js intact inside a CommonJS file — and fail differently on every load path:
+/// `ERR_REQUIRE_CYCLE_MODULE` as an entry point, no named exports when imported, and
+/// `require is not defined in ES module scope` from the injected helpers when
+/// `require()`d (#811). A `.cts` file with module syntax therefore runs as an ES module on
+/// every path instead, with its helpers imported; one without stays CommonJS.
+fn is_cts(source_type: SourceType) -> bool {
+    source_type.is_typescript() && source_type.is_commonjs()
 }
 
 /// Parses once, and retries in module mode when the first parse failed: a file that
 /// only becomes valid as a module is one. Node.js's own syntax detection counts
 /// top-level await as module syntax, so such a file reported as `commonjs` must not be
 /// handed to the CommonJS machinery, which rejects it.
+///
+/// A `.cts` file with module syntax is reparsed as a module on every path, whatever
+/// `allow_module_retry` says — see [`is_cts`].
 fn parse_source<'a>(
     allocator: &'a Allocator,
     source: &'a str,
@@ -625,6 +642,22 @@ fn parse_source<'a>(
 ) -> Parsed<'a> {
     let ParserReturn { program, diagnostics, module_record, .. } =
         Parser::new(allocator, source, source_type).parse();
+    // The CommonJS parse accepts `import`/`export` declarations but may reject other
+    // module syntax, such as `import.meta`, so a failed parse is worth a retry too. The
+    // retry has to find module syntax itself: a `.cts` file that is merely invalid keeps
+    // its own diagnostics.
+    if is_cts(source_type) && (!diagnostics.is_empty() || has_esm_syntax(&program, &module_record))
+    {
+        let retry = Parser::new(allocator, source, source_type.with_module(true)).parse();
+        if retry.diagnostics.is_empty() && has_esm_syntax(&retry.program, &retry.module_record) {
+            return Parsed {
+                program: retry.program,
+                diagnostics: retry.diagnostics,
+                module_record: retry.module_record,
+                module_reparse: true,
+            };
+        }
+    }
     if allow_module_retry && source_type.is_unambiguous() && !diagnostics.is_empty() {
         let retry = Parser::new(allocator, source, source_type.with_module(true)).parse();
         if retry.diagnostics.is_empty() {
@@ -632,11 +665,11 @@ fn parse_source<'a>(
                 program: retry.program,
                 diagnostics: retry.diagnostics,
                 module_record: retry.module_record,
-                only_module_parse: true,
+                module_reparse: true,
             };
         }
     }
-    Parsed { program, diagnostics, module_record, only_module_parse: false }
+    Parsed { program, diagnostics, module_record, module_reparse: false }
 }
 
 // The callers pass a grab-bag of parse and transform decisions; grouping them into a
@@ -662,7 +695,7 @@ fn oxc_transform<S: TryAsStr>(
     let allow_module_retry = !is_es_module
         && matches!(module_target, Some(Module::Preserve))
         && source_type.is_unambiguous();
-    let Parsed { mut program, diagnostics, module_record, only_module_parse } =
+    let Parsed { mut program, diagnostics, module_record, module_reparse } =
         parse_source(&allocator, source_str, source_type, allow_module_retry);
     if !diagnostics.is_empty() {
         let msg = join_errors(diagnostics.into_vec(), source_str);
@@ -679,18 +712,22 @@ fn oxc_transform<S: TryAsStr>(
     // named exports to `cjs-module-lexer`. Node.js runs the same file as an ES module when
     // it is `require()`d, so report it as one. Only the load-hook path can — it is the one
     // that reports a format back — and it passes `Module::Preserve`; the `pirates` hook and
-    // the public API feed Node's CommonJS machinery, which has its own retry. Only the
-    // ambiguous extensions may flip: `.cts`/`.cjs` are CommonJS by contract, and their
-    // source type emits `require()` for helpers, which an ES module cannot run.
+    // the public API feed Node's CommonJS machinery, which has its own retry. Otherwise
+    // only the ambiguous extensions may flip: `.cjs` is CommonJS by contract, and its
+    // source type emits `require()` for helpers, which an ES module cannot run. A `.cts`
+    // file with module syntax was already reparsed as a module, on every path, so its
+    // helpers are imported and Node.js runs it as an ES module wherever it is loaded from
+    // — see `is_cts`.
     let flip_to_module =
-        only_module_parse || (allow_module_retry && parsed_as_esm(&program, &module_record));
+        module_reparse || (allow_module_retry && parsed_as_esm(&program, &module_record));
 
     // `Module::Esm` and `Module::Preserve` emit identically for ES module input; the only
     // difference is that `Esm` makes the `import =` / `export =` lowerings report a
     // transform error instead of emitting a bare `require()` / `module.exports` that would
     // crash at run time in a file Node.js runs as ESM. tsc rejects the same constructs in
     // ES module output (TS1202/TS1203), and Node's own type stripping rejects them at load
-    // time. A `.cts` file keeps `Preserve` — its `import =` needs `require()`.
+    // time. A `.cts` file without module syntax keeps `Preserve` — its `import =` needs
+    // `require()`.
     let effective_module =
         if is_es_module || flip_to_module { Some(Module::Esm) } else { module_target };
 
@@ -1251,9 +1288,10 @@ fn load_commonjs_esm(
     // A `?query` or `#fragment` suffix belongs to the module URL, not to the file on disk.
     let Some(path) = file_url_to_path(url_path(url)) else { return Ok(None) };
     let Ok(source_type) = SourceType::from_path(&path) else { return Ok(None) };
-    // Only the ambiguous extensions may flip: `.cts`/`.cjs` are CommonJS by contract, and
-    // their source type emits `require()` for helpers, which an ES module cannot run.
-    if !source_type.is_unambiguous() {
+    // Only the ambiguous extensions and `.cts` may flip: `.cjs` is CommonJS by contract,
+    // and its source type emits `require()` for helpers, which an ES module cannot run.
+    // `parse_source` reparses a `.cts` file with module syntax as a module — see `is_cts`.
+    if !source_type.is_unambiguous() && !is_cts(source_type) {
         return Ok(None);
     }
     // `read_to_string` would validate UTF-8 with std's scalar check; the SIMD pass is the
@@ -1261,11 +1299,12 @@ fn load_commonjs_esm(
     let Ok(bytes) = std::fs::read(&path) else { return Ok(None) };
     let Ok(source) = simdutf8::basic::from_utf8(&bytes) else { return Ok(None) };
     let allocator = Allocator::default();
-    // `only_module_parse` covers the shapes oxc cannot resolve on its own, such as a
-    // top-level `for await`; `parsed_as_esm` covers the rest, including top-level await.
-    let Parsed { mut program, diagnostics, module_record, only_module_parse } =
+    // `module_reparse` covers `.cts` files with module syntax and the shapes oxc cannot
+    // resolve on its own, such as a top-level `for await`; `parsed_as_esm` covers the
+    // rest, including top-level await.
+    let Parsed { mut program, diagnostics, module_record, module_reparse } =
         parse_source(&allocator, source, source_type, true);
-    if !(only_module_parse || parsed_as_esm(&program, &module_record)) {
+    if !(module_reparse || parsed_as_esm(&program, &module_record)) {
         return Ok(None);
     }
     // From here on the file is handed back as an ES module, so surface parse errors
