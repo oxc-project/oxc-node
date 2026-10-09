@@ -260,14 +260,14 @@ describe("a CommonJS package", () => {
 });
 
 /**
- * tsc (`module: nodenext`) and tsx compile a `.cts` file's `import`/`export` to CommonJS.
- * oxc has no ESM-to-CommonJS transform, so oxc-node runs such a file as an ES module
- * instead — on every load path, with its runtime helpers imported rather than
- * `require()`d. Before #811 each path failed differently: `ERR_REQUIRE_CYCLE_MODULE` as
- * an entry point, no named exports when imported, and `require is not defined in ES
- * module scope` from the injected helpers when `require()`d.
+ * tsc (`module: nodenext`) and tsx compile a `.cts` file's `import`/`export` to CommonJS,
+ * but oxc has no ESM-to-CommonJS transform. Before #811 such a file failed differently on
+ * every load path: `ERR_REQUIRE_CYCLE_MODULE` as an entry point, no named exports when
+ * imported, and `require is not defined in ES module scope` from the injected helpers
+ * when `require()`d. Every path now reports one error that says what to do instead.
  */
 describe("a .cts file with module syntax (#811)", () => {
+  const CTS_ERROR = "a `.cts` file is CommonJS, but this one uses ES module syntax";
   // With no tsconfig the class field is lowered through a runtime helper, which is what
   // broke `require()`: the helper was `require()`d inside an ES module.
   const BOTH = [
@@ -277,8 +277,20 @@ describe("a .cts file with module syntax (#811)", () => {
     "export function describe(): number {",
     "  return new Counter().count;",
     "}",
-    'console.log("cts format:", typeof require === "undefined" ? "module" : "commonjs");',
   ].join("\n");
+
+  function runFailing(root: string, entry: string): string {
+    const result = spawnSync(process.execPath, ["--import", "@oxc-node/core/register", entry], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: undefined, OXC_LOG: undefined },
+      timeout: 30_000,
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.error, result.error?.message).toBeFalsy();
+    expect(result.status, output).not.toBe(0);
+    return output;
+  }
 
   test.each([
     ["module", "an entry point", "./both.cts"],
@@ -287,7 +299,7 @@ describe("a .cts file with module syntax (#811)", () => {
     ["commonjs", "an entry point", "./both.cts"],
     ["commonjs", "an import", "./import.mts"],
     ["commonjs", "require() from a CommonJS file", "./main.cjs"],
-  ])("runs as an ES module in a %s package through %s", (type, _path, entry) => {
+  ])("is rejected with one error in a %s package through %s", (type, _path, entry) => {
     const root = fixture({
       "package.json": JSON.stringify({ name: "fx", private: true, type }),
       "both.cts": BOTH,
@@ -300,22 +312,20 @@ describe("a .cts file with module syntax (#811)", () => {
       ].join("\n"),
       "main.cjs": 'console.log("result:", require("./both.cts").describe());\n',
     });
-    const output = run(root, entry);
-    expect(output).toContain("cts format: module");
-    if (entry !== "./both.cts") {
-      expect(output).toContain("result: 1");
-    }
+    const output = runFailing(root, entry);
+    expect(output).toContain(CTS_ERROR);
+    expect(output).not.toContain("result:");
   });
 
-  test("a file whose only module syntax is import.meta runs as an ES module", () => {
+  test("a file whose only module syntax is import.meta gets the same error", () => {
     const root = fixture({
       "package.json": COMMONJS,
-      "entry.cts": 'console.log("meta:", import.meta.url.startsWith("file:"));\n',
+      "entry.cts": 'console.log("meta:", import.meta.url);\n',
     });
-    expect(run(root, "./entry.cts")).toContain("meta: true");
+    expect(runFailing(root, "./entry.cts")).toContain(CTS_ERROR);
   });
 
-  test("a file without module syntax stays CommonJS", () => {
+  test("CommonJS syntax still runs as CommonJS", () => {
     const root = fixture({
       "package.json": JSON.stringify({ name: "fx", private: true, type: "module" }),
       "legacy.cts": [
@@ -335,4 +345,38 @@ describe("a .cts file with module syntax (#811)", () => {
     expect(output).toContain("cts format: commonjs");
     expect(output).toContain("legacy: 1 function");
   });
+
+  test.each([
+    ["an entry point", "./types-only.cts"],
+    ["an import", "./entry.mts"],
+    ["require()", "./main.cjs"],
+  ])(
+    "type-only imports and exports are erased and the file stays CommonJS as %s",
+    (_path, entry) => {
+      // TypeScript allows type-only module syntax in a CommonJS file. The transform used to
+      // replace it with an empty `export {}`, which made Node.js run the file as an ES
+      // module, without `module` or `require`.
+      const root = fixture({
+        "package.json": COMMONJS,
+        "types.ts": "export type Count = number;\n",
+        "types-only.cts": [
+          'import type { Count } from "./types";',
+          "export type Doubled = Count;",
+          "export interface Box {",
+          "  count: Count;",
+          "}",
+          "const box: Box = { count: 2 };",
+          'console.log("cts format:", typeof require === "undefined" ? "module" : "commonjs");',
+          "module.exports = box;",
+        ].join("\n"),
+        "entry.mts": 'import box from "./types-only.cts";\nconsole.log("count:", box.count);\n',
+        "main.cjs": 'console.log("count:", require("./types-only.cts").count);\n',
+      });
+      const output = run(root, entry);
+      expect(output).toContain("cts format: commonjs");
+      if (entry !== "./types-only.cts") {
+        expect(output).toContain("count: 2");
+      }
+    },
+  );
 });

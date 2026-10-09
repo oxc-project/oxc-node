@@ -252,8 +252,8 @@ describe.each(["false", "true"])("a dependency, OXC_TRANSFORM_ALL=%s", (transfor
     // translator needs the source: deferring it with `source: null` like plain `commonjs`
     // is an invalid return shape. Node.js refuses type stripping in node_modules on every
     // path, so what has to hold is that *its* error is the one reported. The file sticks
-    // to CommonJS syntax: one with `import`/`export` runs as an ES module instead (#811),
-    // which `OXC_TRANSFORM_ALL` lets oxc-node transform itself.
+    // to CommonJS syntax: with `OXC_TRANSFORM_ALL` one with `import`/`export` is rejected
+    // by oxc-node's own transform first (#811).
     const root = fixture({
       "package.json": COMMONJS,
       "node_modules/ts-dep/package.json": JSON.stringify({

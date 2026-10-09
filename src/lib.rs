@@ -589,51 +589,89 @@ fn parsed_as_esm(program: &Program<'_>, module_record: &ModuleRecord<'_>) -> boo
 /// Whether the file carries ECMAScript module syntax — an `import`/`export` declaration
 /// or `import.meta`.
 fn has_esm_syntax(program: &Program<'_>, module_record: &ModuleRecord<'_>) -> bool {
-    !module_record.import_metas.is_empty()
-        || program.body.iter().any(|statement| {
-            matches!(
-                statement,
-                Statement::ImportDeclaration(_)
-                    | Statement::ExportAllDeclaration(_)
-                    | Statement::ExportDefaultDeclaration(_)
-                    | Statement::ExportDeclaration(_)
-                    | Statement::ExportNamedDeclaration(_)
-                    | Statement::ExportFromDeclaration(_)
-            )
-        })
+    !module_record.import_metas.is_empty() || has_module_declaration(program)
 }
 
-/// A parsed source, plus whether it was reparsed as a module: either it became valid only
-/// when parsed as one — a top-level `for await` without any `import`/`export`/
-/// `import.meta`, which oxc cannot resolve to a module on its own — or it is a `.cts` file
-/// with module syntax (see [`is_cts`]).
+/// Whether the program has an `import`/`export` declaration.
+fn has_module_declaration(program: &Program<'_>) -> bool {
+    program.body.iter().any(has_module_declaration_statement)
+}
+
+fn has_module_declaration_statement(statement: &Statement<'_>) -> bool {
+    matches!(
+        statement,
+        Statement::ImportDeclaration(_)
+            | Statement::ExportAllDeclaration(_)
+            | Statement::ExportDefaultDeclaration(_)
+            | Statement::ExportDeclaration(_)
+            | Statement::ExportNamedDeclaration(_)
+            | Statement::ExportFromDeclaration(_)
+    )
+}
+
+/// Whether a `.cts` file has an `import`/`export` declaration that needs compiling to
+/// CommonJS. An empty `export {}` exports nothing and is not one: the TypeScript transform
+/// appends it whenever it erases a file's last `import`/`export`, to keep the file a
+/// module.
+fn has_cts_module_declaration(program: &Program<'_>) -> bool {
+    program.body.iter().any(|statement| match statement {
+        Statement::ExportNamedDeclaration(decl) => !decl.specifiers.is_empty(),
+        _ => has_module_declaration_statement(statement),
+    })
+}
+
+/// Whether the source type is a `.cts` file, CommonJS TypeScript.
+fn is_cts(source_type: SourceType) -> bool {
+    source_type.is_typescript() && source_type.is_commonjs()
+}
+
+/// Whether a `.cts` file that failed to parse uses `import.meta`, which the CommonJS
+/// parse rejects as a syntax error: it parses cleanly as a module and has one.
+fn cts_uses_import_meta(source: &str, source_type: SourceType) -> bool {
+    let allocator = Allocator::default();
+    let ParserReturn { diagnostics, module_record, .. } =
+        Parser::new(&allocator, source, source_type.with_module(true)).parse();
+    diagnostics.is_empty() && !module_record.import_metas.is_empty()
+}
+
+/// The error for a `.cts` file that uses ECMAScript module syntax.
+///
+/// tsc (`module: nodenext`) and tsx compile a `.cts` file's `import`/`export` to
+/// CommonJS, but oxc has no ESM-to-CommonJS module transform: the module transform only
+/// rewrites TypeScript's `import =` / `export =`. The declarations would reach Node.js
+/// intact inside a CommonJS file, which fails differently on every load path —
+/// `ERR_REQUIRE_CYCLE_MODULE` as an entry point, no named exports when imported, and
+/// `require is not defined in ES module scope` from the injected helpers when
+/// `require()`d (#811). Every path reports this one error instead, as Node.js' own type
+/// stripping rejects such a file outright. Type-only imports and exports are erased by
+/// the transform first, so only syntax that would need compiling is reported.
+fn cts_module_syntax_error(path: &Path) -> Error {
+    Error::new(
+        Status::GenericFailure,
+        format!(
+            "Failed to transform {}: a `.cts` file is CommonJS, but this one uses ES module \
+             syntax (`import`, `export` or `import.meta`), which oxc-node does not compile to \
+             CommonJS. Rename it to `.mts` to run it as an ES module, or write it as \
+             CommonJS with `import x = require(\"...\")` and `export =`.",
+            path.display()
+        ),
+    )
+}
+
+/// A parsed source, plus whether it became valid only when parsed as a module — a
+/// top-level `for await` without any `import`/`export`/`import.meta`, which oxc cannot
+/// resolve to a module on its own.
 struct Parsed<'a> {
     program: Program<'a>,
     diagnostics: Diagnostics,
     module_record: ModuleRecord<'a>,
-    module_reparse: bool,
-}
-
-/// Whether the source type is a `.cts` file, CommonJS TypeScript.
-///
-/// tsc (`module: nodenext`) and tsx compile a `.cts` file's `import`/`export` to
-/// CommonJS, but oxc has no ESM-to-CommonJS module transform, so the declarations would
-/// reach Node.js intact inside a CommonJS file — and fail differently on every load path:
-/// `ERR_REQUIRE_CYCLE_MODULE` as an entry point, no named exports when imported, and
-/// `require is not defined in ES module scope` from the injected helpers when
-/// `require()`d (#811). A `.cts` file with module syntax therefore runs as an ES module on
-/// every path instead, with its helpers imported; one without stays CommonJS.
-fn is_cts(source_type: SourceType) -> bool {
-    source_type.is_typescript() && source_type.is_commonjs()
+    only_module_parse: bool,
 }
 
 /// Parses once, and retries in module mode when the first parse failed: a file that
 /// only becomes valid as a module is one. Node.js's own syntax detection counts
 /// top-level await as module syntax, so such a file reported as `commonjs` must not be
 /// handed to the CommonJS machinery, which rejects it.
-///
-/// A `.cts` file with module syntax is reparsed as a module on every path, whatever
-/// `allow_module_retry` says — see [`is_cts`].
 fn parse_source<'a>(
     allocator: &'a Allocator,
     source: &'a str,
@@ -642,22 +680,6 @@ fn parse_source<'a>(
 ) -> Parsed<'a> {
     let ParserReturn { program, diagnostics, module_record, .. } =
         Parser::new(allocator, source, source_type).parse();
-    // The CommonJS parse accepts `import`/`export` declarations but may reject other
-    // module syntax, such as `import.meta`, so a failed parse is worth a retry too. The
-    // retry has to find module syntax itself: a `.cts` file that is merely invalid keeps
-    // its own diagnostics.
-    if is_cts(source_type) && (!diagnostics.is_empty() || has_esm_syntax(&program, &module_record))
-    {
-        let retry = Parser::new(allocator, source, source_type.with_module(true)).parse();
-        if retry.diagnostics.is_empty() && has_esm_syntax(&retry.program, &retry.module_record) {
-            return Parsed {
-                program: retry.program,
-                diagnostics: retry.diagnostics,
-                module_record: retry.module_record,
-                module_reparse: true,
-            };
-        }
-    }
     if allow_module_retry && source_type.is_unambiguous() && !diagnostics.is_empty() {
         let retry = Parser::new(allocator, source, source_type.with_module(true)).parse();
         if retry.diagnostics.is_empty() {
@@ -665,11 +687,11 @@ fn parse_source<'a>(
                 program: retry.program,
                 diagnostics: retry.diagnostics,
                 module_record: retry.module_record,
-                module_reparse: true,
+                only_module_parse: true,
             };
         }
     }
-    Parsed { program, diagnostics, module_record, module_reparse: false }
+    Parsed { program, diagnostics, module_record, only_module_parse: false }
 }
 
 // The callers pass a grab-bag of parse and transform decisions; grouping them into a
@@ -695,9 +717,14 @@ fn oxc_transform<S: TryAsStr>(
     let allow_module_retry = !is_es_module
         && matches!(module_target, Some(Module::Preserve))
         && source_type.is_unambiguous();
-    let Parsed { mut program, diagnostics, module_record, module_reparse } =
+    let Parsed { mut program, diagnostics, module_record, only_module_parse } =
         parse_source(&allocator, source_str, source_type, allow_module_retry);
     if !diagnostics.is_empty() {
+        // `import`/`export` in a `.cts` file are checked in `transform_program`, once the
+        // type-only ones are erased.
+        if is_cts(source_type) && cts_uses_import_meta(source_str, source_type) {
+            return Err(cts_module_syntax_error(src_path));
+        }
         let msg = join_errors(diagnostics.into_vec(), source_str);
         return Err(Error::new(
             Status::GenericFailure,
@@ -712,22 +739,18 @@ fn oxc_transform<S: TryAsStr>(
     // named exports to `cjs-module-lexer`. Node.js runs the same file as an ES module when
     // it is `require()`d, so report it as one. Only the load-hook path can — it is the one
     // that reports a format back — and it passes `Module::Preserve`; the `pirates` hook and
-    // the public API feed Node's CommonJS machinery, which has its own retry. Otherwise
-    // only the ambiguous extensions may flip: `.cjs` is CommonJS by contract, and its
-    // source type emits `require()` for helpers, which an ES module cannot run. A `.cts`
-    // file with module syntax was already reparsed as a module, on every path, so its
-    // helpers are imported and Node.js runs it as an ES module wherever it is loaded from
-    // — see `is_cts`.
+    // the public API feed Node's CommonJS machinery, which has its own retry. Only the
+    // ambiguous extensions may flip: `.cts`/`.cjs` are CommonJS by contract, and their
+    // source type emits `require()` for helpers, which an ES module cannot run.
     let flip_to_module =
-        module_reparse || (allow_module_retry && parsed_as_esm(&program, &module_record));
+        only_module_parse || (allow_module_retry && parsed_as_esm(&program, &module_record));
 
     // `Module::Esm` and `Module::Preserve` emit identically for ES module input; the only
     // difference is that `Esm` makes the `import =` / `export =` lowerings report a
     // transform error instead of emitting a bare `require()` / `module.exports` that would
     // crash at run time in a file Node.js runs as ESM. tsc rejects the same constructs in
     // ES module output (TS1202/TS1203), and Node's own type stripping rejects them at load
-    // time. A `.cts` file without module syntax keeps `Preserve` — its `import =` needs
-    // `require()`.
+    // time. A `.cts` file keeps `Preserve` — its `import =` needs `require()`.
     let effective_module =
         if is_es_module || flip_to_module { Some(Module::Esm) } else { module_target };
 
@@ -765,6 +788,9 @@ fn transform_program<'a>(
     // `oxc_transformer` assert on the missing flag outright.
     let scoping =
         SemanticBuilder::new().with_enum_eval(true).build(program).semantic.into_scoping();
+    // Read before the transform: the TypeScript transform turns the source type into
+    // JavaScript on its way out.
+    let cts = is_cts(program.source_type);
 
     let use_define_for_class_fields = use_define_for_class_fields(compiler_options);
     // `useDefineForClassFields` selects `[[Define]]` semantics; oxc's `setPublicClassFields`
@@ -868,6 +894,20 @@ fn transform_program<'a>(
             Status::GenericFailure,
             format!("Failed to transform {}: {}", src_path.display(), msg),
         ));
+    }
+
+    if cts {
+        // What is left of the `import`/`export` declarations once the type-only ones are
+        // erased is ES module syntax that nothing here compiles to CommonJS.
+        if has_cts_module_declaration(program) {
+            return Err(cts_module_syntax_error(src_path));
+        }
+        // The empty `export {}` the transform appends when it erases a file's last
+        // `import`/`export` would make Node.js detect module syntax and run the file as an
+        // ES module, without `require` or `module`. It exports nothing, so drop it.
+        program.body.retain(|statement| {
+            !matches!(statement, Statement::ExportNamedDeclaration(decl) if decl.specifiers.is_empty())
+        });
     }
 
     let CodegenReturn { code, map, .. } = Codegen::new()
@@ -1288,10 +1328,12 @@ fn load_commonjs_esm(
     // A `?query` or `#fragment` suffix belongs to the module URL, not to the file on disk.
     let Some(path) = file_url_to_path(url_path(url)) else { return Ok(None) };
     let Ok(source_type) = SourceType::from_path(&path) else { return Ok(None) };
-    // Only the ambiguous extensions and `.cts` may flip: `.cjs` is CommonJS by contract,
-    // and its source type emits `require()` for helpers, which an ES module cannot run.
-    // `parse_source` reparses a `.cts` file with module syntax as a module — see `is_cts`.
-    if !source_type.is_unambiguous() && !is_cts(source_type) {
+    if is_cts(source_type) {
+        return reject_cts_module_syntax(&path, resolved_compiler_options);
+    }
+    // Only the ambiguous extensions may flip: `.cts`/`.cjs` are CommonJS by contract, and
+    // their source type emits `require()` for helpers, which an ES module cannot run.
+    if !source_type.is_unambiguous() {
         return Ok(None);
     }
     // `read_to_string` would validate UTF-8 with std's scalar check; the SIMD pass is the
@@ -1299,12 +1341,11 @@ fn load_commonjs_esm(
     let Ok(bytes) = std::fs::read(&path) else { return Ok(None) };
     let Ok(source) = simdutf8::basic::from_utf8(&bytes) else { return Ok(None) };
     let allocator = Allocator::default();
-    // `module_reparse` covers `.cts` files with module syntax and the shapes oxc cannot
-    // resolve on its own, such as a top-level `for await`; `parsed_as_esm` covers the
-    // rest, including top-level await.
-    let Parsed { mut program, diagnostics, module_record, module_reparse } =
+    // `only_module_parse` covers the shapes oxc cannot resolve on its own, such as a
+    // top-level `for await`; `parsed_as_esm` covers the rest, including top-level await.
+    let Parsed { mut program, diagnostics, module_record, only_module_parse } =
         parse_source(&allocator, source, source_type, true);
-    if !(module_reparse || parsed_as_esm(&program, &module_record)) {
+    if !(only_module_parse || parsed_as_esm(&program, &module_record)) {
         return Ok(None);
     }
     // From here on the file is handed back as an ES module, so surface parse errors
@@ -1336,6 +1377,47 @@ fn load_commonjs_esm(
         source: Some(Either4::B(Uint8Array::from_string(code_with_inline_map(transformed)))),
         response_url: Some(url.to_owned()),
     }))
+}
+
+/// A `.cts` file is CommonJS by contract and never flips, but one with ES module syntax
+/// is rejected here with the same error the source-bearing and `require()` paths report
+/// (see [`cts_module_syntax_error`]), instead of reaching Node.js' CommonJS machinery,
+/// which fails on it differently per path. Anything else falls through untouched — a
+/// file that does not parse included, so the CommonJS path reports its own error.
+fn reject_cts_module_syntax(
+    path: &Path,
+    resolved_compiler_options: Option<&CompilerOptions>,
+) -> Result<Option<LoadFnOutput>> {
+    let Ok(bytes) = std::fs::read(path) else { return Ok(None) };
+    let Ok(source) = simdutf8::basic::from_utf8(&bytes) else { return Ok(None) };
+    // Only the transform knows which `import`/`export` declarations are type-only, so a
+    // file with any declaration runs through it — the same options the `require()` path
+    // uses — and only its verdict is kept.
+    let Ok(source_type) = SourceType::from_path(path) else { return Ok(None) };
+    let allocator = Allocator::default();
+    let ParserReturn { mut program, diagnostics, .. } =
+        Parser::new(&allocator, source, source_type).parse();
+    if !diagnostics.is_empty() {
+        if cts_uses_import_meta(source, source_type) {
+            return Err(cts_module_syntax_error(path));
+        }
+        return Ok(None);
+    }
+    if !has_module_declaration(&program) {
+        return Ok(None);
+    }
+    // Any other error is the `require()` path's to report, with its own helper names.
+    let _ = transform_program(
+        &allocator,
+        path,
+        &mut program,
+        source,
+        resolved_compiler_options,
+        Some(Module::CommonJS),
+        true,
+        None,
+    );
+    if has_cts_module_declaration(&program) { Err(cts_module_syntax_error(path)) } else { Ok(None) }
 }
 
 /// The generated code with its source map appended as a data URL, if one was produced.
