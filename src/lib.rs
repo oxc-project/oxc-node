@@ -364,18 +364,23 @@ fn init() {
     use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
+    // Only install a subscriber when `OXC_LOG` is set, and never replace one that is
+    // already installed: this crate can be linked into another Node-API addon (e.g. Vite+)
+    // that sets up its own global subscriber.
+    // <https://github.com/oxc-project/oxc-node/issues/805>
+    let Ok(env_var) = std::env::var("OXC_LOG") else {
+        return;
+    };
+    let Ok(targets) = <Targets as std::str::FromStr>::from_str(&env_var) else {
+        return;
+    };
+
     // Usage without the `regex` feature.
     // <https://github.com/tokio-rs/tracing/issues/1436#issuecomment-918528013>
-    tracing_subscriber::registry()
-        .with(std::env::var("OXC_LOG").map_or_else(
-            |_| Targets::new(),
-            |env_var| {
-                use std::str::FromStr;
-                Targets::from_str(&env_var).unwrap()
-            },
-        ))
+    let _ = tracing_subscriber::registry()
+        .with(targets)
         .with(tracing_subscriber::fmt::layer())
-        .init();
+        .try_init();
 }
 
 #[napi]
