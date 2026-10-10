@@ -15,7 +15,7 @@ import { afterAll, expect, test } from "vitest";
 const CORE = fileURLToPath(new URL("../../core", import.meta.url));
 
 const EXPECTED_ERROR =
-  'decorators require `"experimentalDecorators": true` in tsconfig.json; ' +
+  'decorators require `"experimentalDecorators": true` in a tsconfig.json that includes this file; ' +
   "standard (TC39) decorators are not supported yet";
 
 const DECORATED = [
@@ -130,7 +130,7 @@ test("a decorated JavaScript file names allowJs too, and runs once it is set", (
   const rejected = run(files({ experimentalDecorators: true }), "./main.js");
   expect(rejected.status).not.toBe(0);
   expect(rejected.stderr).toContain(
-    'decorators require `"experimentalDecorators": true` and `"allowJs": true` in tsconfig.json',
+    'decorators require `"experimentalDecorators": true` and `"allowJs": true` in a tsconfig.json that includes this file',
   );
 
   const ran = run(files({ experimentalDecorators: true, allowJs: true }), "./main.js");

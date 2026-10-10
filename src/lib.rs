@@ -760,7 +760,8 @@ fn transform_program<'a>(
             Status::GenericFailure,
             format!(
                 "Failed to transform {}: decorators require `\"experimentalDecorators\": true`\
-                 {allow_js} in tsconfig.json; standard (TC39) decorators are not supported yet",
+                 {allow_js} in a tsconfig.json that includes this file; standard (TC39) \
+                 decorators are not supported yet",
                 src_path.display()
             ),
         ));
