@@ -251,14 +251,16 @@ describe.each(["false", "true"])("a dependency, OXC_TRANSFORM_ALL=%s", (transfor
     // `.cts` under node_modules is `commonjs-typescript` to Node.js, a format whose
     // translator needs the source: deferring it with `source: null` like plain `commonjs`
     // is an invalid return shape. Node.js refuses type stripping in node_modules on every
-    // path, so what has to hold is that *its* error is the one reported.
+    // path, so what has to hold is that *its* error is the one reported. The file sticks
+    // to CommonJS syntax: with `OXC_TRANSFORM_ALL` one with `import`/`export` is rejected
+    // by oxc-node's own transform first (#811).
     const root = fixture({
       "package.json": COMMONJS,
       "node_modules/ts-dep/package.json": JSON.stringify({
         name: "ts-dep",
         exports: "./index.cts",
       }),
-      "node_modules/ts-dep/index.cts": "const c: number = 3;\nexport { c };\n",
+      "node_modules/ts-dep/index.cts": "const c: number = 3;\nexports.c = c;\n",
       "entry.mts": ['import { c } from "ts-dep";', 'console.log("cts:", c);'].join("\n"),
     });
     runFailing(root, ["./entry.mts"], "ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING", env);

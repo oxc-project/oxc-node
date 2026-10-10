@@ -139,6 +139,11 @@ console.log(output.sourceMap());
 The standalone transformer emits CommonJS. The registered loader preserves the
 module format selected for ESM files.
 
+A `.cts` file is CommonJS, so it cannot use ES module syntax (`import`, `export`,
+or `import.meta`): oxc does not compile it to CommonJS the way `tsc` and `tsx` do,
+and the loader reports an error instead. Rename such a file to `.mts`, or write it
+with `import x = require()` and `export =`. Type-only imports and exports are fine.
+
 [ci-badge]: https://github.com/oxc-project/oxc-node/actions/workflows/CI.yml/badge.svg?branch=main
 [ci-url]: https://github.com/oxc-project/oxc-node/actions/workflows/CI.yml
 [npm-url]: https://npmx.dev/package/@oxc-node/core
