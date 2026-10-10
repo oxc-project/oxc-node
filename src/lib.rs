@@ -3,7 +3,10 @@ use std::{
     collections::HashMap,
     env, fs, mem,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, PoisonError},
+    sync::{
+        Arc, Mutex, OnceLock, PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use napi::bindgen_prelude::*;
@@ -404,6 +407,25 @@ fn init() {
         .try_init();
 }
 
+/// Whether the running Node.js executes `using` / `await using` declarations natively,
+/// which every release from 24 on does. Set once the addon is loaded; until then (and in
+/// `cargo test`, which never loads it) `using` keeps being lowered, which runs everywhere.
+static NATIVE_EXPLICIT_RESOURCE_MANAGEMENT: AtomicBool = AtomicBool::new(false);
+
+/// The first Node.js major that runs explicit resource management natively.
+const NATIVE_EXPLICIT_RESOURCE_MANAGEMENT_SINCE: u32 = 24;
+
+#[napi(module_exports)]
+pub fn detect_runtime_syntax(_exports: Object, env: Env) -> Result<()> {
+    // An unknown version (an older runtime, or a WASI host without the call) leaves the
+    // flag off and `using` lowered.
+    if let Ok(version) = env.get_node_version() {
+        NATIVE_EXPLICIT_RESOURCE_MANAGEMENT
+            .store(version.major >= NATIVE_EXPLICIT_RESOURCE_MANAGEMENT_SINCE, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
 #[napi]
 pub struct Output {
     code: String,
@@ -757,13 +779,20 @@ fn transform_program<'a>(
     // `useDefineForClassFields` selects `[[Define]]` semantics; oxc's `setPublicClassFields`
     // assumption selects the opposite, `[[Set]]`, so it is the negation of it.
     let set_public_class_fields = !use_define_for_class_fields;
+    let legacy_decorators =
+        compiler_options.and_then(|c| c.experimental_decorators).unwrap_or(false);
+    // Every Node.js release with `module.register()` runs class fields, `#private` members
+    // and static blocks natively, so they are only lowered where the emitted class has to
+    // differ from the source: `[[Set]]` field semantics, and legacy decorators, which are
+    // applied to the lowered class.
+    let lower_class_features = set_public_class_fields || legacy_decorators;
     let TransformerReturn { diagnostics, .. } = Transformer::new(
         allocator,
         src_path,
         &TransformOptions {
             assumptions: CompilerAssumptions { set_public_class_fields, ..Default::default() },
             decorator: DecoratorOptions {
-                legacy: compiler_options.and_then(|c| c.experimental_decorators).unwrap_or(false),
+                legacy: legacy_decorators,
                 emit_decorator_metadata: compiler_options
                     .and_then(|c| c.emit_decorator_metadata)
                     .unwrap_or(false),
@@ -821,17 +850,20 @@ fn transform_program<'a>(
             env: EnvOptions {
                 module: module_target.unwrap_or_default(),
                 es2022: ES2022Options {
-                    class_static_block: true,
+                    class_static_block: lower_class_features,
                     // `loose` stays `false`: it would also lower `#private` fields to
                     // string-keyed properties, which `tsc` never does. The assumption
                     // above alone selects `[[Set]]` for public fields — the transformer
                     // ORs the two together.
-                    class_properties: Some(ClassPropertiesOptions::default()),
+                    class_properties: lower_class_features.then(ClassPropertiesOptions::default),
                     // Turn this on would throw error for all top-level awaits; the caller
                     // clears it for a file flipping to an ES module, which keeps them.
                     top_level_await: enable_top_level_await,
                 },
-                es2026: ES2026Options { explicit_resource_management: true },
+                es2026: ES2026Options {
+                    explicit_resource_management: !NATIVE_EXPLICIT_RESOURCE_MANAGEMENT
+                        .load(Ordering::Relaxed),
+                },
                 ..Default::default()
             },
             proposals: ProposalOptions {},
