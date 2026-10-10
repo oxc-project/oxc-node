@@ -110,9 +110,9 @@ await import("@oxc-node/core/register");
 ```
 
 A path set this way takes precedence over both environment variables, and a
-relative path resolves against the current working directory. The config is read
-once per process, so call `setTsconfigPath` before the first transform or
-resolve; calling it later with a different path throws.
+relative path resolves against the working directory, just as theirs does. The
+config is read once per process, so call `setTsconfigPath` before the first
+transform or resolve; calling it later with a different path throws.
 
 The supported `tsconfig.json` options are used for resolution and
 transformation. These include path aliases, module and JSX settings, legacy

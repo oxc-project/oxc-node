@@ -80,10 +80,10 @@ export interface ResolveFnOutput {
  * spawns do not inherit a config chosen for the loader (issue #806).
  *
  * A path set here takes precedence over `TS_NODE_PROJECT` and
- * `OXC_TSCONFIG_PATH`. A relative path is resolved against the current working
- * directory at the time of the call. `null`, `undefined` or an empty string
- * clears the override and goes back to the environment variables, then to
- * discovery.
+ * `OXC_TSCONFIG_PATH`. A relative path is resolved against the working
+ * directory the loader runs in, like the environment variables. `null`,
+ * `undefined` or an empty string clears the override and goes back to the
+ * environment variables, then to discovery.
  *
  * The resolver and its tsconfig are shared by the whole process and created
  * on the first transform or resolve, so this has to run before that. Calling

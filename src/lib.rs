@@ -265,34 +265,20 @@ static TSCONFIG_OVERRIDE: Mutex<TsconfigOverride> =
 /// spawns do not inherit a config chosen for the loader (issue #806).
 ///
 /// A path set here takes precedence over `TS_NODE_PROJECT` and
-/// `OXC_TSCONFIG_PATH`. A relative path is resolved against the current working
-/// directory at the time of the call. `null`, `undefined` or an empty string
-/// clears the override and goes back to the environment variables, then to
-/// discovery.
+/// `OXC_TSCONFIG_PATH`. A relative path is resolved against the working
+/// directory the loader runs in, like the environment variables. `null`,
+/// `undefined` or an empty string clears the override and goes back to the
+/// environment variables, then to discovery.
 ///
 /// The resolver and its tsconfig are shared by the whole process and created
 /// on the first transform or resolve, so this has to run before that. Calling
 /// it afterwards throws, unless it names the config already in use.
 #[napi]
 pub fn set_tsconfig_path(path: Option<String>) -> Result<()> {
-    let path = match path.filter(|path| !path.is_empty()) {
-        Some(path) => {
-            let path = PathBuf::from(path);
-            Some(if path.is_absolute() {
-                path
-            } else {
-                env::current_dir()
-                    .map_err(|err| {
-                        Error::new(
-                            Status::GenericFailure,
-                            format!("Failed to read the current directory: {err}"),
-                        )
-                    })?
-                    .join(path)
-            })
-        }
-        None => None,
-    };
+    // Kept as given: a relative path is joined to the loader's working directory
+    // in `init_resolver`, exactly like the environment variables. The native
+    // current directory is not that directory under WASI.
+    let path = path.filter(|path| !path.is_empty()).map(PathBuf::from);
     let mut tsconfig_override = TSCONFIG_OVERRIDE.lock().unwrap_or_else(PoisonError::into_inner);
     if tsconfig_override.consumed {
         if tsconfig_override.path == path {
@@ -1606,15 +1592,16 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
     };
     tracing::debug!(api_tsconfig = ?api_tsconfig);
 
-    let explicit_tsconfig_path = api_tsconfig.or_else(|| {
+    let explicit_tsconfig = api_tsconfig.or_else(|| {
         let explicit_tsconfig =
             non_empty_env("TS_NODE_PROJECT").or_else(|| non_empty_env("OXC_TSCONFIG_PATH"));
         tracing::debug!(explicit_tsconfig = ?explicit_tsconfig);
-        explicit_tsconfig.map(|tsconfig| {
-            let tsconfig = PathBuf::from(tsconfig);
-            // `starts_with('/')` would misjudge `C:\...` on Windows.
-            if tsconfig.is_absolute() { tsconfig } else { cwd.join(tsconfig) }
-        })
+        explicit_tsconfig.map(PathBuf::from)
+    });
+
+    let explicit_tsconfig_path = explicit_tsconfig.map(|tsconfig| {
+        // `starts_with('/')` would misjudge `C:\...` on Windows.
+        if tsconfig.is_absolute() { tsconfig } else { cwd.join(tsconfig) }
     });
     tracing::debug!(explicit_tsconfig_path = ?explicit_tsconfig_path);
 

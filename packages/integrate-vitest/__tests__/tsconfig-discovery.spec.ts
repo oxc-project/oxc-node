@@ -230,7 +230,7 @@ test("setTsconfigPath pins a config and wins over the environment variables", ()
     "set-and-dump.mjs": SET_AND_DUMP,
   });
   try {
-    // A relative path resolves against the working directory of the call.
+    // A relative path resolves against the loader's working directory.
     const emitted = runNode(
       join(root, "sub"),
       [join(root, "set-and-dump.mjs"), "./entry.ts", "../elsewhere/tsconfig.json"],
