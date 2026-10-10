@@ -11,6 +11,13 @@ publish = false
 # only consumes the `cdylib` artifact.
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Leave the global allocator to the host. Enable this when linking oxc-node into
+# another binary that declares its own `#[global_allocator]` (a binary can only
+# have one). Named after `rolldown_binding`'s feature, so an addon linking both
+# enables the same feature on each. The published packages keep mimalloc.
+default_global_allocator = []
+
 [dependencies]
 memchr = "2"
 napi = { version = "3.12.2", default-features = false, features = ["serde-json", "napi3"] }
