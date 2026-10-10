@@ -9,8 +9,8 @@ const CORE_PATH = fileURLToPath(new URL("../../core", import.meta.url));
 
 // A legacy (`experimentalDecorators`) decorator is emitted through the
 // `_decorate` helper and is called with (target, key, descriptor). Without the
-// option the decorator is left in the output untouched, so both the emitted
-// code and the runtime behaviour tell the two apart.
+// option the transform fails with `NO_LEGACY_DECORATORS`, since no Node.js
+// release could run the decorator syntax it would otherwise leave behind.
 const DECORATED = `let seen = "absent";
 function dec(...args: any[]): any {
   seen =
@@ -37,6 +37,8 @@ const file = resolve(process.argv[2]);
 const transformer = new OxcTransformer(process.cwd());
 console.log(transformer.transform(file, readFileSync(file, "utf8")).source());
 `;
+
+const NO_LEGACY_DECORATORS = '"experimentalDecorators": true';
 
 const DECORATORS_TSCONFIG = JSON.stringify({
   compilerOptions: { experimentalDecorators: true, target: "ES2022" },
@@ -124,8 +126,8 @@ test("an ancestor tsconfig whose include does not cover the file is not applied"
   });
   try {
     const excluded = emit(root, join(root, "sub"), "./entry.ts");
-    expect(excluded.stdout, "sub/ is outside include, so no config applies").not.toContain(
-      "_decorate",
+    expect(excluded.stderr, "sub/ is outside include, so no config applies").toContain(
+      NO_LEGACY_DECORATORS,
     );
 
     const covered = emit(root, join(root, "other"), "./covered.ts");
@@ -164,10 +166,9 @@ test("an explicit TS_NODE_PROJECT that does not exist disables discovery entirel
     const emitted = emit(root, join(root, "sub"), "./entry.ts", {
       TS_NODE_PROJECT: join(root, "does-not-exist.json"),
     });
-    expect(
-      emitted.stdout,
-      "an explicit missing config must not fall back to discovery",
-    ).not.toContain("_decorate");
+    expect(emitted.stderr, "an explicit missing config must not fall back to discovery").toContain(
+      NO_LEGACY_DECORATORS,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
