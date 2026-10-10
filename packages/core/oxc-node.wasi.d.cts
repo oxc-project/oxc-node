@@ -84,6 +84,16 @@ export interface ResolveFnOutput {
   importAttributes?: Record<string, string> | null;
 }
 
+/** The path last passed to `setTsconfigPath`, exactly as given, or `null`. */
+export declare function getTsconfigPath(): string | null;
+
+/**
+ * Pin one `tsconfig.json` for every file without touching `process.env`. Takes
+ * precedence over `TS_NODE_PROJECT` and `OXC_TSCONFIG_PATH`; call it before the
+ * first transform or resolve.
+ */
+export declare function setTsconfigPath(path?: string | undefined | null): void;
+
 export declare function transform(path: string, source: string | Uint8Array): Output;
 
 export declare function transformAsync(

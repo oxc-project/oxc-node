@@ -291,6 +291,12 @@ test("setTsconfigPath throws once the config is in use, unless it names the same
   const root = createProject({
     "elsewhere/tsconfig.json": DECORATORS_TSCONFIG,
     "other/tsconfig.json": DECORATORS_TSCONFIG,
+    "env.mjs": `import { join } from "node:path";
+import { OxcTransformer, setTsconfigPath } from "@oxc-node/core";
+new OxcTransformer(process.cwd()).transform("entry.ts", "export {}");
+setTsconfigPath(join(process.cwd(), "elsewhere", "tsconfig.json"));
+console.log("ENV:ok");
+`,
     "late.mjs": `import { OxcTransformer, setTsconfigPath } from "@oxc-node/core";
 setTsconfigPath("elsewhere/tsconfig.json");
 new OxcTransformer(process.cwd()).transform("entry.ts", "export {}");
@@ -311,6 +317,13 @@ try {
     expect(ran.stdout).toContain(
       "OTHER:setTsconfigPath() must be called before the first transform or resolve",
     );
+
+    // A config that came from the environment is just as much "in use".
+    const fromEnv = runNode(root, [join(root, "env.mjs")], {
+      OXC_TSCONFIG_PATH: "elsewhere/tsconfig.json",
+    });
+    expect(fromEnv.stderr, "the run should not fail").toBe("");
+    expect(fromEnv.stdout).toContain("ENV:ok");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

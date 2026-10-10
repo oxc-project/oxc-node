@@ -96,7 +96,8 @@ export interface ResolveFnOutput {
  *
  * The resolver and its tsconfig are shared by the whole process and created
  * on the first transform or resolve, so this has to run before that. Calling
- * it afterwards throws, unless it names the config already in use.
+ * it afterwards throws, unless it names the config already in use, whether
+ * that came from here or from an environment variable.
  */
 export declare function setTsconfigPath(path?: string | undefined | null): void
 
