@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test } from "vitest";
 
 const CORE_PATH = fileURLToPath(new URL("../../core", import.meta.url));
@@ -268,7 +268,11 @@ await import("@oxc-node/core/register");
 `,
   });
   try {
-    const ran = runNode(join(root, "sub"), ["--import", join(root, "setup.mjs"), "./entry.ts"]);
+    const ran = runNode(join(root, "sub"), [
+      "--import",
+      pathToFileURL(join(root, "setup.mjs")).href,
+      "./entry.ts",
+    ]);
     expect(ran.stderr, "the run should not fail").toBe("");
     expect(ran.stdout.trim(), "legacy decorators should be transformed").toBe("DECORATOR:legacy");
   } finally {
