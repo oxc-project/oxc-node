@@ -752,11 +752,15 @@ fn transform_program<'a>(
     let legacy_decorators =
         compiler_options.and_then(|c| c.experimental_decorators).unwrap_or(false);
     if !legacy_decorators && has_decorator(program, source_str) {
+        // A tsconfig only claims JavaScript files with `allowJs` (see
+        // `TsconfigSource::for_importer`), so `experimentalDecorators` alone never reaches one.
+        let allow_js =
+            if program.source_type.is_javascript() { " and `\"allowJs\": true`" } else { "" };
         return Err(Error::new(
             Status::GenericFailure,
             format!(
-                "Failed to transform {}: decorators require `\"experimentalDecorators\": true` \
-                 in tsconfig.json; standard (TC39) decorators are not supported yet",
+                "Failed to transform {}: decorators require `\"experimentalDecorators\": true`\
+                 {allow_js} in tsconfig.json; standard (TC39) decorators are not supported yet",
                 src_path.display()
             ),
         ));
@@ -1655,7 +1659,10 @@ fn has_decorator(program: &Program<'_>, source: &str) -> bool {
         fn visit_ts_global_declaration(&mut self, _global: &TSGlobalDeclaration<'a>) {}
     }
 
-    if memchr::memchr(b'@', source.as_bytes()).is_none() {
+    // A declaration file is ambient throughout, `declare` or not, and emits nothing.
+    if program.source_type.is_typescript_definition()
+        || memchr::memchr(b'@', source.as_bytes()).is_none()
+    {
         return false;
     }
     let mut finder = DecoratorFinder(false);
@@ -1756,8 +1763,12 @@ mod tests {
     // file owns.
 
     fn parses_with_decorator(source: &str) -> bool {
+        parses_with_decorator_as(source, SourceType::ts())
+    }
+
+    fn parses_with_decorator_as(source: &str, source_type: SourceType) -> bool {
         let allocator = Allocator::default();
-        let ret = Parser::new(&allocator, source, SourceType::ts()).parse();
+        let ret = Parser::new(&allocator, source, source_type).parse();
         assert!(ret.diagnostics.is_empty(), "{source:?} should parse");
         has_decorator(&ret.program, source)
     }
@@ -1790,6 +1801,8 @@ mod tests {
         // Only the ambient part is skipped.
         assert!(parses_with_decorator("@dec declare class A {}\n@dec class B {}"));
         assert!(parses_with_decorator("namespace N { @dec class A {} }"));
+        // Everything in a declaration file is ambient, `declare` or not.
+        assert!(!parses_with_decorator_as("export @dec class A {}", SourceType::d_ts()));
     }
 
     #[cfg(not(windows))]

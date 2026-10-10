@@ -119,3 +119,34 @@ test("a decorator on an ambient declaration is erased with it", () => {
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout.trim()).toBe("ran:ambient");
 });
+
+test("a decorated JavaScript file names allowJs too, and runs once it is set", () => {
+  const files = (compilerOptions: Record<string, unknown>) => ({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({ compilerOptions }),
+    "main.js": DECORATED.replace("(value: unknown, _context: unknown)", "(value)"),
+  });
+
+  const rejected = run(files({ experimentalDecorators: true }), "./main.js");
+  expect(rejected.status).not.toBe(0);
+  expect(rejected.stderr).toContain(
+    'decorators require `"experimentalDecorators": true` and `"allowJs": true` in tsconfig.json',
+  );
+
+  const ran = run(files({ experimentalDecorators: true, allowJs: true }), "./main.js");
+  expect(ran.status, ran.stderr).toBe(0);
+  expect(ran.stdout.trim()).toBe("ran:Service");
+});
+
+test("a declaration file is erased whole, decorators included", () => {
+  const result = run(
+    {
+      "package.json": JSON.stringify({ type: "module" }),
+      "types.d.ts": "declare function dec(...args: unknown[]): any;\nexport @dec class A {}\n",
+      "main.ts": 'import "./types.d.ts";\nconsole.log("ran:dts");\n',
+    },
+    "./main.ts",
+  );
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout.trim()).toBe("ran:dts");
+});
