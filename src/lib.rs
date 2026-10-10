@@ -10,8 +10,11 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use oxc::{
     allocator::Allocator,
-    ast::ast::{Decorator, Program, Statement},
-    ast_visit::Visit,
+    ast::ast::{
+        Class, Decorator, Program, Statement, TSExternalModuleDeclaration, TSGlobalDeclaration,
+        TSNamespaceDeclaration,
+    },
+    ast_visit::{Visit, walk},
     codegen::{Codegen, CodegenOptions, CodegenReturn},
     diagnostics::{Diagnostics, OxcDiagnostic},
     parser::{Parser, ParserReturn},
@@ -1610,13 +1613,17 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
     (resolver, tsconfig_source)
 }
 
-/// Whether `program` contains a decorator.
+/// Whether `program` contains a decorator that survives type stripping.
 ///
 /// oxc lowers only legacy (`experimentalDecorators`) decorators; without that option it
 /// emits them untouched, and no Node.js release parses decorator syntax, so the file
 /// would fail at the `@` with a bare `SyntaxError: Invalid or unexpected token`. Finding
 /// one lets the transform say what to change instead. A decorator cannot be written
 /// without an `@`, so most files are ruled out by one `memchr` pass and never walked.
+///
+/// Ambient declarations (`declare class`, and anything inside `declare namespace`,
+/// `declare module "x"` or `declare global`) are erased whole, decorators included, and
+/// `tsc` accepts decorators there without `experimentalDecorators`, so they are skipped.
 fn has_decorator(program: &Program<'_>, source: &str) -> bool {
     struct DecoratorFinder(bool);
 
@@ -1624,6 +1631,28 @@ fn has_decorator(program: &Program<'_>, source: &str) -> bool {
         fn visit_decorator(&mut self, _decorator: &Decorator<'a>) {
             self.0 = true;
         }
+
+        fn visit_class(&mut self, class: &Class<'a>) {
+            if !class.declare {
+                walk::walk_class(self, class);
+            }
+        }
+
+        fn visit_ts_namespace_declaration(&mut self, namespace: &TSNamespaceDeclaration<'a>) {
+            if !namespace.declare {
+                walk::walk_ts_namespace_declaration(self, namespace);
+            }
+        }
+
+        // `module "x" {}` and `global {}` are only valid in an ambient context, so they
+        // are erased whether or not they carry `declare` themselves.
+        fn visit_ts_external_module_declaration(
+            &mut self,
+            _module: &TSExternalModuleDeclaration<'a>,
+        ) {
+        }
+
+        fn visit_ts_global_declaration(&mut self, _global: &TSGlobalDeclaration<'a>) {}
     }
 
     if memchr::memchr(b'@', source.as_bytes()).is_none() {
@@ -1749,6 +1778,18 @@ mod tests {
         assert!(!parses_with_decorator("/** @deprecated */ class A {}"));
         assert!(!parses_with_decorator("const email = \"a@b.c\";"));
         assert!(!parses_with_decorator("const t = `@${1}`; // @ts-ignore"));
+    }
+
+    #[test]
+    fn has_decorator_skips_ambient_declarations() {
+        assert!(!parses_with_decorator("@dec declare class A { @dec x: string }"));
+        assert!(!parses_with_decorator("export @dec declare class A {}"));
+        assert!(!parses_with_decorator("declare namespace N { @dec class A { @dec x: string } }"));
+        assert!(!parses_with_decorator("declare module \"m\" { @dec class A {} }"));
+        assert!(!parses_with_decorator("declare global { @dec class A {} }"));
+        // Only the ambient part is skipped.
+        assert!(parses_with_decorator("@dec declare class A {}\n@dec class B {}"));
+        assert!(parses_with_decorator("namespace N { @dec class A {} }"));
     }
 
     #[cfg(not(windows))]

@@ -104,3 +104,18 @@ test("an @ outside a decorator does not trip the check", () => {
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout.trim()).toBe("ran:3 A");
 });
+
+test("a decorator on an ambient declaration is erased with it", () => {
+  const result = run(
+    {
+      "package.json": JSON.stringify({ type: "module" }),
+      "main.ts":
+        "declare function dec(...args: unknown[]): any;\n" +
+        "@dec declare class A { @dec x: string }\n" +
+        'console.log("ran:ambient");\n',
+    },
+    "./main.ts",
+  );
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout.trim()).toBe("ran:ambient");
+});
