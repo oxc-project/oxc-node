@@ -292,10 +292,11 @@ test("setTsconfigPath throws once the config is in use, unless it names the same
     "elsewhere/tsconfig.json": DECORATORS_TSCONFIG,
     "other/tsconfig.json": DECORATORS_TSCONFIG,
     "env.mjs": `import { join } from "node:path";
-import { OxcTransformer, setTsconfigPath } from "@oxc-node/core";
+import { OxcTransformer, getTsconfigPath, setTsconfigPath } from "@oxc-node/core";
 new OxcTransformer(process.cwd()).transform("entry.ts", "export {}");
-setTsconfigPath(join(process.cwd(), "elsewhere", "tsconfig.json"));
-console.log("ENV:ok");
+const path = join(process.cwd(), "elsewhere", "tsconfig.json");
+setTsconfigPath(path);
+console.log(getTsconfigPath() === path ? "ENV:ok" : "ENV:not remembered");
 `,
     "late.mjs": `import { OxcTransformer, setTsconfigPath } from "@oxc-node/core";
 setTsconfigPath("elsewhere/tsconfig.json");

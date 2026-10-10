@@ -291,6 +291,9 @@ pub fn set_tsconfig_path(path: Option<String>) -> Result<()> {
             None => tsconfig_override.path.is_none(),
         };
         if same {
+            // Remember it, so `getTsconfigPath()` reports the accepted path even
+            // when the environment chose it first.
+            tsconfig_override.path = path;
             return Ok(());
         }
         return Err(Error::new(
