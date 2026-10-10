@@ -39,9 +39,12 @@ const CORE = dirname(fileURLToPath(REGISTER_URL));
  * A transform that needs a helper: a class field installed with `[[Define]]` semantics is
  * lowered to `@oxc-node/core/helpers/defineProperty`.
  *
- * `target: ES2022` with `useDefineForClassFields` left unset is deliberate — that is
- * `[[Define]]` both by TypeScript's own default for this target and under the mapping
- * oxc-node used before #742, so this fixture exercises a helper either way.
+ * Class fields reach Node.js natively unless something forces the class to be lowered
+ * (#808); the fixtures' tsconfig turns on `experimentalDecorators`, which does, so the
+ * field needs the helper on every Node.js version. `target: ES2022` with
+ * `useDefineForClassFields` left unset is deliberate — that is `[[Define]]` both by
+ * TypeScript's own default for this target and under the mapping oxc-node used before
+ * #742, so this fixture exercises a helper either way.
  */
 const NEEDS_HELPER = [
   "class Holder {",
@@ -112,7 +115,7 @@ function run(root: string, entry: string, imports?: string[]): string {
 // falls back to the nearest package.json `type`, so the tsconfig has to agree with the
 // package for a `commonjs` row to actually load — and execute — as CommonJS.
 const tsconfig = (module: string) =>
-  JSON.stringify({ compilerOptions: { module, target: "ES2022" } });
+  JSON.stringify({ compilerOptions: { module, target: "ES2022", experimentalDecorators: true } });
 
 describe("injected runtime helpers", () => {
   test.each([
@@ -181,6 +184,9 @@ describe("global install (no @oxc-node/core in the project)", () => {
   test("a bare directory: issue #794 repro", () => {
     const root = fixture(
       {
+        // Only for `experimentalDecorators`, which keeps the field lowered — see
+        // `NEEDS_HELPER`.
+        "tsconfig.json": tsconfig("CommonJS"),
         "counter.ts": [
           "class Counter {",
           "  count = 1;",
@@ -251,6 +257,7 @@ describe("global install (no @oxc-node/core in the project)", () => {
           exports: { ".": "./index.js" },
         }),
         "node_modules/@oxc-node/core/index.js": 'module.exports = { marker: "stub" };',
+        "tsconfig.json": tsconfig("CommonJS"),
         "entry.ts": [
           ...NEEDS_HELPER,
           "report();",

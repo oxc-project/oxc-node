@@ -243,3 +243,61 @@ describe("#private fields", () => {
     },
   );
 });
+
+describe("syntax the running Node.js supports stays native", () => {
+  // https://github.com/oxc-project/oxc-node/issues/808 — every Node.js release with
+  // `module.register()` runs class fields, `#private` members and static blocks, so they
+  // reach Node.js as written unless the emitted class has to differ from the source.
+  const NATIVE_CLASS_PROBE = [
+    "class Counter {",
+    "  count = 1;",
+    "  #step = 1;",
+    "  static created = 0;",
+    "  static {",
+    "    Counter.created += 1;",
+    "  }",
+    "  bump() {",
+    "    return (this.count += this.#step);",
+    "  }",
+    "}",
+    "const source = Counter.toString();",
+    'console.log("bump:", new Counter().bump(), "created:", Counter.created);',
+    'console.log("native:", ["count = 1", "#step = 1", "static {"].every((s) => source.includes(s)));',
+    "export {};",
+  ].join("\n");
+
+  test.each([
+    ["no tsconfig", null],
+    ["useDefineForClassFields: true", { target: "ES2017", useDefineForClassFields: true }],
+  ])("class features are not lowered with %s", (_, compilerOptions) => {
+    const output = run(compilerOptions, NATIVE_CLASS_PROBE);
+    expect(output).toContain("bump: 2 created: 1");
+    expect(output).toContain("native: true");
+  });
+
+  test.each([
+    ["useDefineForClassFields: false", { useDefineForClassFields: false }],
+    ["experimentalDecorators", { experimentalDecorators: true }],
+  ])("class features are still lowered with %s", (_, compilerOptions) => {
+    const output = run(compilerOptions, NATIVE_CLASS_PROBE);
+    expect(output).toContain("bump: 2 created: 1");
+    expect(output).toContain("native: false");
+  });
+
+  test("`using` is lowered only where Node.js lacks it", () => {
+    const output = run(
+      null,
+      [
+        "function scope() {",
+        '  using res = { [Symbol.dispose]() { console.log("disposed"); } };',
+        "}",
+        "scope();",
+        'console.log("native:", scope.toString().includes("using res"));',
+        "export {};",
+      ].join("\n"),
+    );
+    const nodeMajor = Number(process.versions.node.split(".", 1)[0]);
+    expect(output).toContain("disposed");
+    expect(output).toContain(`native: ${nodeMajor >= 24}`);
+  });
+});
