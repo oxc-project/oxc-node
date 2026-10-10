@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { isMainThread, MessageChannel } from "node:worker_threads";
 
-import { createResolve, initTracing, load as oxcLoad } from "./index.js";
+import { createResolve, initTracing, load as oxcLoad, setTsconfigPath } from "./index.js";
 
 initTracing();
 
@@ -120,4 +120,16 @@ function load(url, context, nextLoad) {
   return oxcLoad(url, context, nextLoad, HELPER_MODULE_NAME);
 }
 
-export { load, resolve };
+/**
+ * Receives the `data` that `register.mjs` passes to `module.register()`. Absent when
+ * this module is registered some other way.
+ *
+ * @param {{ tsconfigPath?: string | null } | undefined} data
+ */
+function initialize(data) {
+  if (data?.tsconfigPath != null) {
+    setTsconfigPath(data.tsconfigPath);
+  }
+}
+
+export { initialize, load, resolve };

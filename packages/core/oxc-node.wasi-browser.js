@@ -1443,7 +1443,9 @@ export default __napiModule.exports
 export const Output = __napiModule.exports.Output
 export const OxcTransformer = __napiModule.exports.OxcTransformer
 export const createResolve = __napiModule.exports.createResolve
+export const getTsconfigPath = __napiModule.exports.getTsconfigPath
 export const initTracing = __napiModule.exports.initTracing
 export const load = __napiModule.exports.load
+export const setTsconfigPath = __napiModule.exports.setTsconfigPath
 export const transform = __napiModule.exports.transform
 export const transformAsync = __napiModule.exports.transformAsync

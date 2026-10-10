@@ -30,6 +30,15 @@ export declare class OxcTransformer {
 
 export declare function createResolve(options: OxcResolveOptions, specifier: string, context: ResolveContext, nextResolve: (arg0: string, arg1?: ResolveContext | undefined | null) => ResolveFnOutput | Promise<ResolveFnOutput>): ResolveFnOutput | Promise<ResolveFnOutput>
 
+/**
+ * The path last passed to [`set_tsconfig_path`], exactly as given, or `null`.
+ *
+ * `register.mjs` hands it to the `module.register()` hook thread. Under WASI
+ * that thread instantiates its own copy of the binding, which starts out with
+ * no override of its own.
+ */
+export declare function getTsconfigPath(): string | null
+
 export declare function initTracing(): void
 
 export declare function load(url: string, context: LoadContext, nextLoad: (arg0: string, arg1?: LoadContext | undefined | null) => LoadFnOutput | Promise<LoadFnOutput>, helperModuleName?: string | undefined | null): LoadFnOutput | Promise<LoadFnOutput>
@@ -73,6 +82,24 @@ export interface ResolveFnOutput {
   url: string
   importAttributes?: Record<string, string> | null
 }
+
+/**
+ * Pin one `tsconfig.json` for every file, as `OXC_TSCONFIG_PATH` does, but
+ * without touching `process.env` — so the user's script and the processes it
+ * spawns do not inherit a config chosen for the loader (issue #806).
+ *
+ * A path set here takes precedence over `TS_NODE_PROJECT` and
+ * `OXC_TSCONFIG_PATH`. A relative path is resolved against the working
+ * directory the loader runs in, like the environment variables. `null`,
+ * `undefined` or an empty string clears the override and goes back to the
+ * environment variables, then to discovery.
+ *
+ * The resolver and its tsconfig are shared by the whole process and created
+ * on the first transform or resolve, so this has to run before that. Calling
+ * it afterwards throws, unless it names the config already in use, whether
+ * that came from here or from an environment variable.
+ */
+export declare function setTsconfigPath(path?: string | undefined | null): void
 
 export declare function transform(path: string, source: string | Uint8Array): Output
 
