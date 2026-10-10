@@ -261,6 +261,9 @@ test("setTsconfigPath applies to the ESM resolve and load hooks", () => {
   const root = createProject({
     "elsewhere/tsconfig.json": DECORATORS_TSCONFIG,
     "sub/entry.ts": DECORATED,
+    // An ES module is transformed on the `module.register()` hook thread below
+    // Node.js 26.2, which under WASI has its own copy of the binding.
+    "sub/entry.mts": DECORATED,
     "setup.mjs": `import { fileURLToPath } from "node:url";
 import { setTsconfigPath } from "@oxc-node/core";
 setTsconfigPath(fileURLToPath(new URL("./elsewhere/tsconfig.json", import.meta.url)));
@@ -268,13 +271,17 @@ await import("@oxc-node/core/register");
 `,
   });
   try {
-    const ran = runNode(join(root, "sub"), [
-      "--import",
-      pathToFileURL(join(root, "setup.mjs")).href,
-      "./entry.ts",
-    ]);
-    expect(ran.stderr, "the run should not fail").toBe("");
-    expect(ran.stdout.trim(), "legacy decorators should be transformed").toBe("DECORATOR:legacy");
+    for (const entry of ["./entry.ts", "./entry.mts"]) {
+      const ran = runNode(join(root, "sub"), [
+        "--import",
+        pathToFileURL(join(root, "setup.mjs")).href,
+        entry,
+      ]);
+      expect(ran.stderr, `${entry} should not fail`).toBe("");
+      expect(ran.stdout.trim(), `legacy decorators should be transformed in ${entry}`).toBe(
+        "DECORATOR:legacy",
+      );
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

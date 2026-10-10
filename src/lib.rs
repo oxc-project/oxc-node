@@ -293,6 +293,17 @@ pub fn set_tsconfig_path(path: Option<String>) -> Result<()> {
     Ok(())
 }
 
+/// The path last passed to [`set_tsconfig_path`], exactly as given, or `null`.
+///
+/// `register.mjs` hands it to the `module.register()` hook thread. Under WASI
+/// that thread instantiates its own copy of the binding, which starts out with
+/// no override of its own.
+#[napi]
+pub fn get_tsconfig_path() -> Option<String> {
+    let tsconfig_override = TSCONFIG_OVERRIDE.lock().unwrap_or_else(PoisonError::into_inner);
+    tsconfig_override.path.as_ref().map(|path| path.to_string_lossy().into_owned())
+}
+
 /// Resolvers for the export conditions resolve requests have asked for so far,
 /// each cloned from the base [`RESOLVER_AND_TSCONFIG`] resolver so they all
 /// share its caches. Conditions are part of every request, so the base resolver

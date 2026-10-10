@@ -30,6 +30,15 @@ export declare class OxcTransformer {
 
 export declare function createResolve(options: OxcResolveOptions, specifier: string, context: ResolveContext, nextResolve: (arg0: string, arg1?: ResolveContext | undefined | null) => ResolveFnOutput | Promise<ResolveFnOutput>): ResolveFnOutput | Promise<ResolveFnOutput>
 
+/**
+ * The path last passed to [`set_tsconfig_path`], exactly as given, or `null`.
+ *
+ * `register.mjs` hands it to the `module.register()` hook thread. Under WASI
+ * that thread instantiates its own copy of the binding, which starts out with
+ * no override of its own.
+ */
+export declare function getTsconfigPath(): string | null
+
 export declare function initTracing(): void
 
 export declare function load(url: string, context: LoadContext, nextLoad: (arg0: string, arg1?: LoadContext | undefined | null) => LoadFnOutput | Promise<LoadFnOutput>, helperModuleName?: string | undefined | null): LoadFnOutput | Promise<LoadFnOutput>

@@ -4,7 +4,13 @@ import { pathToFileURL } from "node:url";
 
 import { addHook } from "pirates";
 
-import { OxcTransformer, createResolve, initTracing, load as oxcLoad } from "./index.js";
+import {
+  OxcTransformer,
+  createResolve,
+  getTsconfigPath,
+  initTracing,
+  load as oxcLoad,
+} from "./index.js";
 
 // Destructure from NodeModule namespace to support older Node.js versions
 const { Module, createRequire, register, registerHooks, setSourceMapsSupport } = NodeModule;
@@ -293,5 +299,10 @@ if (canRegisterSyncHooks()) {
   initTracing();
   registerHooks({ load, resolve });
 } else {
-  register("@oxc-node/core/esm", import.meta.url);
+  // The hooks run on their own thread. Under WASI that thread gets its own copy of
+  // the binding, so a path set through `setTsconfigPath` has to be handed over.
+  register("@oxc-node/core/esm", {
+    parentURL: import.meta.url,
+    data: { tsconfigPath: getTsconfigPath() },
+  });
 }

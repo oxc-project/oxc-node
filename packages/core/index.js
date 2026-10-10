@@ -781,6 +781,7 @@ module.exports = nativeBinding
 module.exports.Output = nativeBinding.Output
 module.exports.OxcTransformer = nativeBinding.OxcTransformer
 module.exports.createResolve = nativeBinding.createResolve
+module.exports.getTsconfigPath = nativeBinding.getTsconfigPath
 module.exports.initTracing = nativeBinding.initTracing
 module.exports.load = nativeBinding.load
 module.exports.setTsconfigPath = nativeBinding.setTsconfigPath
