@@ -10,7 +10,8 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use oxc::{
     allocator::Allocator,
-    ast::ast::{Program, Statement},
+    ast::ast::{Decorator, Program, Statement},
+    ast_visit::Visit,
     codegen::{Codegen, CodegenOptions, CodegenReturn},
     diagnostics::{Diagnostics, OxcDiagnostic},
     parser::{Parser, ParserReturn},
@@ -745,6 +746,19 @@ fn transform_program<'a>(
     enable_top_level_await: bool,
     helper_module_name: Option<&str>,
 ) -> Result<Output> {
+    let legacy_decorators =
+        compiler_options.and_then(|c| c.experimental_decorators).unwrap_or(false);
+    if !legacy_decorators && has_decorator(program, source_str) {
+        return Err(Error::new(
+            Status::GenericFailure,
+            format!(
+                "Failed to transform {}: decorators require `\"experimentalDecorators\": true` \
+                 in tsconfig.json; standard (TC39) decorators are not supported yet",
+                src_path.display()
+            ),
+        ));
+    }
+
     // `with_enum_eval` pre-computes each enum member's value for the transformer.
     // Without it, a member that initializes another member (e.g. `Default = Theme.Light`)
     // emits a reverse mapping `Theme[Theme["Default"] = Theme.Light] = "Default"` that
@@ -763,7 +777,7 @@ fn transform_program<'a>(
         &TransformOptions {
             assumptions: CompilerAssumptions { set_public_class_fields, ..Default::default() },
             decorator: DecoratorOptions {
-                legacy: compiler_options.and_then(|c| c.experimental_decorators).unwrap_or(false),
+                legacy: legacy_decorators,
                 emit_decorator_metadata: compiler_options
                     .and_then(|c| c.emit_decorator_metadata)
                     .unwrap_or(false),
@@ -1596,6 +1610,30 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
     (resolver, tsconfig_source)
 }
 
+/// Whether `program` contains a decorator.
+///
+/// oxc lowers only legacy (`experimentalDecorators`) decorators; without that option it
+/// emits them untouched, and no Node.js release parses decorator syntax, so the file
+/// would fail at the `@` with a bare `SyntaxError: Invalid or unexpected token`. Finding
+/// one lets the transform say what to change instead. A decorator cannot be written
+/// without an `@`, so most files are ruled out by one `memchr` pass and never walked.
+fn has_decorator(program: &Program<'_>, source: &str) -> bool {
+    struct DecoratorFinder(bool);
+
+    impl<'a> Visit<'a> for DecoratorFinder {
+        fn visit_decorator(&mut self, _decorator: &Decorator<'a>) {
+            self.0 = true;
+        }
+    }
+
+    if memchr::memchr(b'@', source.as_bytes()).is_none() {
+        return false;
+    }
+    let mut finder = DecoratorFinder(false);
+    finder.visit_program(program);
+    finder.0
+}
+
 fn join_errors(errors: Vec<OxcDiagnostic>, source_str: &str) -> String {
     errors
         .into_iter()
@@ -1687,6 +1725,31 @@ mod tests {
     // The Windows `file:` URL matrix lives with the module in
     // windows_file_url.rs; what remains here is the platform behavior this
     // file owns.
+
+    fn parses_with_decorator(source: &str) -> bool {
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, source, SourceType::ts()).parse();
+        assert!(ret.diagnostics.is_empty(), "{source:?} should parse");
+        has_decorator(&ret.program, source)
+    }
+
+    #[test]
+    fn has_decorator_finds_every_decorator_position() {
+        assert!(parses_with_decorator("@dec class A {}"));
+        assert!(parses_with_decorator("export default @dec class {}"));
+        assert!(parses_with_decorator("class A { @dec method() {} }"));
+        assert!(parses_with_decorator("class A { @dec accessor x = 1; }"));
+        assert!(parses_with_decorator("class A { constructor(@inject x: number) {} }"));
+        assert!(parses_with_decorator("const A = class { @dec static y = 1; };"));
+    }
+
+    #[test]
+    fn has_decorator_ignores_an_at_sign_outside_decorators() {
+        assert!(!parses_with_decorator("class A {}"));
+        assert!(!parses_with_decorator("/** @deprecated */ class A {}"));
+        assert!(!parses_with_decorator("const email = \"a@b.c\";"));
+        assert!(!parses_with_decorator("const t = `@${1}`; // @ts-ignore"));
+    }
 
     #[cfg(not(windows))]
     #[test]
