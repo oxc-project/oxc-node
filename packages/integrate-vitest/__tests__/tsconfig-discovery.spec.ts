@@ -210,6 +210,101 @@ test("an empty TS_NODE_PROJECT is treated as unset", () => {
   }
 });
 
+// `setTsconfigPath` names the config without touching `process.env`, so a
+// wrapper's choice does not leak into the script or the processes it spawns
+// (issue #806).
+const SET_AND_DUMP = `import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { OxcTransformer, setTsconfigPath } from "@oxc-node/core";
+setTsconfigPath(process.argv[3]);
+const file = resolve(process.argv[2]);
+const transformer = new OxcTransformer(process.cwd());
+console.log(transformer.transform(file, readFileSync(file, "utf8")).source());
+console.log("ENV:" + (process.env.OXC_TSCONFIG_PATH ?? "unset"));
+`;
+
+test("setTsconfigPath pins a config and wins over the environment variables", () => {
+  const root = createProject({
+    "elsewhere/tsconfig.json": DECORATORS_TSCONFIG,
+    "sub/entry.ts": DECORATED,
+    "set-and-dump.mjs": SET_AND_DUMP,
+  });
+  try {
+    // A relative path resolves against the working directory of the call.
+    const emitted = runNode(
+      join(root, "sub"),
+      [join(root, "set-and-dump.mjs"), "./entry.ts", "../elsewhere/tsconfig.json"],
+      // Either variable on its own would disable tsconfig handling.
+      {
+        TS_NODE_PROJECT: join(root, "does-not-exist.json"),
+        OXC_TSCONFIG_PATH: join(root, "does-not-exist.json"),
+      },
+    );
+    expect(emitted.stderr, "dump should not fail").toBe("");
+    expect(emitted.stdout, "the config passed to the API should apply").toContain("_decorate");
+    expect(emitted.stdout, "process.env should be left untouched").toContain(
+      "ENV:" + join(root, "does-not-exist.json"),
+    );
+
+    const cleared = runNode(join(root, "sub"), [join(root, "set-and-dump.mjs"), "./entry.ts", ""], {
+      OXC_TSCONFIG_PATH: join(root, "elsewhere", "tsconfig.json"),
+    });
+    expect(cleared.stdout, "an empty path should fall back to the environment").toContain(
+      "_decorate",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("setTsconfigPath applies to the ESM resolve and load hooks", () => {
+  const root = createProject({
+    "elsewhere/tsconfig.json": DECORATORS_TSCONFIG,
+    "sub/entry.ts": DECORATED,
+    "setup.mjs": `import { fileURLToPath } from "node:url";
+import { setTsconfigPath } from "@oxc-node/core";
+setTsconfigPath(fileURLToPath(new URL("./elsewhere/tsconfig.json", import.meta.url)));
+await import("@oxc-node/core/register");
+`,
+  });
+  try {
+    const ran = runNode(join(root, "sub"), ["--import", join(root, "setup.mjs"), "./entry.ts"]);
+    expect(ran.stderr, "the run should not fail").toBe("");
+    expect(ran.stdout.trim(), "legacy decorators should be transformed").toBe("DECORATOR:legacy");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("setTsconfigPath throws once the config is in use, unless it names the same one", () => {
+  const root = createProject({
+    "elsewhere/tsconfig.json": DECORATORS_TSCONFIG,
+    "other/tsconfig.json": DECORATORS_TSCONFIG,
+    "late.mjs": `import { OxcTransformer, setTsconfigPath } from "@oxc-node/core";
+setTsconfigPath("elsewhere/tsconfig.json");
+new OxcTransformer(process.cwd()).transform("entry.ts", "export {}");
+setTsconfigPath("elsewhere/tsconfig.json");
+console.log("SAME:ok");
+try {
+  setTsconfigPath("other/tsconfig.json");
+  console.log("OTHER:accepted");
+} catch (error) {
+  console.log("OTHER:" + error.message);
+}
+`,
+  });
+  try {
+    const ran = runNode(root, [join(root, "late.mjs")]);
+    expect(ran.stderr, "the run should not fail").toBe("");
+    expect(ran.stdout).toContain("SAME:ok");
+    expect(ran.stdout).toContain(
+      "OTHER:setTsconfigPath() must be called before the first transform or resolve",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a directory named tsconfig.json does not stop the ancestor walk", () => {
   const root = createProject({
     "tsconfig.json": DECORATORS_TSCONFIG,

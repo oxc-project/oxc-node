@@ -74,6 +74,23 @@ export interface ResolveFnOutput {
   importAttributes?: Record<string, string> | null
 }
 
+/**
+ * Pin one `tsconfig.json` for every file, as `OXC_TSCONFIG_PATH` does, but
+ * without touching `process.env` — so the user's script and the processes it
+ * spawns do not inherit a config chosen for the loader (issue #806).
+ *
+ * A path set here takes precedence over `TS_NODE_PROJECT` and
+ * `OXC_TSCONFIG_PATH`. A relative path is resolved against the current working
+ * directory at the time of the call. `null`, `undefined` or an empty string
+ * clears the override and goes back to the environment variables, then to
+ * discovery.
+ *
+ * The resolver and its tsconfig are shared by the whole process and created
+ * on the first transform or resolve, so this has to run before that. Calling
+ * it afterwards throws, unless it names the config already in use.
+ */
+export declare function setTsconfigPath(path?: string | undefined | null): void
+
 export declare function transform(path: string, source: string | Uint8Array): Output
 
 export declare function transformAsync(path: string, source: string | Uint8Array | Buffer): Promise<unknown>

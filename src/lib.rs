@@ -121,9 +121,9 @@ const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
 ///   ignores it entirely. Only [`Resolver::find_tsconfig`] sees it, so under `Auto`
 ///   the config is looked up here and handed to `resolve_with_context`.
 enum TsconfigSource {
-    /// An explicit config requested through `TS_NODE_PROJECT` or
-    /// `OXC_TSCONFIG_PATH`. The exact same config applies to every file,
-    /// including files inside `node_modules`.
+    /// An explicit config requested through [`set_tsconfig_path`],
+    /// `TS_NODE_PROJECT` or `OXC_TSCONFIG_PATH`. The exact same config applies
+    /// to every file, including files inside `node_modules`.
     ///
     /// `None` means the requested path does not exist. That deliberately leaves
     /// the process with no config at all instead of falling back to discovery:
@@ -245,6 +245,67 @@ fn tsconfig_lookup_path<'a>(cwd: &Path, path: &'a Path) -> Cow<'a, Path> {
 }
 
 static RESOLVER_AND_TSCONFIG: OnceLock<(Resolver, TsconfigSource)> = OnceLock::new();
+
+/// The tsconfig named through [`set_tsconfig_path`], and whether
+/// [`init_resolver`] has already read it.
+///
+/// Both live behind one lock so that a call racing the resolver's
+/// initialisation either lands before it reads the path or is rejected —
+/// never accepted and then silently ignored.
+struct TsconfigOverride {
+    path: Option<PathBuf>,
+    consumed: bool,
+}
+
+static TSCONFIG_OVERRIDE: Mutex<TsconfigOverride> =
+    Mutex::new(TsconfigOverride { path: None, consumed: false });
+
+/// Pin one `tsconfig.json` for every file, as `OXC_TSCONFIG_PATH` does, but
+/// without touching `process.env` — so the user's script and the processes it
+/// spawns do not inherit a config chosen for the loader (issue #806).
+///
+/// A path set here takes precedence over `TS_NODE_PROJECT` and
+/// `OXC_TSCONFIG_PATH`. A relative path is resolved against the current working
+/// directory at the time of the call. `null`, `undefined` or an empty string
+/// clears the override and goes back to the environment variables, then to
+/// discovery.
+///
+/// The resolver and its tsconfig are shared by the whole process and created
+/// on the first transform or resolve, so this has to run before that. Calling
+/// it afterwards throws, unless it names the config already in use.
+#[napi]
+pub fn set_tsconfig_path(path: Option<String>) -> Result<()> {
+    let path = match path.filter(|path| !path.is_empty()) {
+        Some(path) => {
+            let path = PathBuf::from(path);
+            Some(if path.is_absolute() {
+                path
+            } else {
+                env::current_dir()
+                    .map_err(|err| {
+                        Error::new(
+                            Status::GenericFailure,
+                            format!("Failed to read the current directory: {err}"),
+                        )
+                    })?
+                    .join(path)
+            })
+        }
+        None => None,
+    };
+    let mut tsconfig_override = TSCONFIG_OVERRIDE.lock().unwrap_or_else(PoisonError::into_inner);
+    if tsconfig_override.consumed {
+        if tsconfig_override.path == path {
+            return Ok(());
+        }
+        return Err(Error::new(
+            Status::GenericFailure,
+            "setTsconfigPath() must be called before the first transform or resolve",
+        ));
+    }
+    tsconfig_override.path = path;
+    Ok(())
+}
 
 /// Resolvers for the export conditions resolve requests have asked for so far,
 /// each cloned from the base [`RESOLVER_AND_TSCONFIG`] resolver so they all
@@ -1535,15 +1596,25 @@ fn default_module_from_tsconfig(tsconfig: Option<&TsConfig>) -> Option<&'static 
 }
 
 fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
-    // An explicitly requested config always wins over discovery.
-    let explicit_tsconfig =
-        non_empty_env("TS_NODE_PROJECT").or_else(|| non_empty_env("OXC_TSCONFIG_PATH"));
-    tracing::debug!(explicit_tsconfig = ?explicit_tsconfig);
+    // An explicitly requested config always wins over discovery, and one passed
+    // through the API wins over the environment.
+    let api_tsconfig = {
+        let mut tsconfig_override =
+            TSCONFIG_OVERRIDE.lock().unwrap_or_else(PoisonError::into_inner);
+        tsconfig_override.consumed = true;
+        tsconfig_override.path.clone()
+    };
+    tracing::debug!(api_tsconfig = ?api_tsconfig);
 
-    let explicit_tsconfig_path = explicit_tsconfig.map(|tsconfig| {
-        let tsconfig = PathBuf::from(tsconfig);
-        // `starts_with('/')` would misjudge `C:\...` on Windows.
-        if tsconfig.is_absolute() { tsconfig } else { cwd.join(tsconfig) }
+    let explicit_tsconfig_path = api_tsconfig.or_else(|| {
+        let explicit_tsconfig =
+            non_empty_env("TS_NODE_PROJECT").or_else(|| non_empty_env("OXC_TSCONFIG_PATH"));
+        tracing::debug!(explicit_tsconfig = ?explicit_tsconfig);
+        explicit_tsconfig.map(|tsconfig| {
+            let tsconfig = PathBuf::from(tsconfig);
+            // `starts_with('/')` would misjudge `C:\...` on Windows.
+            if tsconfig.is_absolute() { tsconfig } else { cwd.join(tsconfig) }
+        })
     });
     tracing::debug!(explicit_tsconfig_path = ?explicit_tsconfig_path);
 
