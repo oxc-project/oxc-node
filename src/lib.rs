@@ -1586,6 +1586,20 @@ fn code_with_inline_map(output: Output) -> String {
     }
 }
 
+/// Whether a `commonjs` result's source is the URL's file byte for byte — what the
+/// synchronous default load hands over, as opposed to source another hook produced.
+/// Anything without a matching `file:` target is not the file's contents.
+fn source_matches_file(url: &str, source: &Either4<String, Uint8Array, Buffer, Null>) -> bool {
+    let bytes: &[u8] = match source {
+        Either4::A(s) => s.as_bytes(),
+        Either4::B(arr) => arr,
+        Either4::C(buf) => buf,
+        Either4::D(_) => return false,
+    };
+    let Some(path) = file_url_to_path(url_path(url)) else { return false };
+    std::fs::read(path).is_ok_and(|file| file == bytes)
+}
+
 fn transform_output(
     url: String,
     output: LoadFnOutput,
@@ -1614,6 +1628,35 @@ fn transform_output(
             let src_path = Path::new(url_path(&url));
             let ext = src_path.extension().and_then(|ext| ext.to_str());
             let is_json = ext.is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
+
+            // The synchronous default load behind `module.registerHooks()` reads a
+            // CommonJS module and hands its source over — the file itself, byte for byte.
+            // Transforming it would be work the `pirates` hook then repeats when the
+            // CommonJS machinery reads the file, so such a result defers exactly as a
+            // source-less one does (issue #820). A source that differs — or whose URL has
+            // no file at all, such as `data:` or a custom scheme — is another hook's
+            // code, and it falls through to be transformed and kept: the CommonJS
+            // machinery would either re-read disk content the hook did not produce or
+            // fail on a path that does not exist.
+            if !is_json
+                && output.format == "commonjs"
+                && source_matches_file(&url, output.source.as_ref().unwrap())
+            {
+                tracing::debug!(
+                    "Source is the file itself, deferring to the CommonJS loader {}",
+                    url
+                );
+                if let Some(loaded) =
+                    load_commonjs_esm(&url, &output, resolved_compiler_options, helper_module_name)?
+                {
+                    return Ok(loaded);
+                }
+                return Ok(LoadFnOutput {
+                    format: output.format,
+                    source: Some(Either4::D(Null)),
+                    response_url: Some(url),
+                });
+            }
 
             // A CommonJS result whose source is not valid UTF-8 is not source code this
             // loader can transform: a `.node` addon resolves as `commonjs` and arrives as
@@ -1681,7 +1724,11 @@ fn transform_output(
                 });
             }
 
-            let is_es_module = output.format == "module";
+            // `module-typescript` — Node.js' own format for a `.ts` file it strips types
+            // from and runs as an ES module — is one too: a `commonjs` decision here
+            // would parse it in script mode and enable the top-level-await rewrite for
+            // code Node.js runs as a module.
+            let is_es_module = matches!(output.format.as_str(), "module" | "module-typescript");
             let (transform_output, flipped_to_module) = oxc_transform(
                 src_path,
                 output.source.as_ref().unwrap(),
