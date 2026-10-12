@@ -7,9 +7,11 @@ import { addHook } from "pirates";
 import {
   OxcTransformer,
   createResolve,
+  freezeTransformDeps,
   getTsconfigPath,
   initTracing,
   load as oxcLoad,
+  transformsDep,
 } from "./index.js";
 
 // Destructure from NodeModule namespace to support older Node.js versions
@@ -143,6 +145,8 @@ const transformer = new OxcTransformer(process.cwd(), HELPER_MODULE_NAME);
 const SOURCEMAP_PREFIX = "\n//# sourceMappingURL=";
 const SOURCEMAP_MIME = "data:application/json;charset=utf-8;base64,";
 
+const NODE_MODULES_REGEX = /^(?:.*[\\/])?node_modules(?:[\\/].*)?$/;
+
 addHook(
   (code, filename) => {
     const output = transformer.transform(filename, code);
@@ -158,6 +162,15 @@ addHook(
   },
   {
     ext: Array.from(DEFAULT_EXTENSIONS),
+    // Whether a `require()`d dependency gets transformed is asked of the
+    // binding, which keeps `OXC_TRANSFORM_ALL`'s grammar — absent, empty, "0"
+    // and "false" mean none, "typescript" only the `.ts`/`.mts`/`.cts`/`.tsx`
+    // family — in one place, and reads the mode at require time so a
+    // `setTransformDeps()` call made after this module loaded still applies,
+    // up to the first transform or resolve like everywhere else. The matcher
+    // covers `node_modules` itself, so the built-in ignore stays off.
+    ignoreNodeModules: false,
+    matcher: (filename) => !NODE_MODULES_REGEX.test(filename) || transformsDep(filename),
   },
 );
 
@@ -283,11 +296,12 @@ function load(url, context, nextLoad) {
  * - Until https://github.com/nodejs/node/pull/62920 `require()` inside an imported
  *   CommonJS module short-circuited incorrectly whenever a synchronous load hook handed
  *   back source for it, so a `.ts` entry point in a CommonJS package could not
- *   `require()` its own files. Fixed in v26.2.0. The `load` hook above never returns
- *   source for CommonJS, so this defect does not reach it — v26.2.0 is kept as the floor
- *   anyway, because it is the first release where the synchronous hooks are complete
- *   regardless of what a hook returns, and every runtime below it keeps exactly the
- *   behaviour it has today.
+ *   `require()` its own files. Fixed in v26.2.0. The `load` hook above only defers a
+ *   CommonJS result when its source is the file itself — when another hook, or a
+ *   fileless URL, supplies the source it is transformed and returned — so this defect
+ *   can still reach it. v26.2.0 stays the floor anyway: it is the first release where
+ *   the synchronous hooks are complete regardless of what a hook returns, and every
+ *   runtime below it keeps exactly the behaviour it has today.
  *
  * Below v26.2.0 `module.register()` therefore stays in use, deprecation warning included.
  *
@@ -308,10 +322,15 @@ if (canRegisterSyncHooks()) {
   initTracing();
   registerHooks({ load, resolve });
 } else {
-  // The hooks run on their own thread. Under WASI that thread gets its own copy of
-  // the binding, so a path set through `setTsconfigPath` has to be handed over.
+  // The hooks run on their own thread. The mode goes over as a snapshot: under
+  // WASI that thread's binding is a separate copy a later `setTransformDeps`
+  // could never reach, so the mode is frozen here first — a late call throws
+  // instead of diverging between the `require()` matcher on this binding and
+  // the ESM hooks on the other. The frozen mode is sent, not just an override,
+  // because the worker's env may be an older snapshot of process.env.
+  // `setTsconfigPath` rides the same snapshot.
   register("@oxc-node/core/esm", {
     parentURL: import.meta.url,
-    data: { tsconfigPath: getTsconfigPath() },
+    data: { tsconfigPath: getTsconfigPath(), transformDeps: freezeTransformDeps() },
   });
 }

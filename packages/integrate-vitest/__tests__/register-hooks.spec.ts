@@ -263,7 +263,13 @@ describe.each(["false", "true"])("a dependency, OXC_TRANSFORM_ALL=%s", (transfor
       "node_modules/ts-dep/index.cts": "const c: number = 3;\nexports.c = c;\n",
       "entry.mts": ['import { c } from "ts-dep";', 'console.log("cts:", c);'].join("\n"),
     });
-    runFailing(root, ["./entry.mts"], "ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING", env);
+    if (transformAll === "true") {
+      // With deps in scope the hook reports `commonjs` itself and the `pirates`
+      // hook compiles the file when the CommonJS machinery reads it.
+      expect(run(root, ["./entry.mts"], env)).toContain("cts: 3");
+    } else {
+      runFailing(root, ["./entry.mts"], "ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING", env);
+    }
   });
 
   test("an `.mts` file gets Node.js' own type-stripping error, not one blaming the hook", () => {
@@ -278,7 +284,156 @@ describe.each(["false", "true"])("a dependency, OXC_TRANSFORM_ALL=%s", (transfor
       "node_modules/mts-dep/index.mts": "export const c: number = 3;\n",
       "entry.mts": ['import { c } from "mts-dep";', 'console.log("mts:", c);'].join("\n"),
     });
-    runFailing(root, ["./entry.mts"], "ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING", env);
+    if (transformAll === "true") {
+      expect(run(root, ["./entry.mts"], env)).toContain("mts: 3");
+    } else {
+      runFailing(root, ["./entry.mts"], "ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING", env);
+    }
+  });
+});
+
+// `OXC_TRANSFORM_ALL=typescript` scopes the dependency transform to the TypeScript
+// family only (issue #821): a `.ts`/`.mts`/`.cts` dep gets a real format, `load`, and
+// the `pirates` compile, while a `.js` dep stays with Node.js even when its source is
+// not valid JavaScript.
+describe("a TypeScript dependency, OXC_TRANSFORM_ALL=typescript", () => {
+  const env = { OXC_TRANSFORM_ALL: "typescript" };
+
+  test("imported `.ts`, `.mts` and `.cts` files are transformed", () => {
+    const root = fixture({
+      "package.json": COMMONJS,
+      "node_modules/ts-dep/package.json": JSON.stringify({
+        name: "ts-dep",
+        exports: "./index.ts",
+      }),
+      "node_modules/ts-dep/index.ts": "const c: number = 3;\nexports.c = c;\n",
+      "node_modules/mts-dep/package.json": JSON.stringify({
+        name: "mts-dep",
+        exports: "./index.mts",
+      }),
+      "node_modules/mts-dep/index.mts": "export const c: number = 4;\n",
+      "node_modules/cts-dep/package.json": JSON.stringify({
+        name: "cts-dep",
+        exports: "./index.cts",
+      }),
+      "node_modules/cts-dep/index.cts": "const c: number = 5;\nexports.c = c;\n",
+      "entry.mts": [
+        'import tsDep from "ts-dep";',
+        'import { c as mts } from "mts-dep";',
+        'import ctsDep from "cts-dep";',
+        'console.log("deps:", tsDep.c, mts, ctsDep.c);',
+      ].join("\n"),
+    });
+    expect(run(root, ["./entry.mts"], env)).toContain("deps: 3 4 5");
+  });
+
+  test("a `.ts` file required from CommonJS reaches the pirates hook", () => {
+    const root = fixture({
+      "package.json": COMMONJS,
+      "node_modules/ts-dep/package.json": JSON.stringify({
+        name: "ts-dep",
+        exports: "./index.ts",
+      }),
+      "node_modules/ts-dep/index.ts": "const c: number = 3;\nexports.c = c;\n",
+      "entry.cts": ['const dep = require("ts-dep");', 'console.log("require:", dep.c);'].join("\n"),
+    });
+    expect(run(root, ["./entry.cts"], env)).toContain("require: 3");
+  });
+
+  test("a `.js` file is never transformed", () => {
+    // Not valid JavaScript: Node.js' own parser is the one that has to reject
+    // it, which only happens if neither transform side claimed the file.
+    const root = fixture({
+      "package.json": COMMONJS,
+      "node_modules/js-dep/package.json": JSON.stringify({
+        name: "js-dep",
+        exports: "./index.js",
+      }),
+      "node_modules/js-dep/index.js": "const c: number = 6;\nexports.c = c;\n",
+      "entry.mts": ['import jsDep from "js-dep";', 'console.log("js:", jsDep.c);'].join("\n"),
+    });
+    runFailing(root, ["./entry.mts"], "SyntaxError", env);
+  });
+});
+
+// `setTransformDeps` names the mode without touching `process.env`, so a wrapper's
+// choice does not leak into the script or the processes it spawns (issue #821).
+describe("setTransformDeps", () => {
+  test("picks the mode without touching process.env", () => {
+    const root = fixture({
+      "package.json": COMMONJS,
+      "node_modules/ts-dep/package.json": JSON.stringify({
+        name: "ts-dep",
+        exports: "./index.ts",
+      }),
+      "node_modules/ts-dep/index.ts": "const c: number = 3;\nexports.c = c;\n",
+      "entry.mts": [
+        'import tsDep from "ts-dep";',
+        'console.log("ts:", tsDep.c, process.env.OXC_TRANSFORM_ALL ?? "env-unset");',
+      ].join("\n"),
+      // The WASI hook thread snapshots the mode when `register.mjs` loads, so
+      // the setter runs first in an earlier `--import`.
+      "setup.mjs": [
+        'import { setTransformDeps } from "@oxc-node/core";',
+        'setTransformDeps("typescript");',
+        'await import("@oxc-node/core/register");',
+      ].join("\n"),
+    });
+    const result = spawnSync(process.execPath, ["--import", "./setup.mjs", "./entry.mts"], {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NODE_OPTIONS: undefined,
+        OXC_LOG: undefined,
+        OXC_TRANSFORM_ALL: undefined,
+        TS_NODE_PROJECT: undefined,
+        OXC_TSCONFIG_PATH: undefined,
+      },
+      timeout: 30_000,
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("ts: 3 env-unset");
+  });
+
+  test("throws once the mode is in use, unless it names the same one", () => {
+    const root = fixture({
+      "late.mjs": `import { OxcTransformer, getTransformDeps, setTransformDeps } from "@oxc-node/core";
+setTransformDeps("typescript");
+new OxcTransformer(process.cwd()).transform("a.ts", "export {}");
+console.log("GET:" + getTransformDeps());
+setTransformDeps("typescript");
+console.log("SAME:ok");
+try {
+  setTransformDeps("all");
+  console.log("WIDEN:accepted");
+} catch (error) {
+  console.log("WIDEN:" + error.message);
+}
+try {
+  setTransformDeps("bogus");
+  console.log("BOGUS:accepted");
+} catch (error) {
+  console.log("BOGUS:" + error.message);
+}
+`,
+    });
+    // No `--import` needed: the transform API consumes the mode itself.
+    const result = spawnSync(process.execPath, [join(root, "late.mjs")], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: undefined, OXC_TRANSFORM_ALL: undefined },
+      timeout: 30_000,
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("GET:typescript");
+    expect(output).toContain("SAME:ok");
+    expect(output).toContain(
+      "WIDEN:setTransformDeps() must be called before the first transform or resolve",
+    );
+    expect(output).toContain('BOGUS:setTransformDeps() expects "typescript", "all" or "off"');
   });
 });
 

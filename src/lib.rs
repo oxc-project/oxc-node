@@ -324,6 +324,124 @@ pub fn get_tsconfig_path() -> Option<String> {
     tsconfig_override.path.as_ref().map(|path| path.to_string_lossy().into_owned())
 }
 
+/// Transform `node_modules` dependencies too, as `OXC_TRANSFORM_ALL` does, but
+/// without touching `process.env` — so the user's script and the processes it
+/// spawns do not inherit a choice made for the loader (issue #821).
+///
+/// `"typescript"` transforms only the TypeScript-family dependencies —
+/// `.ts`, `.mts`, `.cts` and `.tsx` — and `"all"` every file, including
+/// JavaScript. `"off"` keeps dependencies untouched even when the variable
+/// asks for more. `null`, `undefined` or an empty string clears the override
+/// and goes back to `OXC_TRANSFORM_ALL`. A mode set here takes precedence
+/// over the environment variable, as [`set_tsconfig_path`] does over its
+/// variables.
+///
+/// The mode is read once per process, on the first transform or resolve, so
+/// this has to run before that. Calling it afterwards throws, unless it names
+/// the mode already in use, whether that came from here or from the
+/// environment variable. On WASI the deadline is earlier: the
+/// `module.register()` hook thread instantiates its own copy of the binding,
+/// so the mode is the one in effect when `@oxc-node/core/register` is
+/// imported.
+#[napi]
+pub fn set_transform_deps(mode: Option<String>) -> Result<()> {
+    let mode = match mode {
+        // `null`/`undefined`/empty clear the override, back to the variable.
+        None => None,
+        Some(mode) if mode.is_empty() => None,
+        Some(mode) => Some(match mode.as_str() {
+            "typescript" => DepsMode::Typescript,
+            "all" => DepsMode::All,
+            // Explicit off: undoes the environment variable as well as an
+            // earlier override.
+            "off" => DepsMode::Off,
+            _ => {
+                return Err(Error::new(
+                    Status::InvalidArg,
+                    "setTransformDeps() expects \"typescript\", \"all\" or \"off\"",
+                ));
+            }
+        }),
+    };
+    let mut deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(consumed) = deps.consumed {
+        // Naming the mode already in use is fine, wherever it came from;
+        // anything else — `null` asking for the variable's answer included —
+        // could not take effect anyway.
+        if mode == Some(consumed) {
+            deps.mode = mode;
+            return Ok(());
+        }
+        if mode.is_none() && deps.mode.is_none() {
+            // Clearing an override that was never set asks for exactly the
+            // mode the environment already chose.
+            return Ok(());
+        }
+        return Err(Error::new(
+            Status::GenericFailure,
+            "setTransformDeps() must be called before the first transform or resolve",
+        ));
+    }
+    deps.mode = mode;
+    Ok(())
+}
+
+/// The mode last passed to [`set_transform_deps`] — `"off"`, `"typescript"`
+/// or `"all"` — or `null` when there is no override, including after it was
+/// cleared. An explicit `"off"` round-trips: returning `null` for it would
+/// send a wrapper that forwards the answer to another binding back to the
+/// environment variable instead.
+///
+/// `register.mjs` hands it to the `module.register()` hook thread. Under WASI
+/// that thread instantiates its own copy of the binding, which starts out with
+/// no override of its own.
+#[napi]
+pub fn get_transform_deps() -> Option<String> {
+    let deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
+    deps.mode.map(|mode| {
+        match mode {
+            DepsMode::Off => "off",
+            DepsMode::Typescript => "typescript",
+            DepsMode::All => "all",
+        }
+        .to_owned()
+    })
+}
+
+/// Whether the mode in effect transforms a `node_modules` file at `path`, for
+/// the `pirates` matcher in `register.mjs`. Asking the binding keeps
+/// `OXC_TRANSFORM_ALL`'s grammar and the TypeScript-family extensions in one
+/// place, and — unlike a mode snapshotted at module evaluation — honours a
+/// `setTransformDeps` call made after `@oxc-node/core/register` loaded.
+#[napi]
+pub fn transforms_dep(path: String) -> bool {
+    deps_mode().transforms(Path::new(&path).extension().and_then(|ext| ext.to_str()))
+}
+
+/// Latch the dependency mode without a transform or resolve having run, and
+/// return it — `"off"`, `"typescript"` or `"all"`. The `module.register()`
+/// path hands the mode to the hook thread as a snapshot: under WASI that
+/// thread's binding is a separate copy whose own `env` is a stale snapshot of
+/// the host's, so the frozen mode has to travel in the registration data —
+/// an `env`-only choice would diverge between the `require()` matcher on
+/// this binding and the ESM hooks on the other. Freezing also makes a later
+/// `setTransformDeps` throw instead of being silently ignored, and aligns
+/// the deadline on every `module.register()` runtime.
+#[napi]
+pub fn freeze_transform_deps() -> String {
+    let mut deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
+    if deps.consumed.is_none() {
+        deps.consumed = Some(deps.mode.unwrap_or_else(deps_mode_from_env));
+    }
+    // `consumed` was just latched above if it was unset.
+    match deps.consumed.unwrap() {
+        DepsMode::Off => "off",
+        DepsMode::Typescript => "typescript",
+        DepsMode::All => "all",
+    }
+    .to_owned()
+}
+
 /// Resolvers for the export conditions resolve requests have asked for so far,
 /// each cloned from the base [`RESOLVER_AND_TSCONFIG`] resolver so they all
 /// share its caches. Conditions are part of every request, so the base resolver
@@ -351,13 +469,90 @@ const NODE_MODULES_PATH: &str = "/node_modules/";
 #[cfg(target_os = "windows")]
 const NODE_MODULES_PATH: &str = "\\node_modules\\";
 
-/// `OXC_TRANSFORM_ALL` is enabled by presence with an explicit opt-out: absent,
-/// empty, `"0"`, or `"false"` all mean disabled — matching Node.js-style flag
-/// semantics where setting it to a false value must not enable it.
-fn transform_all_enabled() -> bool {
-    env::var("OXC_TRANSFORM_ALL")
-        .map(|value| !value.is_empty() && value != "0" && value != "false")
-        .unwrap_or(false)
+/// How far into `node_modules` the loader reaches. `Off` leaves dependencies
+/// untouched, `Typescript` covers only the TypeScript-family extensions —
+/// `.ts`, `.mts`, `.cts` and `.tsx` — and `All` everything. Chosen by
+/// `OXC_TRANSFORM_ALL` or [`set_transform_deps`] (issue #821); the setter wins.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DepsMode {
+    Off,
+    Typescript,
+    All,
+}
+
+/// Extensions that are TypeScript family inside `node_modules` for
+/// [`DepsMode::Typescript`]. `.js` is never among them: this mode exists to
+/// run TypeScript dependencies only.
+const TS_DEP_EXTENSIONS: [&str; 4] = ["ts", "mts", "cts", "tsx"];
+
+impl DepsMode {
+    /// Whether a `node_modules` file with this extension gets its source
+    /// transformed. `.mts`/`.cts` qualify for `Typescript` — they are
+    /// TypeScript files whatever the resolved module system.
+    fn transforms(self, extension: Option<&str>) -> bool {
+        match self {
+            Self::Off => false,
+            Self::All => true,
+            Self::Typescript => {
+                extension.is_some_and(|extension| TS_DEP_EXTENSIONS.contains(&extension))
+            }
+        }
+    }
+
+    /// Whether the resolve hook answers the format for a `node_modules` file
+    /// with this extension rather than keeping the `null` that defers the
+    /// load to Node.js' own lookup. Files Node.js could never run —
+    /// TypeScript, the extra source extensions, extensionless — need ours,
+    /// or they die with `ERR_UNKNOWN_FILE_EXTENSION` /
+    /// `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING` before `load` can
+    /// transform them. Formats Node.js runs on its own stay deferred.
+    fn resolves_format(self, extension: Option<&str>) -> bool {
+        match extension {
+            None => self == Self::All,
+            Some(extension) if TS_DEP_EXTENSIONS.contains(&extension) => self != Self::Off,
+            Some("jsx" | "es" | "es6") => self == Self::All,
+            Some(_) => false,
+        }
+    }
+}
+
+/// The `OXC_TRANSFORM_ALL` value parsed as a [`DepsMode`]: absent, empty,
+/// `"0"`, or `"false"` mean `Off` — matching Node.js-style flag semantics
+/// where setting it to a false value must not enable it — `"typescript"`
+/// selects only the TypeScript dependencies, and any other value is `All`,
+/// which every previous truthy value already meant.
+fn deps_mode_from_env() -> DepsMode {
+    match env::var("OXC_TRANSFORM_ALL") {
+        Err(_) => DepsMode::Off,
+        Ok(value) => match value.as_str() {
+            "" | "0" | "false" => DepsMode::Off,
+            "typescript" => DepsMode::Typescript,
+            _ => DepsMode::All,
+        },
+    }
+}
+
+/// The mode named through [`set_transform_deps`], and what [`init_resolver`]
+/// made of it once it has read it.
+///
+/// Both live behind one lock so that a call racing the resolver's
+/// initialisation either lands before it reads the mode or is rejected —
+/// never accepted and then silently ignored.
+struct TransformDeps {
+    mode: Option<DepsMode>,
+    /// The mode in effect once [`init_resolver`] has run: the override, or
+    /// the environment's answer when there is none.
+    consumed: Option<DepsMode>,
+}
+
+static TRANSFORM_DEPS: Mutex<TransformDeps> =
+    Mutex::new(TransformDeps { mode: None, consumed: None });
+
+/// Which dependencies get transformed: [`set_transform_deps`]'s choice, or
+/// `OXC_TRANSFORM_ALL`'s.
+fn deps_mode() -> DepsMode {
+    let deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
+    deps.mode.or(deps.consumed).unwrap_or_else(deps_mode_from_env)
 }
 
 /// The `file:` URL scheme prefix; on POSIX the absolute path follows it
@@ -1258,14 +1453,18 @@ pub fn create_resolve<'env>(
         return add_short_circuit(url, Some(format), context, next_resolve);
     }
 
-    // import attributes
+    // Import attributes are Node.js' own business, so a request carrying any
+    // keeps its resolution — except the format answer: `module-typescript`
+    // and `commonjs-typescript` send a dependency this process transforms
+    // back to Node.js' type-stripping translator, which refuses
+    // `node_modules` outright before `load` can run (issue #821).
     if !context.import_attributes.is_empty() {
         tracing::debug!(
             "short-circuiting import attributes resolve: {}, attributes: {:?}",
             specifier,
             context.import_attributes
         );
-        return next_resolve.call((specifier, Some(context)).into());
+        return fixup_typescript_dep_format(next_resolve.call((specifier, Some(context)).into())?);
     };
 
     if let Ok(resolution) = resolution {
@@ -1274,21 +1473,14 @@ pub fn create_resolve<'env>(
         let url = oxc_resolved_path_to_url(&resolution);
         // `node_modules` files keep the `null` format so Node.js delegates `load`
         // to its own implementation — the load hook cannot report "skip"
-        // otherwise (see #189). The exception: under `OXC_TRANSFORM_ALL`, files
-        // Node.js could never classify (`.jsx`/`.tsx`, other registered source
-        // extensions, extensionless) need our format or they die with
-        // `ERR_UNKNOWN_FILE_EXTENSION` before `load` can transform them. Formats
-        // Node.js does classify (`.ts`/`.cts`/`.mts`, `.wasm`, addons) stay
-        // deferred either way.
-        let transformable_dependency = || {
-            transform_all_enabled()
-                && p.to_str().map(|p| p.contains(NODE_MODULES_PATH)).unwrap_or(false)
-                && match p.extension().and_then(|ext| ext.to_str()) {
-                    None => true,
-                    Some("jsx" | "tsx" | "es" | "es6") => true,
-                    Some(_) => false,
-                }
-        };
+        // otherwise (see #189). The exception: files this process is asked to
+        // transform anyway get our format, because Node.js' own answer for
+        // them would never reach `load` — `.ts`/`.cts`/`.mts` die with
+        // `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING` and the rest with
+        // `ERR_UNKNOWN_FILE_EXTENSION`. Formats Node.js runs as-is (`.js`,
+        // `.wasm`, addons) stay deferred either way.
+        let transformable_dependency =
+            || deps_mode().resolves_format(p.extension().and_then(|ext| ext.to_str()));
         if !p.to_str().map(|p| p.contains(NODE_MODULES_PATH)).unwrap_or(false)
             || transformable_dependency()
         {
@@ -1362,7 +1554,10 @@ pub fn create_resolve<'env>(
         return add_short_circuit(specifier, Some(format), context, next_resolve);
     }
 
-    add_short_circuit(specifier, None, context, next_resolve)
+    // oxc's resolver failed, so the answer — the format included — is whatever
+    // Node.js' own resolution makes of it. A TypeScript dependency still has
+    // to lose its `*-typescript` format (see the import-attributes branch).
+    fixup_typescript_dep_format(add_short_circuit(specifier, None, context, next_resolve)?)
 }
 
 /// The format to report for a JSON module: `json` when the caller wrote an import
@@ -1470,12 +1665,14 @@ fn load_commonjs_esm(
     if output.format != "commonjs" {
         return Ok(None);
     }
-    // The same skip as the transform below: dependencies are left alone unless asked for.
-    if !transform_all_enabled() && url.contains("/node_modules/") {
-        return Ok(None);
-    }
     // A `?query` or `#fragment` suffix belongs to the module URL, not to the file on disk.
     let Some(path) = file_url_to_path(url_path(url)) else { return Ok(None) };
+    // The same skip as the transform below: dependencies are left alone unless asked for.
+    if url.contains("/node_modules/")
+        && !deps_mode().transforms(path.extension().and_then(|ext| ext.to_str()))
+    {
+        return Ok(None);
+    }
     let Ok(source_type) = SourceType::from_path(&path) else { return Ok(None) };
     if is_cts(source_type) {
         return reject_cts_module_syntax(&path, resolved_compiler_options);
@@ -1680,10 +1877,10 @@ fn transform_output(
             }
 
             // Turning JSON into a module is not a code transform, so it happens for
-            // dependencies too — `OXC_TRANSFORM_ALL` decides whether their *source* is
+            // dependencies too — the dependency mode decides whether their *source* is
             // transpiled, and skipping this would hand Node.js raw JSON to run as an ES
             // module.
-            if !is_json && !transform_all_enabled() && url.contains("/node_modules/") {
+            if !is_json && url.contains("/node_modules/") && !deps_mode().transforms(ext) {
                 tracing::debug!("Skip transforming node_modules {}", url);
                 return Ok(output);
             }
@@ -1740,7 +1937,21 @@ fn transform_output(
             )?;
             // A CommonJS-reported file that turned out to be an ES module is handed back
             // as one, so Node.js never tries to compile its `import`/`export` as CommonJS.
-            let format = if flipped_to_module { "module".to_owned() } else { output.format };
+            // Node.js' own type-stripping formats need the same treatment: they only
+            // reach here when the resolve hook deferred to Node.js' answer — an import
+            // attribute, or a specifier oxc's resolver could not resolve — and the
+            // transformed output is plain JavaScript, not the TypeScript those formats
+            // announce. Reported back as-is, `module-typescript` re-runs Node.js'
+            // stripping translator, which refuses `node_modules` outright with
+            // `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`.
+            let format = output.format;
+            let format = if flipped_to_module || format == "module-typescript" {
+                "module".to_owned()
+            } else if format == "commonjs-typescript" {
+                "commonjs".to_owned()
+            } else {
+                format
+            };
             let output_code = code_with_inline_map(transform_output);
             tracing::debug!("loaded {} format: {}", url, format);
             Ok(LoadFnOutput {
@@ -1852,6 +2063,15 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
         explicit_tsconfig_path
     };
     tracing::debug!(explicit_tsconfig_path = ?explicit_tsconfig_path);
+
+    // The dependency mode is fixed by the same first transform or resolve, so
+    // a later `setTransformDeps` call can never silently change behaviour. A
+    // mode already frozen at `register()` stays frozen: env changes between
+    // registration and now must not move the deadline back.
+    let mut deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
+    if deps.consumed.is_none() {
+        deps.consumed = Some(deps.mode.unwrap_or_else(deps_mode_from_env));
+    }
 
     let tsconfig = match &explicit_tsconfig_path {
         // Pointing `Manual` at a file that does not exist would make *every*
@@ -1994,6 +2214,48 @@ fn add_short_circuit<'env>(
             })
             .map(Either::B),
     }
+}
+
+/// Applies [`typescript_dep_format`] to a resolve result, synchronously or
+/// once the promise settles.
+fn fixup_typescript_dep_format<'env>(
+    resolved: Either<ResolveFnOutput, PromiseRaw<'env, ResolveFnOutput>>,
+) -> Result<Either<ResolveFnOutput, PromiseRaw<'env, ResolveFnOutput>>> {
+    match resolved {
+        Either::A(mut output) => {
+            typescript_dep_format(&mut output);
+            Ok(Either::A(output))
+        }
+        Either::B(promise) => promise
+            .then(move |mut ctx| {
+                typescript_dep_format(&mut ctx.value);
+                Ok(ctx.value)
+            })
+            .map(Either::B),
+    }
+}
+
+/// Rewrites Node.js' own `module-typescript` / `commonjs-typescript` answer
+/// into the plain format the already-transformed output has — but only for a
+/// `node_modules` file this process transforms. Left in place, those formats
+/// send the file back to Node.js' type-stripping translator, which refuses
+/// `node_modules` with `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING` before
+/// `load` gets a say.
+fn typescript_dep_format(output: &mut ResolveFnOutput) {
+    let Some(Either::A(format)) = &output.format else { return };
+    let plain = match format.as_str() {
+        "module-typescript" => "module",
+        "commonjs-typescript" => "commonjs",
+        _ => return,
+    };
+    let Some(path) = file_url_to_path(url_path(&output.url)) else { return };
+    if !path.to_str().is_some_and(|p| p.contains(NODE_MODULES_PATH)) {
+        return;
+    }
+    if !deps_mode().transforms(path.extension().and_then(|ext| ext.to_str())) {
+        return;
+    }
+    output.format = Some(Either::A(plain.to_owned()));
 }
 
 /// The path part of a URL or specifier, i.e. everything before a `?query` or `#fragment`.

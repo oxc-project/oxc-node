@@ -285,4 +285,22 @@ describe("resolved module format (issue #797)", () => {
       "dep/index.tsx: module undefined undefined",
     );
   });
+
+  test("OXC_TRANSFORM_ALL=typescript runs a .ts dependency in a type:module node_modules package as ESM", () => {
+    // A `.ts` dependency used to keep the deferred format even under
+    // `OXC_TRANSFORM_ALL`, so Node.js' module-typescript translator rejected
+    // it with ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING before `load` could
+    // transform it. The `typescript` mode answers the format for the
+    // TypeScript family only.
+    const root = fixture({
+      "package.json": TYPE_MODULE,
+      "entry.ts": `await import("dep/index.ts");\n`,
+      "node_modules/dep/package.json":
+        '{ "name": "dep", "type": "module", "main": "./index.ts" }\n',
+      "node_modules/dep/index.ts": `${probe("dep/index.ts")}\nexport {};\n`,
+    });
+    expect(run(root, "./entry.ts", { OXC_TRANSFORM_ALL: "typescript" })).toContain(
+      "dep/index.ts: module undefined undefined",
+    );
+  });
 });

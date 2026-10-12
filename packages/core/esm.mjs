@@ -3,7 +3,14 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { isMainThread, MessageChannel } from "node:worker_threads";
 
-import { createResolve, initTracing, load as oxcLoad, setTsconfigPath } from "./index.js";
+import {
+  __napiBindingTarget,
+  createResolve,
+  initTracing,
+  load as oxcLoad,
+  setTransformDeps,
+  setTsconfigPath,
+} from "./index.js";
 
 initTracing();
 
@@ -124,11 +131,23 @@ function load(url, context, nextLoad) {
  * Receives the `data` that `register.mjs` passes to `module.register()`. Absent when
  * this module is registered some other way.
  *
- * @param {{ tsconfigPath?: string | null } | undefined} data
+ * Only a WASI copy needs the replay: it starts with no state of its own. A native
+ * worker thread shares the main thread's binding, so `data` would be a snapshot from
+ * `module.register()` time — replaying it would overwrite a `setTsconfigPath` /
+ * `setTransformDeps` made since, and a stale mode would throw once a different one
+ * is already in use.
+ *
+ * @param {{ tsconfigPath?: string | null, transformDeps?: string | null } | undefined} data
  */
 function initialize(data) {
+  if (__napiBindingTarget === "native") {
+    return;
+  }
   if (data?.tsconfigPath != null) {
     setTsconfigPath(data.tsconfigPath);
+  }
+  if (data?.transformDeps != null) {
+    setTransformDeps(data.transformDeps);
   }
 }
 

@@ -119,8 +119,39 @@ transformation. These include path aliases, module and JSX settings, legacy
 decorators and decorator metadata, class-field semantics, and relative import
 extension rewriting.
 
-The ESM loader does not transform files in `node_modules` by default. Set
-`OXC_TRANSFORM_ALL=1` if ESM dependencies also need transformation.
+The loader does not transform files in `node_modules` by default. Set
+`OXC_TRANSFORM_ALL=typescript` to transform only the TypeScript dependencies —
+`.ts`, `.mts`, `.cts` and `.tsx`; JavaScript dependencies are still left to
+Node.js — or `OXC_TRANSFORM_ALL=1` if every dependency needs transformation.
+Absent, empty, `0` and `false` all keep dependencies untouched.
+
+A tool that wraps the loader can choose through the API instead, so the choice
+does not leak into `process.env` and from there into the user's script and the
+processes it spawns:
+
+```js
+import { setTransformDeps } from "@oxc-node/core";
+
+setTransformDeps("typescript");
+await import("@oxc-node/core/register");
+```
+
+The setter accepts `"typescript"`, `"all"` and `"off"` — the last keeps
+dependencies untouched even when the variable asks for more. A mode set this
+way takes precedence over `OXC_TRANSFORM_ALL`, and `null`
+clears the override. The mode is read once per process, so call
+`setTransformDeps` before the first transform or resolve; on the
+`module.register()` path the deadline is the `register` import itself, which
+fixes the mode for the hook thread. Calling it later with a different mode
+throws. On WASI the hook thread instantiates its own copy of the binding, so
+the mode in effect when `@oxc-node/core/register` is imported is the one the
+ESM hooks see.
+
+`OXC_TRANSFORM_ALL=typescript` predates no older release: a version before
+this one reads any non-empty, non-`0`/`false` value as transform-all, so if an
+older copy is registered alongside (`NODE_OPTIONS` preloading a global install
+is the common case) it transforms JavaScript dependencies too. The
+`setTransformDeps` API is invisible to older copies and avoids that entirely.
 
 ## Programmatic transformation
 
