@@ -398,10 +398,13 @@ pub fn set_transform_deps(mode: Option<String>) -> Result<()> {
 #[napi]
 pub fn get_transform_deps() -> Option<String> {
     let deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
-    deps.mode.and_then(|mode| match mode {
-        DepsMode::Off => Some("off".to_owned()),
-        DepsMode::Typescript => Some("typescript".to_owned()),
-        DepsMode::All => Some("all".to_owned()),
+    deps.mode.map(|mode| {
+        match mode {
+            DepsMode::Off => "off",
+            DepsMode::Typescript => "typescript",
+            DepsMode::All => "all",
+        }
+        .to_owned()
     })
 }
 
@@ -2062,9 +2065,13 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
     tracing::debug!(explicit_tsconfig_path = ?explicit_tsconfig_path);
 
     // The dependency mode is fixed by the same first transform or resolve, so
-    // a later `setTransformDeps` call can never silently change behaviour.
+    // a later `setTransformDeps` call can never silently change behaviour. A
+    // mode already frozen at `register()` stays frozen: env changes between
+    // registration and now must not move the deadline back.
     let mut deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
-    deps.consumed = Some(deps.mode.unwrap_or_else(deps_mode_from_env));
+    if deps.consumed.is_none() {
+        deps.consumed = Some(deps.mode.unwrap_or_else(deps_mode_from_env));
+    }
 
     let tsconfig = match &explicit_tsconfig_path {
         // Pointing `Manual` at a file that does not exist would make *every*
