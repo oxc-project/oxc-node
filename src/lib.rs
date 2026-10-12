@@ -936,6 +936,17 @@ fn has_cts_module_declaration(program: &Program<'_>) -> bool {
     })
 }
 
+/// The source type of a file, or `None` for a file Node.js cannot classify. An
+/// extensionless file is JavaScript whose module kind its syntax decides, as
+/// Node.js decides it for such a file in a package without "type".
+fn source_type_from_path(path: &Path) -> Option<SourceType> {
+    match SourceType::from_path(path) {
+        Ok(source_type) => Some(source_type),
+        Err(_) if path.extension().is_none() => Some(SourceType::unambiguous()),
+        Err(_) => None,
+    }
+}
+
 /// Whether the source type is a `.cts` file, CommonJS TypeScript.
 fn is_cts(source_type: SourceType) -> bool {
     source_type.is_typescript() && source_type.is_commonjs()
@@ -1023,12 +1034,13 @@ fn oxc_transform<S: TryAsStr>(
     helper_module_name: Option<&str>,
 ) -> Result<(Output, bool)> {
     let allocator = Allocator::default();
-    // `.js`, `.jsx`, `.ts` and `.tsx` are ambiguous: oxc decides between a script and an ES
-    // module by looking for `import`/`export` syntax, so a file that has none is treated as
-    // a script and the helper loader emits `require()` for the helpers it injects. Node.js
-    // decides from the nearest `package.json` instead and would then run that `require()` in
-    // an ES module. Only the caller knows which it is, so let it say.
-    let source_type = SourceType::from_path(src_path).unwrap_or_default().with_module(is_es_module);
+    // `.js`, `.jsx`, `.ts`, `.tsx` and extensionless files are ambiguous: oxc decides
+    // between a script and an ES module by looking for `import`/`export` syntax, so a
+    // file that has none is treated as a script and the helper loader emits `require()`
+    // for the helpers it injects. Node.js decides from the nearest `package.json`
+    // instead and would then run that `require()` in an ES module. Only the caller
+    // knows which it is, so let it say.
+    let source_type = source_type_from_path(src_path).unwrap_or_default().with_module(is_es_module);
     let source_str = code.try_as_str()?;
     let allow_module_retry = !is_es_module
         && matches!(module_target, Some(Module::Preserve))
@@ -1650,10 +1662,10 @@ pub fn load<'env>(
 
 /// Node.js does not read CommonJS modules for the `load` hook: its default load returns
 /// no source and lets the CJS machinery fetch the file later. The format was decided from
-/// the outside, though — a `.ts`/`.js` file in a CommonJS package that contains ESM syntax
-/// is an ES module to Node.js (it runs as one when `require()`d), and reporting it as
-/// `commonjs` breaks both entry points (`ERR_REQUIRE_CYCLE_MODULE`) and named imports
-/// (`cjs-module-lexer` finds no exports). Read the file and check what it really is,
+/// the outside, though — a `.ts`/`.js` or extensionless file in a CommonJS package that
+/// contains ESM syntax is an ES module to Node.js (it runs as one when `require()`d), and
+/// reporting it as `commonjs` breaks both entry points (`ERR_REQUIRE_CYCLE_MODULE`) and
+/// named imports (`cjs-module-lexer` finds no exports). Read the file and check what it really is,
 /// transforming it right away when it is an ES module; anything else falls through
 /// untouched. The parse is shared with the transform, so a flipped file is parsed once.
 fn load_commonjs_esm(
@@ -1673,12 +1685,13 @@ fn load_commonjs_esm(
     {
         return Ok(None);
     }
-    let Ok(source_type) = SourceType::from_path(&path) else { return Ok(None) };
+    let Some(source_type) = source_type_from_path(&path) else { return Ok(None) };
     if is_cts(source_type) {
         return reject_cts_module_syntax(&path, resolved_compiler_options);
     }
-    // Only the ambiguous extensions may flip: `.cts`/`.cjs` are CommonJS by contract, and
-    // their source type emits `require()` for helpers, which an ES module cannot run.
+    // Only the ambiguous extensions — and extensionless files, whose module kind Node.js
+    // decides from syntax — may flip: `.cts`/`.cjs` are CommonJS by contract, and their
+    // source type emits `require()` for helpers, which an ES module cannot run.
     if !source_type.is_unambiguous() {
         return Ok(None);
     }

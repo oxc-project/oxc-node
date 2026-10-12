@@ -77,6 +77,21 @@ function run(root: string, entry: string): string {
 const COMMONJS = JSON.stringify({ name: "fx", private: true, type: "commonjs" });
 
 describe("a CommonJS package", () => {
+  test("an extensionless entry point with ESM syntax runs as an ES module (#828)", () => {
+    // Same treatment as the .ts/.js tests in this block: the file is reported
+    // "commonjs" and syntax-detection flips it. Plain Node.js is inconsistent
+    // here (a `require()` of the file succeeds on v24 but the file fails to
+    // parse on v26); the loader follows its .js precedent instead.
+    const root = fixture({
+      "package.json": COMMONJS,
+      "bin/tool": [
+        'import { basename } from "node:path";',
+        'console.log("tool:", typeof require === "undefined" ? "module" : "commonjs", basename(import.meta.filename));',
+      ].join("\n"),
+    });
+    expect(run(root, "./bin/tool")).toContain("tool: module tool");
+  });
+
   test("an entry point with ESM syntax runs as an ES module", () => {
     const root = fixture({
       "package.json": COMMONJS,
@@ -256,6 +271,31 @@ describe("a CommonJS package", () => {
       ].join("\n"),
     });
     expect(run(root, "./entry.ts")).toContain("require: dep-ok sub-ok");
+  });
+
+  test("an extensionless entry point with ESM syntax runs as an ES module (#828)", () => {
+    // No "type" field at all, so the resolve hook reports "commonjs" and Node.js
+    // compiled the file as CommonJS — its detection then retried the entry through
+    // `require(esm)`, a self-cycle: ERR_REQUIRE_CYCLE_MODULE.
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true }),
+      "bin/tool": [
+        'import { basename } from "node:path";',
+        'console.log("tool:", typeof require === "undefined" ? "module" : "commonjs", basename(import.meta.filename));',
+      ].join("\n"),
+    });
+    expect(run(root, "./bin/tool")).toContain("tool: module tool");
+  });
+
+  test("an imported extensionless module keeps its named exports (#828)", () => {
+    // Reported as "commonjs", the `export` survived into a CommonJS file, where
+    // `cjs-module-lexer` finds no named exports for the import to bind.
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true }),
+      "bin/dep": 'export const dep = "dep-ok";\n',
+      "entry.ts": ['import { dep } from "./bin/dep";', 'console.log("dep:", dep);'].join("\n"),
+    });
+    expect(run(root, "./entry.ts")).toContain("dep: dep-ok");
   });
 });
 
