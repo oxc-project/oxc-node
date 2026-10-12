@@ -136,7 +136,9 @@ setTransformDeps("typescript");
 await import("@oxc-node/core/register");
 ```
 
-A mode set this way takes precedence over `OXC_TRANSFORM_ALL`, and `null`
+The setter accepts `"typescript"`, `"all"` and `"off"` — the last keeps
+dependencies untouched even when the variable asks for more. A mode set this
+way takes precedence over `OXC_TRANSFORM_ALL`, and `null`
 clears the override. The mode is read once per process, so call
 `setTransformDeps` before the first transform or resolve; on the
 `module.register()` path the deadline is the `register` import itself, which

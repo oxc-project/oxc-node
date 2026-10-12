@@ -433,7 +433,7 @@ try {
     expect(output).toContain(
       "WIDEN:setTransformDeps() must be called before the first transform or resolve",
     );
-    expect(output).toContain('BOGUS:setTransformDeps() expects "typescript" or "all"');
+    expect(output).toContain('BOGUS:setTransformDeps() expects "typescript", "all" or "off"');
   });
 });
 

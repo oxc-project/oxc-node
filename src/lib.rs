@@ -330,9 +330,11 @@ pub fn get_tsconfig_path() -> Option<String> {
 ///
 /// `"typescript"` transforms only the TypeScript-family dependencies —
 /// `.ts`, `.mts`, `.cts` and `.tsx` — and `"all"` every file, including
-/// JavaScript. `null`, `undefined` or an empty string clears the override and
-/// goes back to `OXC_TRANSFORM_ALL`. A mode set here takes precedence over the
-/// environment variable, as [`set_tsconfig_path`] does over its variables.
+/// JavaScript. `"off"` keeps dependencies untouched even when the variable
+/// asks for more. `null`, `undefined` or an empty string clears the override
+/// and goes back to `OXC_TRANSFORM_ALL`. A mode set here takes precedence
+/// over the environment variable, as [`set_tsconfig_path`] does over its
+/// variables.
 ///
 /// The mode is read once per process, on the first transform or resolve, so
 /// this has to run before that. Calling it afterwards throws, unless it names
@@ -350,10 +352,13 @@ pub fn set_transform_deps(mode: Option<String>) -> Result<()> {
         Some(mode) => Some(match mode.as_str() {
             "typescript" => DepsMode::Typescript,
             "all" => DepsMode::All,
+            // Explicit off: undoes the environment variable as well as an
+            // earlier override.
+            "off" => DepsMode::Off,
             _ => {
                 return Err(Error::new(
                     Status::InvalidArg,
-                    "setTransformDeps() expects \"typescript\" or \"all\"",
+                    "setTransformDeps() expects \"typescript\", \"all\" or \"off\"",
                 ));
             }
         }),
@@ -408,18 +413,28 @@ pub fn transforms_dep(path: String) -> bool {
     deps_mode().transforms(Path::new(&path).extension().and_then(|ext| ext.to_str()))
 }
 
-/// Latch the dependency mode without a transform or resolve having run. The
-/// `module.register()` path hands the mode to the hook thread as a snapshot:
-/// under WASI that thread's binding is a separate copy, so a later
-/// `setTransformDeps` on this binding could never reach it — freezing makes it
-/// throw instead of being silently ignored, and it aligns the deadline on
-/// every `module.register()` runtime.
+/// Latch the dependency mode without a transform or resolve having run, and
+/// return it — `"off"`, `"typescript"` or `"all"`. The `module.register()`
+/// path hands the mode to the hook thread as a snapshot: under WASI that
+/// thread's binding is a separate copy whose own `env` is a stale snapshot of
+/// the host's, so the frozen mode has to travel in the registration data —
+/// an `env`-only choice would diverge between the `require()` matcher on
+/// this binding and the ESM hooks on the other. Freezing also makes a later
+/// `setTransformDeps` throw instead of being silently ignored, and aligns
+/// the deadline on every `module.register()` runtime.
 #[napi]
-pub fn freeze_transform_deps() {
+pub fn freeze_transform_deps() -> String {
     let mut deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
     if deps.consumed.is_none() {
         deps.consumed = Some(deps.mode.unwrap_or_else(deps_mode_from_env));
     }
+    // `consumed` was just latched above if it was unset.
+    match deps.consumed.unwrap() {
+        DepsMode::Off => "off",
+        DepsMode::Typescript => "typescript",
+        DepsMode::All => "all",
+    }
+    .to_owned()
 }
 
 /// Resolvers for the export conditions resolve requests have asked for so far,

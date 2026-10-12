@@ -8,7 +8,6 @@ import {
   OxcTransformer,
   createResolve,
   freezeTransformDeps,
-  getTransformDeps,
   getTsconfigPath,
   initTracing,
   load as oxcLoad,
@@ -327,10 +326,11 @@ if (canRegisterSyncHooks()) {
   // WASI that thread's binding is a separate copy a later `setTransformDeps`
   // could never reach, so the mode is frozen here first — a late call throws
   // instead of diverging between the `require()` matcher on this binding and
-  // the ESM hooks on the other. `setTsconfigPath` rides the same snapshot.
-  freezeTransformDeps();
+  // the ESM hooks on the other. The frozen mode is sent, not just an override,
+  // because the worker's env may be an older snapshot of process.env.
+  // `setTsconfigPath` rides the same snapshot.
   register("@oxc-node/core/esm", {
     parentURL: import.meta.url,
-    data: { tsconfigPath: getTsconfigPath(), transformDeps: getTransformDeps() },
+    data: { tsconfigPath: getTsconfigPath(), transformDeps: freezeTransformDeps() },
   });
 }

@@ -31,14 +31,17 @@ export declare class OxcTransformer {
 export declare function createResolve(options: OxcResolveOptions, specifier: string, context: ResolveContext, nextResolve: (arg0: string, arg1?: ResolveContext | undefined | null) => ResolveFnOutput | Promise<ResolveFnOutput>): ResolveFnOutput | Promise<ResolveFnOutput>
 
 /**
- * Latch the dependency mode without a transform or resolve having run. The
- * `module.register()` path hands the mode to the hook thread as a snapshot:
- * under WASI that thread's binding is a separate copy, so a later
- * `setTransformDeps` on this binding could never reach it — freezing makes it
- * throw instead of being silently ignored, and it aligns the deadline on
- * every `module.register()` runtime.
+ * Latch the dependency mode without a transform or resolve having run, and
+ * return it — `"off"`, `"typescript"` or `"all"`. The `module.register()`
+ * path hands the mode to the hook thread as a snapshot: under WASI that
+ * thread's binding is a separate copy whose own `env` is a stale snapshot of
+ * the host's, so the frozen mode has to travel in the registration data —
+ * an `env`-only choice would diverge between the `require()` matcher on
+ * this binding and the ESM hooks on the other. Freezing also makes a later
+ * `setTransformDeps` throw instead of being silently ignored, and aligns
+ * the deadline on every `module.register()` runtime.
  */
-export declare function freezeTransformDeps(): void
+export declare function freezeTransformDeps(): string
 
 /**
  * The mode last passed to [`set_transform_deps`] — `"typescript"` or
@@ -110,9 +113,11 @@ export interface ResolveFnOutput {
  *
  * `"typescript"` transforms only the TypeScript-family dependencies —
  * `.ts`, `.mts`, `.cts` and `.tsx` — and `"all"` every file, including
- * JavaScript. `null`, `undefined` or an empty string clears the override and
- * goes back to `OXC_TRANSFORM_ALL`. A mode set here takes precedence over the
- * environment variable, as [`set_tsconfig_path`] does over its variables.
+ * JavaScript. `"off"` keeps dependencies untouched even when the variable
+ * asks for more. `null`, `undefined` or an empty string clears the override
+ * and goes back to `OXC_TRANSFORM_ALL`. A mode set here takes precedence
+ * over the environment variable, as [`set_tsconfig_path`] does over its
+ * variables.
  *
  * The mode is read once per process, on the first transform or resolve, so
  * this has to run before that. Calling it afterwards throws, unless it names
