@@ -31,6 +31,26 @@ export declare class OxcTransformer {
 export declare function createResolve(options: OxcResolveOptions, specifier: string, context: ResolveContext, nextResolve: (arg0: string, arg1?: ResolveContext | undefined | null) => ResolveFnOutput | Promise<ResolveFnOutput>): ResolveFnOutput | Promise<ResolveFnOutput>
 
 /**
+ * Latch the dependency mode without a transform or resolve having run. The
+ * `module.register()` path hands the mode to the hook thread as a snapshot:
+ * under WASI that thread's binding is a separate copy, so a later
+ * `setTransformDeps` on this binding could never reach it — freezing makes it
+ * throw instead of being silently ignored, and it aligns the deadline on
+ * every `module.register()` runtime.
+ */
+export declare function freezeTransformDeps(): void
+
+/**
+ * The mode last passed to [`set_transform_deps`] — `"typescript"` or
+ * `"all"` — or `null`, including after it was cleared.
+ *
+ * `register.mjs` hands it to the `module.register()` hook thread. Under WASI
+ * that thread instantiates its own copy of the binding, which starts out with
+ * no override of its own.
+ */
+export declare function getTransformDeps(): string | null
+
+/**
  * The path last passed to [`set_tsconfig_path`], exactly as given, or `null`.
  *
  * `register.mjs` hands it to the `module.register()` hook thread. Under WASI
@@ -84,6 +104,27 @@ export interface ResolveFnOutput {
 }
 
 /**
+ * Transform `node_modules` dependencies too, as `OXC_TRANSFORM_ALL` does, but
+ * without touching `process.env` — so the user's script and the processes it
+ * spawns do not inherit a choice made for the loader (issue #821).
+ *
+ * `"typescript"` transforms only the TypeScript-family dependencies —
+ * `.ts`, `.mts`, `.cts` and `.tsx` — and `"all"` every file, including
+ * JavaScript. `null`, `undefined` or an empty string clears the override and
+ * goes back to `OXC_TRANSFORM_ALL`. A mode set here takes precedence over the
+ * environment variable, as [`set_tsconfig_path`] does over its variables.
+ *
+ * The mode is read once per process, on the first transform or resolve, so
+ * this has to run before that. Calling it afterwards throws, unless it names
+ * the mode already in use, whether that came from here or from the
+ * environment variable. On WASI the deadline is earlier: the
+ * `module.register()` hook thread instantiates its own copy of the binding,
+ * so the mode is the one in effect when `@oxc-node/core/register` is
+ * imported.
+ */
+export declare function setTransformDeps(mode?: string | undefined | null): void
+
+/**
  * Pin one `tsconfig.json` for every file, as `OXC_TSCONFIG_PATH` does, but
  * without touching `process.env` — so the user's script and the processes it
  * spawns do not inherit a config chosen for the loader (issue #806).
@@ -104,3 +145,12 @@ export declare function setTsconfigPath(path?: string | undefined | null): void
 export declare function transform(path: string, source: string | Uint8Array): Output
 
 export declare function transformAsync(path: string, source: string | Uint8Array | Buffer): Promise<unknown>
+
+/**
+ * Whether the mode in effect transforms a `node_modules` file at `path`, for
+ * the `pirates` matcher in `register.mjs`. Asking the binding keeps
+ * `OXC_TRANSFORM_ALL`'s grammar and the TypeScript-family extensions in one
+ * place, and — unlike a mode snapshotted at module evaluation — honours a
+ * `setTransformDeps` call made after `@oxc-node/core/register` loaded.
+ */
+export declare function transformsDep(path: string): boolean

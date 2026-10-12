@@ -18,7 +18,7 @@ export declare class Output {
 }
 
 export declare class OxcTransformer {
-  constructor(cwd?: string | undefined | null);
+  constructor(cwd?: string | undefined | null, helperModuleName?: string | undefined | null);
   transform(path: string, source: string | Uint8Array): Output;
   transformAsync(path: string, source: string | Uint8Array | Buffer): Promise<Output>;
 }
@@ -33,6 +33,25 @@ export declare function createResolve(
   ) => ResolveFnOutput | Promise<ResolveFnOutput>,
 ): ResolveFnOutput | Promise<ResolveFnOutput>;
 
+/**
+ * The mode last passed to [`set_transform_deps`] — `"typescript"` or
+ * `"all"` — or `null`, including after it was cleared.
+ *
+ * `register.mjs` hands it to the `module.register()` hook thread. Under WASI
+ * that thread instantiates its own copy of the binding, which starts out with
+ * no override of its own.
+ */
+export declare function getTransformDeps(): string | null;
+
+/**
+ * The path last passed to [`set_tsconfig_path`], exactly as given, or `null`.
+ *
+ * `register.mjs` hands it to the `module.register()` hook thread. Under WASI
+ * that thread instantiates its own copy of the binding, which starts out with
+ * no override of its own.
+ */
+export declare function getTsconfigPath(): string | null;
+
 export declare function initTracing(): void;
 
 export declare function load(
@@ -42,6 +61,7 @@ export declare function load(
     arg0: string,
     arg1?: LoadContext | undefined | null,
   ) => LoadFnOutput | Promise<LoadFnOutput>,
+  helperModuleName?: string | undefined | null,
 ): LoadFnOutput | Promise<LoadFnOutput>;
 
 export interface LoadContext {
@@ -84,13 +104,42 @@ export interface ResolveFnOutput {
   importAttributes?: Record<string, string> | null;
 }
 
-/** The path last passed to `setTsconfigPath`, exactly as given, or `null`. */
-export declare function getTsconfigPath(): string | null;
+/**
+ * Transform `node_modules` dependencies too, as `OXC_TRANSFORM_ALL` does, but
+ * without touching `process.env` — so the user's script and the processes it
+ * spawns do not inherit a choice made for the loader (issue #821).
+ *
+ * `"typescript"` transforms only the TypeScript-family dependencies —
+ * `.ts`, `.mts`, `.cts` and `.tsx` — and `"all"` every file, including
+ * JavaScript. `null`, `undefined` or an empty string clears the override and
+ * goes back to `OXC_TRANSFORM_ALL`. A mode set here takes precedence over the
+ * environment variable, as [`set_tsconfig_path`] does over its variables.
+ *
+ * The mode is read once per process, on the first transform or resolve, so
+ * this has to run before that. Calling it afterwards throws, unless it names
+ * the mode already in use, whether that came from here or from the
+ * environment variable. On WASI the deadline is earlier: the
+ * `module.register()` hook thread instantiates its own copy of the binding,
+ * so the mode is the one in effect when `@oxc-node/core/register` is
+ * imported.
+ */
+export declare function setTransformDeps(mode?: string | undefined | null): void;
 
 /**
- * Pin one `tsconfig.json` for every file without touching `process.env`. Takes
- * precedence over `TS_NODE_PROJECT` and `OXC_TSCONFIG_PATH`; call it before the
- * first transform or resolve.
+ * Pin one `tsconfig.json` for every file, as `OXC_TSCONFIG_PATH` does, but
+ * without touching `process.env` — so the user's script and the processes it
+ * spawns do not inherit a config chosen for the loader (issue #806).
+ *
+ * A path set here takes precedence over `TS_NODE_PROJECT` and
+ * `OXC_TSCONFIG_PATH`. A relative path is resolved against the working
+ * directory the loader runs in, like the environment variables. `null`,
+ * `undefined` or an empty string clears the override and goes back to the
+ * environment variables, then to discovery.
+ *
+ * The resolver and its tsconfig are shared by the whole process and created
+ * on the first transform or resolve, so this has to run before that. Calling
+ * it afterwards throws, unless it names the config already in use, whether
+ * that came from here or from an environment variable.
  */
 export declare function setTsconfigPath(path?: string | undefined | null): void;
 
@@ -100,3 +149,12 @@ export declare function transformAsync(
   path: string,
   source: string | Uint8Array | Buffer,
 ): Promise<unknown>;
+
+/**
+ * Whether the mode in effect transforms a `node_modules` file at `path`, for
+ * the `pirates` matcher in `register.mjs`. Asking the binding keeps
+ * `OXC_TRANSFORM_ALL`'s grammar and the TypeScript-family extensions in one
+ * place, and — unlike a mode snapshotted at module evaluation — honours a
+ * `setTransformDeps` call made after `@oxc-node/core/register` loaded.
+ */
+export declare function transformsDep(path: string): boolean;
