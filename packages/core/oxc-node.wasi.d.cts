@@ -34,6 +34,16 @@ export declare function createResolve(
 ): ResolveFnOutput | Promise<ResolveFnOutput>;
 
 /**
+ * Latch the dependency mode without a transform or resolve having run. The
+ * `module.register()` path hands the mode to the hook thread as a snapshot:
+ * under WASI that thread's binding is a separate copy, so a later
+ * `setTransformDeps` on this binding could never reach it — freezing makes it
+ * throw instead of being silently ignored, and it aligns the deadline on
+ * every `module.register()` runtime.
+ */
+export declare function freezeTransformDeps(): void;
+
+/**
  * The mode last passed to [`set_transform_deps`] — `"typescript"` or
  * `"all"` — or `null`, including after it was cleared.
  *
