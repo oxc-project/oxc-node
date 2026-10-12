@@ -239,18 +239,27 @@ function load(url, context, nextLoad) {
   if (isCommonJsRequire(context)) {
     return nextLoad(url, context);
   }
+  // `module.registerHooks()`'s synchronous default load reads every file it is asked
+  // about — CommonJS included, where `module.register()`'s asynchronous one returns a
+  // null source. `oxcLoad` discards a `commonjs` result's source only when it is the
+  // file itself: the `pirates` hook compiles it when the CommonJS machinery reads the
+  // file, so transforming it here would run the transform twice (issue #820). A source
+  // that is not the file came from another hook and is kept — for a `data:` or custom
+  // scheme there is no file to defer to.
   const result = oxcLoad(url, context, nextLoad, HELPER_MODULE_NAME);
-  // Anything oxc-node itself settles on as CommonJS is left to the CommonJS machinery,
+  // A CommonJS result carrying no source of its own is left to the CommonJS machinery,
   // which compiles it through the `pirates` hook above and its accurate inline source
-  // map. Returning source from here instead costs stack trace precision: a throw in a
-  // `.cts` entry gets reported at the transformed position rather than the original one.
-  // Asking `oxcLoad` first is what keeps a CommonJS-reported file that actually contains
-  // ESM syntax running as an ES module. `commonjs-typescript` — Node.js' own format for a
-  // `.ts` file it strips types from — is not deferred, because that translator needs the
-  // source and rejects `null`; it is passed through untouched so Node.js reports its own
-  // error (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`) for a `.ts` dependency instead
-  // of one blaming the hook.
-  if (result.format === "commonjs") {
+  // map. Returning transformed source here instead costs stack trace precision: a throw
+  // in a `.cts` entry gets reported at the transformed position rather than the original
+  // one. Asking `oxcLoad` first is what keeps a CommonJS-reported file that actually
+  // contains ESM syntax running as an ES module, and what keeps source another hook
+  // supplied — which the CommonJS machinery cannot re-read — from being discarded.
+  // `commonjs-typescript` — Node.js' own format for a `.ts` file it strips types from —
+  // is not deferred, because that translator needs the source and rejects `null`; it is
+  // passed through untouched so Node.js reports its own error
+  // (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`) for a `.ts` dependency instead of one
+  // blaming the hook.
+  if (result.format === "commonjs" && result.source == null) {
     // A null source is what `module.register()`'s asynchronous default load returned for
     // every CommonJS module, and it is the one shape that keeps `require()` inside such a
     // module working on every runtime: a source-bearing result made Node.js short-circuit
