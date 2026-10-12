@@ -44,8 +44,11 @@ export declare function createResolve(options: OxcResolveOptions, specifier: str
 export declare function freezeTransformDeps(): string
 
 /**
- * The mode last passed to [`set_transform_deps`] — `"typescript"` or
- * `"all"` — or `null`, including after it was cleared.
+ * The mode last passed to [`set_transform_deps`] — `"off"`, `"typescript"`
+ * or `"all"` — or `null` when there is no override, including after it was
+ * cleared. An explicit `"off"` round-trips: returning `null` for it would
+ * send a wrapper that forwards the answer to another binding back to the
+ * environment variable instead.
  *
  * `register.mjs` hands it to the `module.register()` hook thread. Under WASI
  * that thread instantiates its own copy of the binding, which starts out with

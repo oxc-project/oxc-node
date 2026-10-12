@@ -386,8 +386,11 @@ pub fn set_transform_deps(mode: Option<String>) -> Result<()> {
     Ok(())
 }
 
-/// The mode last passed to [`set_transform_deps`] — `"typescript"` or
-/// `"all"` — or `null`, including after it was cleared.
+/// The mode last passed to [`set_transform_deps`] — `"off"`, `"typescript"`
+/// or `"all"` — or `null` when there is no override, including after it was
+/// cleared. An explicit `"off"` round-trips: returning `null` for it would
+/// send a wrapper that forwards the answer to another binding back to the
+/// environment variable instead.
 ///
 /// `register.mjs` hands it to the `module.register()` hook thread. Under WASI
 /// that thread instantiates its own copy of the binding, which starts out with
@@ -396,10 +399,9 @@ pub fn set_transform_deps(mode: Option<String>) -> Result<()> {
 pub fn get_transform_deps() -> Option<String> {
     let deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
     deps.mode.and_then(|mode| match mode {
+        DepsMode::Off => Some("off".to_owned()),
         DepsMode::Typescript => Some("typescript".to_owned()),
         DepsMode::All => Some("all".to_owned()),
-        // `Off` is never stored: clearing the override is `None`.
-        DepsMode::Off => None,
     })
 }
 
