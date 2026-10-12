@@ -251,6 +251,26 @@ describe("resolved module format (issue #797)", () => {
     expect(run(commonjs, "./entry.ts")).toContain("dep: commonjs function object");
   });
 
+  test("an extensionless file with ESM syntax in a package without a type field runs as an ES module", () => {
+    // The fallback reports "commonjs", so it is the load hook's ESM-syntax check —
+    // not the format — that runs this file: as an entry point the CommonJS compile
+    // was a self-cycle (ERR_REQUIRE_CYCLE_MODULE), and a named import found no
+    // CommonJS exports (issue #828). The extensionless test above has no module
+    // syntax, so it cannot catch a regression here.
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true }),
+      dep: 'export const dep = "dep-ok";\n',
+      entry: [
+        'import { dep } from "./dep";',
+        `${probe("entry")}`,
+        'console.log("dep:", dep);',
+      ].join("\n"),
+    });
+    const output = run(root, "./entry");
+    expect(output).toContain("entry: module undefined undefined");
+    expect(output).toContain("dep: dep-ok");
+  });
+
   test.each(["./asset.txt", "./asset.wasm"])(
     "%s keeps its prior classification even in a type:module package",
     (dep) => {
