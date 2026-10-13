@@ -1665,12 +1665,18 @@ pub fn load<'env>(
 /// the outside, though — a `.ts`/`.js` or extensionless file in a CommonJS package that
 /// contains ESM syntax is an ES module to Node.js (it runs as one when `require()`d), and
 /// reporting it as `commonjs` breaks both entry points (`ERR_REQUIRE_CYCLE_MODULE`) and
-/// named imports (`cjs-module-lexer` finds no exports). Read the file and check what it really is,
+/// named imports (`cjs-module-lexer` finds no exports). Check what the source really is,
 /// transforming it right away when it is an ES module; anything else falls through
-/// untouched. The parse is shared with the transform, so a flipped file is parsed once.
+/// untouched. The source is the file read from disk — or, when the caller already
+/// holds source for the URL, that source, and the file is not read at all. The
+/// synchronous default load hands over the file's own bytes, so the read is usually
+/// spared on the file's own content; a previous hook's differing source decides the
+/// flip instead of the file. The parse is shared with the transform, so a flipped
+/// file is parsed once.
 fn load_commonjs_esm(
     url: &str,
     output: &LoadFnOutput,
+    source: Option<&str>,
     resolved_compiler_options: Option<&CompilerOptions>,
     helper_module_name: Option<String>,
 ) -> Result<Option<LoadFnOutput>> {
@@ -1687,7 +1693,7 @@ fn load_commonjs_esm(
     }
     let Some(source_type) = source_type_from_path(&path) else { return Ok(None) };
     if is_cts(source_type) {
-        return reject_cts_module_syntax(&path, resolved_compiler_options);
+        return reject_cts_module_syntax(&path, source, resolved_compiler_options);
     }
     // Only the ambiguous extensions — and extensionless files, whose module kind Node.js
     // decides from syntax — may flip: `.cts`/`.cjs` are CommonJS by contract, and their
@@ -1697,8 +1703,18 @@ fn load_commonjs_esm(
     }
     // `read_to_string` would validate UTF-8 with std's scalar check; the SIMD pass is the
     // one `file_url_to_path` uses, and borrowing the bytes skips the copy into a String.
-    let Ok(bytes) = std::fs::read(&path) else { return Ok(None) };
-    let Ok(source) = simdutf8::basic::from_utf8(&bytes) else { return Ok(None) };
+    // When the caller already holds the source it is a `&str` — UTF-8 by construction —
+    // and the file never gets read.
+    let bytes;
+    let source = match source {
+        Some(source) => source,
+        None => {
+            let Ok(file) = std::fs::read(&path) else { return Ok(None) };
+            bytes = file;
+            let Ok(source) = simdutf8::basic::from_utf8(&bytes) else { return Ok(None) };
+            source
+        }
+    };
     let allocator = Allocator::default();
     // `only_module_parse` covers the shapes oxc cannot resolve on its own, such as a
     // top-level `for await`; `parsed_as_esm` covers the rest, including top-level await.
@@ -1745,10 +1761,19 @@ fn load_commonjs_esm(
 /// file that does not parse included, so the CommonJS path reports its own error.
 fn reject_cts_module_syntax(
     path: &Path,
+    source: Option<&str>,
     resolved_compiler_options: Option<&CompilerOptions>,
 ) -> Result<Option<LoadFnOutput>> {
-    let Ok(bytes) = std::fs::read(path) else { return Ok(None) };
-    let Ok(source) = simdutf8::basic::from_utf8(&bytes) else { return Ok(None) };
+    let bytes;
+    let source = match source {
+        Some(source) => source,
+        None => {
+            let Ok(file) = std::fs::read(path) else { return Ok(None) };
+            bytes = file;
+            let Ok(source) = simdutf8::basic::from_utf8(&bytes) else { return Ok(None) };
+            source
+        }
+    };
     // Only the transform knows which `import`/`export` declarations are type-only, so a
     // file with any declaration runs through it — the same options the `require()` path
     // uses — and only its verdict is kept.
@@ -1818,9 +1843,13 @@ fn transform_output(
 ) -> Result<LoadFnOutput> {
     match &output.source {
         Some(Either4::D(_)) | None => {
-            if let Some(loaded) =
-                load_commonjs_esm(&url, &output, resolved_compiler_options, helper_module_name)?
-            {
+            if let Some(loaded) = load_commonjs_esm(
+                &url,
+                &output,
+                None,
+                resolved_compiler_options,
+                helper_module_name,
+            )? {
                 return Ok(loaded);
             }
             tracing::debug!("No source code to transform {}", url);
@@ -1843,29 +1872,58 @@ fn transform_output(
             // CommonJS module and hands its source over — the file itself, byte for byte.
             // Transforming it would be work the `pirates` hook then repeats when the
             // CommonJS machinery reads the file, so such a result defers exactly as a
-            // source-less one does (issue #820). A source that differs — or whose URL has
-            // no file at all, such as `data:` or a custom scheme — is another hook's
-            // code, and it falls through to be transformed and kept: the CommonJS
-            // machinery would either re-read disk content the hook did not produce or
-            // fail on a path that does not exist.
+            // source-less one does (issue #820). The ESM-syntax check runs on the source
+            // in hand first, so a file that flips to an ES module is never read from
+            // disk; only a file that stays CommonJS is read, once, to tell the file's
+            // own source — which may defer — from another hook's source, which never
+            // does. A differing source that stays CommonJS parses twice — once for the
+            // syntax check and again in `oxc_transform` — the price of checking before
+            // the byte compare. A differing source — or one whose URL has no file at
+            // all, such as `data:` or a custom scheme — is another hook's code, and it
+            // falls through to be transformed and kept: the CommonJS machinery would
+            // either re-read disk content the hook did not produce or fail on a path
+            // that does not exist. A differing source that is an ES module still
+            // flips: `load_commonjs_esm` transforms it with `Module::Esm`, which the
+            // normal path selects for a flip too (and emits identically to `Preserve`
+            // for module input), so the result matches the source-less
+            // `module.register()` path.
             if !is_json
                 && output.format == "commonjs"
-                && source_matches_file(&url, output.source.as_ref().unwrap())
+                && let Ok(source) = output.source.as_ref().unwrap().try_as_str()
             {
-                tracing::debug!(
-                    "Source is the file itself, deferring to the CommonJS loader {}",
-                    url
-                );
-                if let Some(loaded) =
-                    load_commonjs_esm(&url, &output, resolved_compiler_options, helper_module_name)?
-                {
-                    return Ok(loaded);
+                // `.cts` compares before the syntax check: that check rejects module
+                // syntax instead of flipping, so running it on another hook's source
+                // would report the `.cts` verdict where the transform below reports
+                // its own error, as it did before the check ran on source in hand.
+                // Only the file's own bytes reach the rejection check.
+                let cts = ext.is_some_and(|ext| ext == "cts");
+                let mut source_is_file =
+                    cts && source_matches_file(&url, output.source.as_ref().unwrap());
+                if !cts || source_is_file {
+                    if let Some(loaded) = load_commonjs_esm(
+                        &url,
+                        &output,
+                        Some(source),
+                        resolved_compiler_options,
+                        helper_module_name.clone(),
+                    )? {
+                        return Ok(loaded);
+                    }
+                    if !cts {
+                        source_is_file = source_matches_file(&url, output.source.as_ref().unwrap());
+                    }
                 }
-                return Ok(LoadFnOutput {
-                    format: output.format,
-                    source: Some(Either4::D(Null)),
-                    response_url: Some(url),
-                });
+                if source_is_file {
+                    tracing::debug!(
+                        "Source is the file itself, deferring to the CommonJS loader {}",
+                        url
+                    );
+                    return Ok(LoadFnOutput {
+                        format: output.format,
+                        source: Some(Either4::D(Null)),
+                        response_url: Some(url),
+                    });
+                }
             }
 
             // A CommonJS result whose source is not valid UTF-8 is not source code this
