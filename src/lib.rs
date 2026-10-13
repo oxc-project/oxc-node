@@ -1,13 +1,18 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
-    env, fs, mem,
+    env, fs,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock, PoisonError,
         atomic::{AtomicBool, Ordering},
     },
 };
+
+// `mem` is only needed by `TransformTask::finally`, which is part of the
+// napi-only async surface.
+#[cfg(feature = "napi")]
+use std::mem;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -44,6 +49,7 @@ use phf::Set;
     not(target_arch = "arm"),
     not(target_family = "wasm"),
     not(all(target_os = "windows", target_arch = "aarch64")),
+    feature = "napi",
     not(feature = "default_global_allocator")
 ))]
 #[global_allocator]
@@ -285,7 +291,7 @@ static TSCONFIG_OVERRIDE: Mutex<TsconfigOverride> =
 /// on the first transform or resolve, so this has to run before that. Calling
 /// it afterwards throws, unless it names the config already in use, whether
 /// that came from here or from an environment variable.
-#[napi]
+#[cfg_attr(feature = "napi", napi)]
 pub fn set_tsconfig_path(path: Option<String>) -> Result<()> {
     // Kept as given: a relative path is joined to the loader's working directory
     // in `init_resolver`, exactly like the environment variables. The native
@@ -318,7 +324,7 @@ pub fn set_tsconfig_path(path: Option<String>) -> Result<()> {
 /// `register.mjs` hands it to the `module.register()` hook thread. Under WASI
 /// that thread instantiates its own copy of the binding, which starts out with
 /// no override of its own.
-#[napi]
+#[cfg_attr(feature = "napi", napi)]
 pub fn get_tsconfig_path() -> Option<String> {
     let tsconfig_override = TSCONFIG_OVERRIDE.lock().unwrap_or_else(PoisonError::into_inner);
     tsconfig_override.path.as_ref().map(|path| path.to_string_lossy().into_owned())
@@ -343,7 +349,7 @@ pub fn get_tsconfig_path() -> Option<String> {
 /// `module.register()` hook thread instantiates its own copy of the binding,
 /// so the mode is the one in effect when `@oxc-node/core/register` is
 /// imported.
-#[napi]
+#[cfg_attr(feature = "napi", napi)]
 pub fn set_transform_deps(mode: Option<String>) -> Result<()> {
     let mode = match mode {
         // `null`/`undefined`/empty clear the override, back to the variable.
@@ -395,7 +401,7 @@ pub fn set_transform_deps(mode: Option<String>) -> Result<()> {
 /// `register.mjs` hands it to the `module.register()` hook thread. Under WASI
 /// that thread instantiates its own copy of the binding, which starts out with
 /// no override of its own.
-#[napi]
+#[cfg_attr(feature = "napi", napi)]
 pub fn get_transform_deps() -> Option<String> {
     let deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
     deps.mode.map(|mode| {
@@ -413,7 +419,7 @@ pub fn get_transform_deps() -> Option<String> {
 /// `OXC_TRANSFORM_ALL`'s grammar and the TypeScript-family extensions in one
 /// place, and — unlike a mode snapshotted at module evaluation — honours a
 /// `setTransformDeps` call made after `@oxc-node/core/register` loaded.
-#[napi]
+#[cfg_attr(feature = "napi", napi)]
 pub fn transforms_dep(path: String) -> bool {
     deps_mode().transforms(Path::new(&path).extension().and_then(|ext| ext.to_str()))
 }
@@ -427,7 +433,7 @@ pub fn transforms_dep(path: String) -> bool {
 /// this binding and the ESM hooks on the other. Freezing also makes a later
 /// `setTransformDeps` throw instead of being silently ignored, and aligns
 /// the deadline on every `module.register()` runtime.
-#[napi]
+#[cfg_attr(feature = "napi", napi)]
 pub fn freeze_transform_deps() -> String {
     let mut deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
     if deps.consumed.is_none() {
@@ -642,17 +648,18 @@ fn hex_digit(byte: u8) -> Option<u8> {
     }
 }
 
-#[cfg(target_family = "wasm")]
-#[napi]
+// Idempotent (`init` uses `try_init`), so it doubles as the embedder hook
+// when `napi` is off: a host forwards it or calls it directly to honor
+// `OXC_LOG` — nothing else installs the subscriber on that build.
+#[cfg_attr(feature = "napi", napi)]
 pub fn init_tracing() {
     init();
 }
 
-#[cfg(not(target_family = "wasm"))]
-#[napi]
-pub fn init_tracing() {}
-
-#[cfg_attr(not(target_family = "wasm"), napi_derive::module_init)]
+// `module_init` only exists with `napi` on (and not on wasm, where
+// `init_tracing` is the entry point); the fn stays compiled under
+// `default-features = false` for the `init_tracing` call above.
+#[cfg_attr(all(feature = "napi", not(target_family = "wasm")), napi_derive::module_init)]
 fn init() {
     use tracing_subscriber::filter::Targets;
     use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
@@ -678,14 +685,19 @@ fn init() {
 }
 
 /// Whether the running Node.js executes `using` / `await using` declarations natively,
-/// which every release from 24 on does. Set once the addon is loaded; until then (and in
-/// `cargo test`, which never loads it) `using` keeps being lowered, which runs everywhere.
+/// which every release from 24 on does. Set once `detect_runtime_syntax` runs — on the
+/// addon via its `napi(module_exports)` hook; until then (and in `cargo test`, which
+/// never loads it) `using` keeps being lowered, which runs everywhere.
 static NATIVE_EXPLICIT_RESOURCE_MANAGEMENT: AtomicBool = AtomicBool::new(false);
 
 /// The first Node.js major that runs explicit resource management natively.
 const NATIVE_EXPLICIT_RESOURCE_MANAGEMENT_SINCE: u32 = 24;
 
-#[napi(module_exports)]
+/// With `napi` off nothing invokes this: an embedder that wants native
+/// `using` support must call it from its own `napi(module_exports)` hook,
+/// or `NATIVE_EXPLICIT_RESOURCE_MANAGEMENT` stays `false` and `using` is
+/// lowered even on Node.js >= 24.
+#[cfg_attr(feature = "napi", napi(module_exports))]
 pub fn detect_runtime_syntax(_exports: Object, env: Env) -> Result<()> {
     // An unknown version (an older runtime, or a WASI host without the call) leaves the
     // flag off and `using` lowered.
@@ -696,22 +708,29 @@ pub fn detect_runtime_syntax(_exports: Object, env: Env) -> Result<()> {
     Ok(())
 }
 
-#[napi]
+// `Output` is not `#[napi]`-registered when the feature is off, so it loses its
+// `ToNapiValue`/`TypeName` impls and the async-task surface below — `TransformTask`,
+// `impl Task` and the `transform_async` functions — is gated on `feature = "napi"`
+// entirely. An embedder forwards the synchronous `transform` and wraps it in its
+// own `Task` if it needs a promise; the `Output` itself cannot cross its napi
+// boundary, so a forwarder maps `source()`/`source_map()` onto its own
+// `#[napi(object)]` result type.
+#[cfg_attr(feature = "napi", napi)]
 pub struct Output {
     code: String,
     map: Option<SourceMap<'static>>,
 }
 
-#[napi]
+#[cfg_attr(feature = "napi", napi)]
 impl Output {
-    #[napi]
+    #[cfg_attr(feature = "napi", napi)]
     /// Returns the generated code
     /// Cache the result of this function if you need to use it multiple times
     pub fn source(&self) -> String {
         self.code.clone()
     }
 
-    #[napi]
+    #[cfg_attr(feature = "napi", napi)]
     /// Returns the source map as a JSON string
     /// Cache the result of this function if you need to use it multiple times
     pub fn source_map(&self) -> Option<String> {
@@ -719,12 +738,13 @@ impl Output {
     }
 }
 
-#[napi]
+#[cfg_attr(feature = "napi", napi)]
 pub fn transform(path: String, source: Either<String, &[u8]>) -> Result<Output> {
     let transformer = OxcTransformer::new(None, None);
     transformer.transform(path, source)
 }
 
+#[cfg(feature = "napi")]
 #[napi]
 pub fn transform_async(
     path: String,
@@ -734,6 +754,7 @@ pub fn transform_async(
     transformer.transform_async(path, source)
 }
 
+#[cfg(feature = "napi")]
 pub struct TransformTask {
     cwd: String,
     helper_module_name: Option<String>,
@@ -741,6 +762,7 @@ pub struct TransformTask {
     source: Either3<String, Uint8Array, Buffer>,
 }
 
+#[cfg(feature = "napi")]
 #[napi]
 impl Task for TransformTask {
     type Output = Output;
@@ -777,7 +799,7 @@ impl Task for TransformTask {
     }
 }
 
-#[napi]
+#[cfg_attr(feature = "napi", napi)]
 pub struct OxcTransformer {
     cwd: String,
     /// The module name emitted for helper imports — the loaders pass a copy-tagged one
@@ -786,9 +808,9 @@ pub struct OxcTransformer {
     helper_module_name: Option<String>,
 }
 
-#[napi]
+#[cfg_attr(feature = "napi", napi)]
 impl OxcTransformer {
-    #[napi(constructor)]
+    #[cfg_attr(feature = "napi", napi(constructor))]
     pub fn new(cwd: Option<String>, helper_module_name: Option<String>) -> Self {
         Self {
             cwd: match cwd {
@@ -799,7 +821,7 @@ impl OxcTransformer {
         }
     }
 
-    #[napi]
+    #[cfg_attr(feature = "napi", napi)]
     pub fn transform(&self, path: String, source: Either<String, &[u8]>) -> Result<Output> {
         let cwd = PathBuf::from(&self.cwd);
         let src_path = Path::new(&path);
@@ -819,6 +841,7 @@ impl OxcTransformer {
         .map(|(output, _)| output)
     }
 
+    #[cfg(feature = "napi")]
     #[napi]
     pub fn transform_async(
         &self,
@@ -1275,6 +1298,10 @@ fn transform_program<'a>(
     Ok(Output { code, map: map.map(|source_map| source_map.into_owned()) })
 }
 
+// The `#[napi(object)]` macros stay unconditional with `napi` off: they emit
+// no registrations, only `FromNapiValue`/`ToNapiValue` impls an embedder's
+// forwarders reuse — and a type-def file `napi build` then folds into the
+// host's `index.d.ts` (see the `napi` feature docs in Cargo.toml).
 #[napi(object)]
 #[derive(Debug)]
 pub struct ResolveContext {
@@ -1308,7 +1335,7 @@ impl FromNapiValue for OxcResolveOptions {
     }
 }
 
-#[napi]
+#[cfg_attr(feature = "napi", napi)]
 #[cfg_attr(not(target_family = "wasm"), allow(unused_variables))]
 #[allow(clippy::type_complexity)]
 pub fn create_resolve<'env>(
@@ -1578,6 +1605,8 @@ fn json_format(context: &ResolveContext) -> &'static str {
     if context.import_attributes.contains_key("type") { "json" } else { "module" }
 }
 
+// Same rationale as `ResolveContext` above: kept compiled for marshalling
+// reuse under `default-features = false`.
 #[napi(object)]
 #[derive(Debug)]
 pub struct LoadContext {
@@ -1601,7 +1630,7 @@ pub struct LoadFnOutput {
     pub response_url: Option<String>,
 }
 
-#[napi]
+#[cfg_attr(feature = "napi", napi)]
 #[allow(clippy::type_complexity)]
 pub fn load<'env>(
     url: String,
@@ -2052,6 +2081,10 @@ impl TryAsStr for Either<String, &[u8]> {
     }
 }
 
+// Only `TransformTask::compute` feeds `Either3` to `oxc_transform`, so this is
+// dead code — and would pull in `Uint8Array`/`Buffer` for nothing — without the
+// napi-gated async surface.
+#[cfg(feature = "napi")]
 impl TryAsStr for Either3<String, Uint8Array, Buffer> {
     fn try_as_str(&self) -> Result<&str> {
         match self {
