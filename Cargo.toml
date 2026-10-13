@@ -12,10 +12,48 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [features]
-# Leave the global allocator to the host. Enable this when linking oxc-node into
-# another binary that declares its own `#[global_allocator]` (a binary can only
-# have one). Named after `rolldown_binding`'s feature, so an addon linking both
-# enables the same feature on each. The published packages keep mimalloc.
+default = ["napi"]
+
+# Compiles the `#[napi]` attributes that register this crate's exports on the
+# addon. Disable it (`default-features = false`) when linking oxc-node as a
+# library into another Node-API addon: napi-rs registers every `#[napi]` item
+# of every linked crate into one module, so these exports would collide with
+# or pollute the host's (issue #807).
+#
+# The embedder writes its own thin `#[napi]` forwarders — for `create_resolve`,
+# `load`, `transform`, `OxcTransformer`, `set_tsconfig_path`,
+# `get_tsconfig_path`, `set_transform_deps`, `get_transform_deps`,
+# `transforms_dep` and `freeze_transform_deps` — compiling this crate against
+# the same napi 3.x version so the `Function`, `PromiseRaw`, `Either` and
+# `FnArgs` types used in those signatures unify with the host's. It also calls
+# `detect_runtime_syntax` from its own `napi(module_exports)` hook (without it
+# `using`/`await using` stay lowered even on Node.js >= 24) and `init_tracing`
+# for `OXC_LOG` logging — neither runs by itself with the feature off.
+#
+# The `#[napi(object)]` structs and `FromNapiValue` impls stay compiled so
+# their marshalling can be reused — but napi-derive still writes their type
+# definitions into the folder `napi build` concatenates into the generated
+# `index.d.ts`, so a host's `.d.ts` gains oxc-node's interfaces and must not
+# redeclare names like `ResolveContext` itself (interface merging). `Output`
+# is a `#[napi]` class instead and loses `ToNapiValue`/`TypeName` with the
+# feature off, so `transform` results are handed to the host's own JS-facing
+# type through `source()`/`source_map()`; likewise `transform_async` and its
+# `Task` surface are compiled out entirely.
+#
+# `napi` and `napi-derive` remain dependencies either way — core code uses
+# `napi` types (`Either`, `Function`, `PromiseRaw`, `Env`) throughout.
+# `mimalloc-safe` comes in only through this feature, so disabling it already
+# drops mimalloc together with the `#[global_allocator]` declaration; enabling
+# `default_global_allocator` on top of `default-features = false` changes
+# nothing.
+napi = ["dep:mimalloc-safe"]
+
+# Leave the global allocator to the host. Enable this when linking oxc-node
+# into another binary that keeps `napi` on but declares its own
+# `#[global_allocator]` (a binary can only have one); with
+# `default-features = false` the allocator is already gone, so the feature is
+# a no-op there. Named after `rolldown_binding`'s feature, so an addon linking
+# both enables the same feature on each. The published packages keep mimalloc.
 default_global_allocator = []
 
 [dependencies]
@@ -41,10 +79,16 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 ] } # Omit the `regex` feature
 
 [target.'cfg(all(not(target_os = "linux"), not(target_os = "freebsd"), not(target_arch = "arm"), not(target_arch = "x86"), not(target_family = "wasm"), not(all(target_os = "windows", target_arch = "aarch64"))))'.dependencies]
-mimalloc-safe = { version = "0.1", features = ["skip_collect_on_exit"] }
+# `optional` + `dep:` in the `napi` feature keeps embedders
+# (`default-features = false`) from compiling mimalloc for a
+# `#[global_allocator]` that can never be declared under them.
+mimalloc-safe = { version = "0.1", features = ["skip_collect_on_exit"], optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-mimalloc-safe = { version = "0.1", features = ["skip_collect_on_exit", "local_dynamic_tls"] }
+mimalloc-safe = { version = "0.1", features = [
+  "skip_collect_on_exit",
+  "local_dynamic_tls",
+], optional = true }
 
 # UTS #46 host canonicalization for the Windows UNC authority handling; only
 # Windows production builds compile it. It is also a dev-dependency so the

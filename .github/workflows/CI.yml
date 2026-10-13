@@ -48,6 +48,21 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Cargo test
         run: cargo test --all-features
+      # The `--no-default-features` build is the embed path this crate's
+      # `napi` feature exists for; without these checks an ungated `#[napi]`
+      # site would land silently. `cargo check` alone cannot catch that — the
+      # macro still compiles — so the rlib is also built and asserted to
+      # contain no registration symbols.
+      - name: Cargo check (napi feature off)
+        run: cargo check --all-targets --no-default-features
+      - name: Cargo check (napi off, host allocator)
+        run: cargo check --all-targets --no-default-features --features default_global_allocator
+      - name: No napi registrations in the embed build
+        run: |
+          cargo build --no-default-features
+          # napi-rs emits one `__napi_register__*` symbol per #[napi] item;
+          # the napi-on build has ~34 of them, the embed build must have none.
+          ! nm target/debug/liboxc_node.rlib | grep -q __napi_register
 
   build-cli:
     name: Build CLI
