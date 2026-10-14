@@ -1102,6 +1102,7 @@
     "build": "napi build --platform --release --manifest-path ../../Cargo.toml -o .",
     "export-oxc-runtime": "node ./reexport-oxc-runtime.mjs",
     "prepublishOnly": "node ./reexport-oxc-runtime.mjs",
+    "preversion": "pnpm build && git add .",
     "version": "napi version"
   },
   "dependencies": {
