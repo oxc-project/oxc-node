@@ -589,6 +589,42 @@ test("the fallback does not extend rootDirs to relative imports", () => {
   }
 });
 
+// An absolute specifier names a file: the fallback must not let a catch-all
+// `paths` mapping redirect it (`resolve_with_context` tries `paths` before
+// absolute resolution). tsx and plain Node.js resolve the requested file;
+// only bare specifiers consult the nearest config.
+test("the fallback does not redirect absolute specifiers through catch-all paths", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        baseUrl: ".",
+        target: "ESNext",
+        paths: { "*": ["src/shim.ts"] },
+      },
+      include: ["src"],
+    }),
+    "src/shim.ts": 'export const v = "shimmed";\n',
+    "outside/x.ts": 'export const v = "real";\n',
+  });
+  // The seed needs the fixture's own absolute path, so it is written after
+  // `createProject` returns the root.
+  mkdirSync(join(root, "scripts"));
+  writeFileSync(
+    join(root, "scripts", "seed.ts"),
+    `import { v } from ${JSON.stringify(join(root, "outside", "x.ts"))};\nconsole.log("abs:" + v);\n`,
+  );
+  try {
+    const ran = runWithHooks(join(root, "scripts"), "./seed.ts");
+    expect(ran.stderr, "an absolute specifier must resolve to the file it names").toBe("");
+    expect(ran.stdout.trim(), "an absolute specifier must resolve to the file it names").toBe(
+      "abs:real",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // A broken nearest config is "no config", exactly as `discover` treats a
 // broken ancestor: the alias must not resolve, and the walk must not continue
 // past it to the valid root config. Everything that needs no config — the

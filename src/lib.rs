@@ -221,13 +221,15 @@ impl TsconfigSource {
     /// names, and only compiler options honour `exclude`, through
     /// [`Self::for_path`].
     ///
-    /// The nearest-ancestor fallback serves bare specifiers only. `paths` and
-    /// `baseUrl` never match a `.`-prefixed specifier, and the one thing a
-    /// tsconfig context adds to relative resolution in oxc_resolver is
+    /// The nearest-ancestor fallback serves bare package specifiers only.
+    /// `paths` and `baseUrl` never match a `.`-prefixed specifier, and the one
+    /// thing a tsconfig context adds to relative resolution in oxc_resolver is
     /// `rootDirs` (`resolve_tsconfig_compiler_options`), which tsx does not
-    /// implement at all — so handing the fallback config to a relative
-    /// specifier could only redirect a missing `./dep` into another configured
-    /// root, where tsx and plain Node.js both fail. Withhold it there.
+    /// implement at all. Rooted and scheme/drive-prefixed specifiers name a
+    /// concrete file, yet `resolve_with_context` tries `paths` before absolute
+    /// resolution, so a catch-all mapping could redirect them. Withholding the
+    /// fallback from all three keeps their resolution identical to tsx and
+    /// plain Node.js.
     ///
     /// The probe path never has to exist: `claims_ownership_of` only matches
     /// `files` / `include` / `exclude` globs and project references against the
@@ -252,14 +254,14 @@ impl TsconfigSource {
                         )
                 })
                 // See the doc comment above for why the nearest-ancestor
-                // fallback is bare-specifier-only.
+                // fallback serves bare package specifiers only.
                 .or_else(|| {
-                    if specifier.starts_with('.') {
-                        None
-                    } else {
+                    if is_bare_specifier(specifier) {
                         Self::nearest(resolver, path).inspect(
                             |_| tracing::debug!(path = ?path, "tsconfig found as the nearest ancestor"),
                         )
+                    } else {
+                        None
                     }
                 }),
         }
@@ -299,7 +301,8 @@ impl TsconfigSource {
     /// including files `exclude` names. It runs after discovery and the
     /// JavaScript probe, so a config that claims the file always wins; it is
     /// never consulted for compiler options ([`Self::for_path`] keeps strict
-    /// ownership) nor for `.`-prefixed specifiers (see [`Self::for_importer`]).
+    /// ownership) nor for specifiers that name a concrete target
+    /// ([`is_bare_specifier`], see [`Self::for_importer`]).
     ///
     /// The outcome is memoized per importer directory in [`NEAREST_TSCONFIG`];
     /// `resolve_tsconfig` parses, builds and caches the config, so repeated
@@ -360,6 +363,33 @@ impl TsconfigSource {
         }
         None
     }
+}
+
+/// Whether `specifier` is a bare package specifier (`lodash`, `@lib/x.ts`,
+/// `#dep`) rather than one naming a concrete target: relative (`./x`), rooted
+/// (`/x`, `\\x`), or scheme/drive-prefixed (`C:\x`, `https://…`, `data:…`).
+///
+/// Only bare specifiers may consult a tsconfig's `paths`: a concrete target
+/// names a file, and `resolve_with_context` tries `paths` before absolute
+/// resolution, so a catch-all mapping like `"*": ["src/shim.ts"]` would
+/// redirect `/opt/shared/x.ts` to the shim where tsx and plain Node.js resolve
+/// the named file. oxc_resolver's own gate in `resolve_path_alias` rejects
+/// only `.`-prefixed specifiers, so this check cannot piggyback on it.
+fn is_bare_specifier(specifier: &str) -> bool {
+    if specifier.starts_with(['.', '/', '\\']) {
+        return false;
+    }
+    // A URI scheme or drive prefix is an ASCII letter, then any of
+    // letters/digits/`+`/`-`/`.`, then a colon (RFC 3986).
+    let bytes = specifier.as_bytes();
+    if bytes.first().is_none_or(|b| !b.is_ascii_alphabetic()) {
+        return true;
+    }
+    let scheme_end = bytes
+        .iter()
+        .position(|b| !(b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')))
+        .unwrap_or(bytes.len());
+    bytes.get(scheme_end) != Some(&b':')
 }
 
 /// The path to look a `tsconfig.json` up by, made absolute against `cwd`.
