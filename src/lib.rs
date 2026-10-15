@@ -367,11 +367,13 @@ impl TsconfigSource {
 
 /// Whether `specifier` is a bare package specifier (`lodash`, `@lib/x.ts`,
 /// `#dep`) rather than one naming a concrete target: relative (`./x`), rooted
-/// (`/x`), or carrying a URL scheme (`https://…` — `data:`, `file:` and
-/// `node:` are short-circuited before resolution reaches this fallback).
-/// Windows adds two concrete forms with no equivalent elsewhere — `\`-rooted
-/// or UNC paths and drive prefixes (`C:\x`, `C:/x`) — so only Windows builds
-/// pay for those checks.
+/// (`/x`), a `file:` URL in any spelling Node.js accepts (`file:/x` included —
+/// WHATWG normalizes it to `file:///x`, and tsx's gate excludes `file:`
+/// outright), or carrying a URL scheme (`https://…`; `data:` and `node:` are
+/// short-circuited before resolution reaches this fallback). Windows adds two
+/// concrete forms with no equivalent elsewhere — `\`-rooted or UNC paths and
+/// drive prefixes (`C:\x`, `C:/x`) — so only Windows builds pay for those
+/// checks.
 ///
 /// Only bare specifiers may consult a tsconfig's `paths`: a concrete target
 /// names a file, and `resolve_with_context` tries `paths` before absolute
@@ -389,6 +391,10 @@ fn is_bare_specifier(specifier: &str) -> bool {
         return true;
     }
     if specifier.contains("://") {
+        return false;
+    }
+    // A `file:` URL needs no `//`, and schemes are case-insensitive.
+    if specifier.get(..5).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:")) {
         return false;
     }
     // Windows-only concrete forms: `\`-rooted/UNC paths and drive prefixes,

@@ -607,18 +607,30 @@ test("the fallback does not redirect absolute specifiers through catch-all paths
     "src/shim.ts": 'export const v = "shimmed";\n',
     "outside/x.ts": 'export const v = "real";\n',
   });
-  // The seed needs the fixture's own absolute path, so it is written after
-  // `createProject` returns the root.
+  // The seeds need the fixture's own absolute path, so they are written after
+  // `createProject` returns the root. The second uses a single-slash `file:`
+  // URL, a spelling Node.js accepts (WHATWG normalizes it to `file:///…`) that
+  // carries no `://` (`file:C:/x.ts` on Windows).
   mkdirSync(join(root, "scripts"));
   writeFileSync(
     join(root, "scripts", "seed.ts"),
     `import { v } from ${JSON.stringify(join(root, "outside", "x.ts"))};\nconsole.log("abs:" + v);\n`,
+  );
+  writeFileSync(
+    join(root, "scripts", "file-url.ts"),
+    `import { v } from ${JSON.stringify(`file:${join(root, "outside", "x.ts")}`)};\nconsole.log("file-url:" + v);\n`,
   );
   try {
     const ran = runWithHooks(join(root, "scripts"), "./seed.ts");
     expect(ran.stderr, "an absolute specifier must resolve to the file it names").toBe("");
     expect(ran.stdout.trim(), "an absolute specifier must resolve to the file it names").toBe(
       "abs:real",
+    );
+
+    const fileUrl = runWithHooks(join(root, "scripts"), "./file-url.ts");
+    expect(fileUrl.stderr, "a single-slash file: URL must load the file it names").toBe("");
+    expect(fileUrl.stdout.trim(), "a single-slash file: URL must load the file it names").toBe(
+      "file-url:real",
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
