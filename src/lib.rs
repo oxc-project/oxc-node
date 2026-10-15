@@ -4,7 +4,7 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, OnceLock, PoisonError,
+        Arc, LazyLock, Mutex, OnceLock, PoisonError,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -38,8 +38,8 @@ use oxc::{
 };
 use oxc_resolver::{
     CompilerOptions, EnforceExtension, ModuleType, PackageType, Resolution,
-    ResolveContext as ResolverContext, ResolveOptions, Resolver, TsConfig, TsconfigDiscovery,
-    TsconfigOptions, TsconfigReferences,
+    ResolveContext as ResolverContext, ResolveError, ResolveOptions, Resolver, TsConfig,
+    TsconfigDiscovery, TsconfigOptions, TsconfigReferences,
 };
 use oxc_sourcemap::SourceMap;
 use phf::Set;
@@ -157,6 +157,19 @@ enum TsconfigSource {
 /// Extensions that TypeScript only treats as program inputs when `allowJs` is on.
 const JS_EXTENSIONS: [&str; 4] = ["js", "jsx", "mjs", "cjs"];
 
+/// The nearest-ancestor `tsconfig.json` per importer directory, memoized.
+///
+/// [`TsconfigSource::nearest`] runs once per (importer, specifier) edge, and
+/// its ancestor walk would otherwise repeat the same `stat` syscalls for every
+/// edge out of the same directory. Everything around it is already amortized
+/// for the process — oxc_resolver caches per-directory discovery, per-file
+/// results, file metadata and parsed configs, never invalidated — so memoize
+/// the terminal outcome the same way, `None` included. A config created
+/// mid-process is already invisible to discovery's cached `None`s, so this
+/// adds no new class of staleness.
+static NEAREST_TSCONFIG: LazyLock<Mutex<HashMap<PathBuf, Option<Arc<TsConfig>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 impl TsconfigSource {
     /// The `tsconfig.json` that governs `path`, if any, by strict ownership.
     ///
@@ -175,7 +188,9 @@ impl TsconfigSource {
     }
 
     /// The `tsconfig.json` whose `paths` and `baseUrl` an importer's specifiers
-    /// resolve against — [`Self::for_path`], plus a fallback for JavaScript.
+    /// resolve against — [`Self::for_path`], plus a fallback for JavaScript and
+    /// a nearest-ancestor fallback for bare specifiers from files no config
+    /// claims at all.
     ///
     /// `oxc_resolver` applies TypeScript's own program-membership rule:
     /// `is_file_included_in_tsconfig` calls `is_extensionless_or_uncompiled_js`,
@@ -196,22 +211,57 @@ impl TsconfigSource {
     /// would break the ownership rule this whole discovery scheme exists to
     /// honour. Keep the two lookups separate.
     ///
+    /// When nothing claims the file at all — a script outside every `include`,
+    /// the common `scripts/` directory next to a root config covering only
+    /// `src/` — the last resort is the nearest ancestor `tsconfig.json`,
+    /// whether or not it claims the file. That is the answer tsx gives to
+    /// "which project does this file belong to", and it stays resolution-only
+    /// for the same reason the probe does. `exclude` deliberately does not gate
+    /// resolution either: tsx resolves a config's aliases for files `exclude`
+    /// names, and only compiler options honour `exclude`, through
+    /// [`Self::for_path`].
+    ///
+    /// The nearest-ancestor fallback serves bare specifiers only. `paths` and
+    /// `baseUrl` never match a `.`-prefixed specifier, and the one thing a
+    /// tsconfig context adds to relative resolution in oxc_resolver is
+    /// `rootDirs` (`resolve_tsconfig_compiler_options`), which tsx does not
+    /// implement at all — so handing the fallback config to a relative
+    /// specifier could only redirect a missing `./dep` into another configured
+    /// root, where tsx and plain Node.js both fail. Withhold it there.
+    ///
     /// The probe path never has to exist: `claims_ownership_of` only matches
     /// `files` / `include` / `exclude` globs and project references against the
     /// string, and stats nothing but the candidate `tsconfig.json` files it walks
     /// past.
-    fn for_importer(&self, resolver: &Resolver, path: &Path) -> Option<Arc<TsConfig>> {
+    fn for_importer(
+        &self,
+        resolver: &Resolver,
+        path: &Path,
+        specifier: &str,
+    ) -> Option<Arc<TsConfig>> {
         match self {
             // An explicitly named config already applies to every file, so there
             // is nothing for the probe to recover.
             Self::Manual(tsconfig) => tsconfig.clone(),
-            Self::Auto => Self::discover(resolver, path).or_else(|| {
-                Self::probe_as_typescript(path)
-                    .and_then(|probe| Self::discover(resolver, &probe))
-                    .inspect(
-                        |_| tracing::debug!(path = ?path, "tsconfig found via TypeScript probe"),
-                    )
-            }),
+            Self::Auto => Self::discover(resolver, path)
+                .or_else(|| {
+                    Self::probe_as_typescript(path)
+                        .and_then(|probe| Self::discover(resolver, &probe))
+                        .inspect(
+                            |_| tracing::debug!(path = ?path, "tsconfig found via TypeScript probe"),
+                        )
+                })
+                // See the doc comment above for why the nearest-ancestor
+                // fallback is bare-specifier-only.
+                .or_else(|| {
+                    if specifier.starts_with('.') {
+                        None
+                    } else {
+                        Self::nearest(resolver, path).inspect(
+                            |_| tracing::debug!(path = ?path, "tsconfig found as the nearest ancestor"),
+                        )
+                    }
+                }),
         }
     }
 
@@ -239,6 +289,76 @@ impl TsconfigSource {
     fn probe_as_typescript(path: &Path) -> Option<PathBuf> {
         let extension = path.extension()?.to_str()?;
         JS_EXTENSIONS.contains(&extension).then(|| path.with_extension("ts"))
+    }
+
+    /// The nearest ancestor `tsconfig.json`, whether or not it claims `path`.
+    ///
+    /// Resolution-only fallback for bare specifiers of importers no config
+    /// claims (a script outside every `include`), matching tsx, which applies
+    /// the found config's `paths` to every importer outside node_modules —
+    /// including files `exclude` names. It runs after discovery and the
+    /// JavaScript probe, so a config that claims the file always wins; it is
+    /// never consulted for compiler options ([`Self::for_path`] keeps strict
+    /// ownership) nor for `.`-prefixed specifiers (see [`Self::for_importer`]).
+    ///
+    /// The outcome is memoized per importer directory in [`NEAREST_TSCONFIG`];
+    /// `resolve_tsconfig` parses, builds and caches the config, so repeated
+    /// imports from the same tree cost one parse and one walk. A broken config
+    /// is handled exactly as [`Self::discover`] handles it, through
+    /// `find_tsconfig_auto`: an unreadable one (permission denied, any I/O
+    /// error) is skipped and the walk continues to a grandparent, while an
+    /// unparseable one is treated as "no config" and stops the walk — never
+    /// walk past it to a grandparent.
+    fn nearest(resolver: &Resolver, path: &Path) -> Option<Arc<TsConfig>> {
+        // No paths resolution for dependencies, matching both tsx's dependency
+        // gate and `find_tsconfig`, which returns None inside node_modules.
+        // Without this guard the ancestor walk would escape node_modules and
+        // hand a dependency the workspace root's aliases.
+        if path.components().any(|c| c.as_os_str() == "node_modules") {
+            return None;
+        }
+        // The walk depends only on the directory's ancestor chain (`skip(1)`
+        // drops the file name), so one entry covers every importer in it.
+        let directory = path.parent()?;
+        if let Some(cached) =
+            NEAREST_TSCONFIG.lock().unwrap_or_else(PoisonError::into_inner).get(directory)
+        {
+            return cached.clone();
+        }
+        let found = Self::walk_nearest(resolver, path);
+        NEAREST_TSCONFIG
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(directory.to_path_buf(), found.clone());
+        found
+    }
+
+    /// The ancestor walk behind [`Self::nearest`], before memoization.
+    fn walk_nearest(resolver: &Resolver, path: &Path) -> Option<Arc<TsConfig>> {
+        for candidate in path.ancestors().skip(1).map(|dir| dir.join("tsconfig.json")) {
+            if !candidate.is_file() {
+                continue;
+            }
+            match resolver.resolve_tsconfig(&candidate) {
+                Ok(tsconfig) => return Some(tsconfig),
+                // `find_tsconfig_auto` skips a tsconfig that fails with an I/O
+                // error and keeps walking; do the same here.
+                Err(ResolveError::TsconfigLoadFailed { source, .. })
+                    if matches!(source.as_ref(), ResolveError::IOError(_)) =>
+                {
+                    tracing::debug!(
+                        path = ?path,
+                        error = ?source,
+                        "nearest tsconfig.json is unreadable; walking on"
+                    );
+                }
+                Err(err) => {
+                    tracing::debug!(path = ?path, error = ?err, "nearest tsconfig.json is not usable");
+                    return None;
+                }
+            }
+        }
+        None
     }
 }
 
@@ -1464,7 +1584,7 @@ pub fn create_resolve<'env>(
         // case (no parent URL, only a working directory) has no file to discover
         // from and still goes through `resolve`.
         (false, TsconfigSource::Auto, Some(parent_file)) => {
-            let tsconfig = tsconfig_source.for_importer(resolver, parent_file);
+            let tsconfig = tsconfig_source.for_importer(resolver, parent_file, &specifier);
             resolver.resolve_with_context(
                 directory,
                 &specifier,
