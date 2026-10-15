@@ -225,11 +225,11 @@ impl TsconfigSource {
     /// `paths` and `baseUrl` never match a `.`-prefixed specifier, and the one
     /// thing a tsconfig context adds to relative resolution in oxc_resolver is
     /// `rootDirs` (`resolve_tsconfig_compiler_options`), which tsx does not
-    /// implement at all. Rooted and scheme/drive-prefixed specifiers name a
-    /// concrete file, yet `resolve_with_context` tries `paths` before absolute
-    /// resolution, so a catch-all mapping could redirect them. Withholding the
-    /// fallback from all three keeps their resolution identical to tsx and
-    /// plain Node.js.
+    /// implement at all. Rooted and scheme-prefixed specifiers name a concrete
+    /// target owned by Node.js or another loader, yet `resolve_with_context`
+    /// tries `paths` first, so a catch-all mapping could redirect them;
+    /// [`is_bare_specifier`] spells out the exact set, which is deliberately
+    /// broader than tsx's gate for schemes.
     ///
     /// The probe path never has to exist: `claims_ownership_of` only matches
     /// `files` / `include` / `exclude` globs and project references against the
@@ -367,13 +367,14 @@ impl TsconfigSource {
 
 /// Whether `specifier` is a bare package specifier (`lodash`, `@lib/x.ts`,
 /// `#dep`) rather than one naming a concrete target: relative (`./x`), rooted
-/// (`/x`), a `file:` URL in any spelling Node.js accepts (`file:/x` included —
-/// WHATWG normalizes it to `file:///x`, and tsx's gate excludes `file:`
-/// outright), or carrying a URL scheme (`https://…`; `data:` and `node:` are
-/// short-circuited before resolution reaches this fallback). Windows adds two
-/// concrete forms with no equivalent elsewhere — `\`-rooted or UNC paths and
-/// drive prefixes (`C:\x`, `C:/x`) — so only Windows builds pay for those
-/// checks.
+/// (`/x`), or scheme-prefixed (`file:/x`, `https://…`, `virtual:module`).
+/// The scheme rule is deliberately broader than tsx's gate (which excludes
+/// only `scheme://` plus `data:`/`file:`/`node:`): a scheme is owned by
+/// Node.js or by another loader in the chain, and `paths` trying first would
+/// steal the specifier from its owner. Windows adds two concrete forms with
+/// no equivalent elsewhere — `\`-rooted or UNC paths and drive prefixes
+/// (`C:\x`) — and a drive is just a one-letter scheme to the check below, so
+/// only the `\` test is compiled conditionally.
 ///
 /// Only bare specifiers may consult a tsconfig's `paths`: a concrete target
 /// names a file, and `resolve_with_context` tries `paths` before absolute
@@ -386,26 +387,29 @@ fn is_bare_specifier(specifier: &str) -> bool {
         return false;
     }
     // Package imports stay alias-eligible — tsconfig `paths` commonly maps
-    // `#…` keys — even when one happens to contain `://`.
+    // `#…` keys — even when one happens to contain a scheme.
     if specifier.starts_with('#') {
         return true;
     }
-    if specifier.contains("://") {
-        return false;
-    }
-    // A `file:` URL needs no `//`, and schemes are case-insensitive.
-    if specifier.get(..5).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:")) {
-        return false;
-    }
-    // Windows-only concrete forms: `\`-rooted/UNC paths and drive prefixes,
-    // whose `C:/x` spelling carries no `://`.
     #[cfg(windows)]
-    if specifier.starts_with('\\')
-        || matches!(specifier.as_bytes(), [c, b':', ..] if c.is_ascii_alphabetic())
-    {
+    if specifier.starts_with('\\') {
         return false;
     }
-    true
+    // A URI scheme or drive prefix is an ASCII letter, then any of
+    // letters/digits/`+`/`-`/`.`, then a colon (RFC 3986). Looking the colon
+    // up first keeps a bare name — which never contains one — to a single
+    // memchr-backed scan; the per-byte validation runs only when a colon
+    // exists at all.
+    match specifier.find(':') {
+        None | Some(0) => true,
+        Some(end) => {
+            let bytes = specifier.as_bytes();
+            !(bytes[0].is_ascii_alphabetic()
+                && bytes[1..end]
+                    .iter()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')))
+        }
+    }
 }
 
 /// The path to look a `tsconfig.json` up by, made absolute against `cwd`.

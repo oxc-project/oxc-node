@@ -620,6 +620,13 @@ test("the fallback does not redirect absolute specifiers through catch-all paths
     join(root, "scripts", "file-url.ts"),
     `import { v } from ${JSON.stringify(`file:${join(root, "outside", "x.ts")}`)};\nconsole.log("file-url:" + v);\n`,
   );
+  // A custom scheme belongs to Node.js or another loader in the chain:
+  // `paths` trying first would steal the specifier from its owner, so the
+  // fallback must leave it alone (tsx aliases it; that is tsx's bug to keep).
+  writeFileSync(
+    join(root, "scripts", "scheme.ts"),
+    'import { v } from "virtual:module";\nconsole.log("scheme:" + v);\n',
+  );
   try {
     const ran = runWithHooks(join(root, "scripts"), "./seed.ts");
     expect(ran.stderr, "an absolute specifier must resolve to the file it names").toBe("");
@@ -631,6 +638,15 @@ test("the fallback does not redirect absolute specifiers through catch-all paths
     expect(fileUrl.stderr, "a single-slash file: URL must load the file it names").toBe("");
     expect(fileUrl.stdout.trim(), "a single-slash file: URL must load the file it names").toBe(
       "file-url:real",
+    );
+
+    const scheme = runWithHooks(join(root, "scripts"), "./scheme.ts");
+    expect(
+      scheme.stdout,
+      "the catch-all shim must not execute for a schemed specifier",
+    ).not.toContain("shimmed");
+    expect(scheme.stderr, "Node.js itself rejects the unknown scheme").toContain(
+      "ERR_UNSUPPORTED_ESM_URL_SCHEME",
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
