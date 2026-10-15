@@ -367,7 +367,11 @@ impl TsconfigSource {
 
 /// Whether `specifier` is a bare package specifier (`lodash`, `@lib/x.ts`,
 /// `#dep`) rather than one naming a concrete target: relative (`./x`), rooted
-/// (`/x`, `\\x`), or scheme/drive-prefixed (`C:\x`, `https://…`, `data:…`).
+/// (`/x`), or carrying a URL scheme (`https://…` — `data:`, `file:` and
+/// `node:` are short-circuited before resolution reaches this fallback).
+/// Windows adds two concrete forms with no equivalent elsewhere — `\`-rooted
+/// or UNC paths and drive prefixes (`C:\x`, `C:/x`) — so only Windows builds
+/// pay for those checks.
 ///
 /// Only bare specifiers may consult a tsconfig's `paths`: a concrete target
 /// names a file, and `resolve_with_context` tries `paths` before absolute
@@ -376,20 +380,26 @@ impl TsconfigSource {
 /// the named file. oxc_resolver's own gate in `resolve_path_alias` rejects
 /// only `.`-prefixed specifiers, so this check cannot piggyback on it.
 fn is_bare_specifier(specifier: &str) -> bool {
-    if specifier.starts_with(['.', '/', '\\']) {
+    if specifier.starts_with(['.', '/']) {
         return false;
     }
-    // A URI scheme or drive prefix is an ASCII letter, then any of
-    // letters/digits/`+`/`-`/`.`, then a colon (RFC 3986).
-    let bytes = specifier.as_bytes();
-    if bytes.first().is_none_or(|b| !b.is_ascii_alphabetic()) {
+    // Package imports stay alias-eligible — tsconfig `paths` commonly maps
+    // `#…` keys — even when one happens to contain `://`.
+    if specifier.starts_with('#') {
         return true;
     }
-    let scheme_end = bytes
-        .iter()
-        .position(|b| !(b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')))
-        .unwrap_or(bytes.len());
-    bytes.get(scheme_end) != Some(&b':')
+    if specifier.contains("://") {
+        return false;
+    }
+    // Windows-only concrete forms: `\`-rooted/UNC paths and drive prefixes,
+    // whose `C:/x` spelling carries no `://`.
+    #[cfg(windows)]
+    if specifier.starts_with('\\')
+        || matches!(specifier.as_bytes(), [c, b':', ..] if c.is_ascii_alphabetic())
+    {
+        return false;
+    }
+    true
 }
 
 /// The path to look a `tsconfig.json` up by, made absolute against `cwd`.
