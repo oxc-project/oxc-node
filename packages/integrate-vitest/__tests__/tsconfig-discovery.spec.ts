@@ -93,6 +93,18 @@ const runNode = (cwd: string, args: string[], env: Record<string, string | undef
   return { ...result, stderr: stripNodeWarnings(result.stderr) };
 };
 
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Matches stderr that holds exactly one warning that `path` could not be read.
+ * On macOS the temporary directory is a symlink, so the resolver may report
+ * the canonical `/private` path.
+ */
+const warning = (path: string, outcome: string) =>
+  new RegExp(
+    `^oxc-node: warning: failed to read the tsconfig (/private)?${escapeRegExp(path)}: [^\n]+; ${outcome}$`,
+  );
+
 /** The code the transformer emits for `entry`, run from `cwd` inside `root`. */
 const emit = (root: string, cwd: string, entry: string, env?: Record<string, string | undefined>) =>
   runNode(cwd, [join(root, "dump.mjs"), entry], env);
@@ -153,7 +165,11 @@ test("a broken project reference in an ancestor that does not own the file break
   });
   try {
     const ran = runWithHooks(join(root, "sub"), "./entry.ts");
-    expect(ran.stderr, "resolution should not fail").toBe("");
+    expect(ran.stderr, "the missing reference is reported, nothing more").toMatch(
+      new RegExp(
+        `^oxc-node: warning: the tsconfig (/private)?${escapeRegExp(join(root, "missing"))}, which a tsconfig extends or references, does not exist; ignoring it$`,
+      ),
+    );
     expect(ran.stdout.trim(), "./dep.js should still resolve to dep.ts").toBe("resolved:dep-ok");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -168,6 +184,9 @@ test("an explicit TS_NODE_PROJECT that does not exist disables discovery entirel
     });
     expect(emitted.stderr, "an explicit missing config must not fall back to discovery").toContain(
       NO_LEGACY_DECORATORS,
+    );
+    expect(emitted.stderr, "the missing config must be reported").toContain(
+      `oxc-node: warning: the tsconfig TS_NODE_PROJECT names, ${join(root, "does-not-exist.json")}, does not exist; running without a tsconfig`,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -719,7 +738,9 @@ test("a broken nearest tsconfig means no fallback and the walk stops", () => {
   );
   try {
     const ran = runWithHooks(join(relative, "mid", "scripts"), "./seed.ts");
-    expect(ran.stderr, "a broken nearest config should only cost the aliases").toBe("");
+    expect(ran.stderr, "a broken nearest config should only cost the aliases").toMatch(
+      warning(join(relative, "mid", "tsconfig.json"), "ignoring it"),
+    );
     expect(ran.stdout.trim(), "relative resolution needs no config").toBe("relative:dep-ok");
   } finally {
     rmSync(relative, { recursive: true, force: true });
@@ -761,7 +782,9 @@ await attempt("second");
   );
   try {
     const ran = runWithHooks(join(root, "scripts"), "./seed.ts");
-    expect(ran.stderr, "both imports are caught; nothing should reach stderr").toBe("");
+    expect(ran.stderr, "both imports are caught; only the warning reaches stderr").toMatch(
+      warning(join(root, "tsconfig.json"), "ignoring it"),
+    );
     expect(ran.stdout.trim().split("\n"), "a corrected config must be picked up").toEqual([
       "first:failed",
       "second:resolved",
@@ -836,6 +859,77 @@ test("a project directory with a space and non-ASCII characters still resolves",
       const emitted = emit(root, source, "./decorated.ts");
       expect(emitted.stdout, `${dir}: compiler options should apply`).toContain("_decorate");
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Issue #844: a tsconfig that cannot be used is reported once on stderr
+// instead of being dropped without a word, and the run goes on without it.
+test("a missing OXC_TSCONFIG_PATH is reported", () => {
+  const root = createProject({ "tsconfig.json": DECORATORS_TSCONFIG, "entry.ts": DECORATED });
+  try {
+    const emitted = emit(root, root, "./entry.ts", {
+      OXC_TSCONFIG_PATH: join(root, "does-not-exist.json"),
+    });
+    expect(emitted.stderr, "the missing config must be reported").toContain(
+      `oxc-node: warning: the tsconfig OXC_TSCONFIG_PATH names, ${join(root, "does-not-exist.json")}, does not exist; running without a tsconfig`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an explicit tsconfig that cannot be parsed is reported", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "broken.json": "{ not json",
+    "entry.ts": 'console.log("ran");\n',
+  });
+  try {
+    const ran = runWithHooks(root, "./entry.ts", { TS_NODE_PROJECT: join(root, "broken.json") });
+    expect(ran.stderr, "the broken config must be reported once").toMatch(
+      warning(join(root, "broken.json"), "running without a tsconfig"),
+    );
+    expect(ran.stdout.trim(), "the run goes on without the config").toBe("ran");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a discovered tsconfig that cannot be parsed is reported once per process", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": "{ not json",
+    "a.ts": 'export const a = "a";\n',
+    "b.ts": 'export const b = "b";\n',
+    "entry.ts": 'import { a } from "./a.ts";\nimport { b } from "./b.ts";\nconsole.log(a + b);\n',
+  });
+  try {
+    const ran = runWithHooks(root, "./entry.ts");
+    expect(ran.stderr, "three files share the config; it is reported once").toMatch(
+      warning(join(root, "tsconfig.json"), "ignoring it"),
+    );
+    expect(ran.stdout.trim(), "the run goes on without the config").toBe("ab");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a tsconfig that extends a missing file is reported", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({ extends: "./missing-base.json" }),
+    "entry.ts": 'console.log("ran");\n',
+  });
+  try {
+    const ran = runWithHooks(root, "./entry.ts");
+    expect(ran.stderr, "the missing base must be named").toMatch(
+      new RegExp(
+        `^oxc-node: warning: the tsconfig (/private)?${escapeRegExp(join(root, "missing-base.json"))}, which a tsconfig extends or references, does not exist; ignoring it$`,
+      ),
+    );
+    expect(ran.stdout.trim(), "the run goes on without the config").toBe("ran");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

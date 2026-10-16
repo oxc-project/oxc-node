@@ -311,6 +311,10 @@ impl TsconfigSource {
             Ok(tsconfig) => tsconfig,
             Err(err) => {
                 tracing::debug!(path = ?path, error = ?err, "failed to discover tsconfig");
+                // Ignoring a broken config is what keeps one bad ancestor from failing
+                // every file, but doing it silently hides why `paths` stopped applying
+                // (issue #844).
+                warn_once(format!("{}; ignoring it", describe_tsconfig_error(&err)));
                 None
             }
         }
@@ -2695,6 +2699,45 @@ impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
     }
 }
 
+/// A tsconfig load failure, naming the file. oxc_resolver's own message for a parse
+/// error is its `Debug` output, struct syntax included.
+fn describe_tsconfig_error(err: &ResolveError) -> String {
+    match err {
+        ResolveError::TsconfigLoadFailed { path, source } => match source.as_ref() {
+            ResolveError::Json(json) if json.path == *path => {
+                format!("failed to read the tsconfig {}: {}", path.display(), json.message)
+            }
+            source => format!(
+                "failed to read the tsconfig {}: {}",
+                path.display(),
+                describe_tsconfig_error(source)
+            ),
+        },
+        ResolveError::Json(json) => {
+            format!("failed to read the tsconfig {}: {}", json.path.display(), json.message)
+        }
+        // A missing `extends` or `references` target; the explicitly named file is
+        // checked before the resolver ever loads it.
+        ResolveError::TsconfigNotFound(path) => {
+            format!(
+                "the tsconfig {}, which a tsconfig extends or references, does not exist",
+                path.display()
+            )
+        }
+        err => format!("failed to read a tsconfig: {err}"),
+    }
+}
+
+/// Print a warning to stderr, once per process for each distinct message.
+fn warn_once(message: String) {
+    static WARNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let mut warned = WARNED.lock().unwrap_or_else(PoisonError::into_inner);
+    if !warned.contains(&message) {
+        eprintln!("oxc-node: warning: {message}");
+        warned.push(message);
+    }
+}
+
 /// Read an environment variable, treating an empty value as unset.
 ///
 /// Continuous integration wrappers and `.env` files routinely export variables
@@ -2734,15 +2777,20 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
         let mut tsconfig_override =
             TSCONFIG_OVERRIDE.lock().unwrap_or_else(PoisonError::into_inner);
         tracing::debug!(api_tsconfig = ?tsconfig_override.path);
-        let explicit_tsconfig = tsconfig_override.path.clone().or_else(|| {
-            let explicit_tsconfig =
-                non_empty_env("TS_NODE_PROJECT").or_else(|| non_empty_env("OXC_TSCONFIG_PATH"));
-            tracing::debug!(explicit_tsconfig = ?explicit_tsconfig);
-            explicit_tsconfig.map(PathBuf::from)
-        });
-        let explicit_tsconfig_path =
-            explicit_tsconfig.map(|tsconfig| absolute_tsconfig_path(&cwd, tsconfig));
-        tsconfig_override.consumed = Some((cwd.clone(), explicit_tsconfig_path.clone()));
+        let explicit_tsconfig =
+            tsconfig_override.path.clone().map(|path| (path, "setTsconfigPath()")).or_else(|| {
+                let explicit_tsconfig = non_empty_env("TS_NODE_PROJECT")
+                    .map(|path| (path, "TS_NODE_PROJECT"))
+                    .or_else(|| {
+                        non_empty_env("OXC_TSCONFIG_PATH").map(|path| (path, "OXC_TSCONFIG_PATH"))
+                    });
+                tracing::debug!(explicit_tsconfig = ?explicit_tsconfig);
+                explicit_tsconfig.map(|(path, source)| (PathBuf::from(path), source))
+            });
+        let explicit_tsconfig_path = explicit_tsconfig
+            .map(|(tsconfig, source)| (absolute_tsconfig_path(&cwd, tsconfig), source));
+        tsconfig_override.consumed =
+            Some((cwd.clone(), explicit_tsconfig_path.as_ref().map(|(path, _)| path.clone())));
         explicit_tsconfig_path
     };
     tracing::debug!(explicit_tsconfig_path = ?explicit_tsconfig_path);
@@ -2761,13 +2809,22 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
         // `resolve()` call fail, so disable tsconfig handling instead. Falling
         // back to `Auto` is not an option: an explicit request for a missing
         // config must not quietly pick up a different one.
-        Some(path) if fs::exists(path).unwrap_or(false) => {
+        Some((path, _)) if fs::exists(path).unwrap_or(false) => {
             Some(TsconfigDiscovery::Manual(TsconfigOptions {
                 config_file: path.clone(),
                 references: TsconfigReferences::Auto,
             }))
         }
-        Some(_) => None,
+        // Silently running without a config left an unrelated `ERR_MODULE_NOT_FOUND`
+        // for a `paths` alias as the first sign — typically a `TS_NODE_PROJECT` left
+        // over from ts-node (issue #844).
+        Some((path, source)) => {
+            warn_once(format!(
+                "the tsconfig {source} names, {}, does not exist; running without a tsconfig",
+                path.display()
+            ));
+            None
+        }
         // Nothing was requested: let the resolver find, per file, the nearest
         // `tsconfig.json` that actually claims it.
         None => Some(TsconfigDiscovery::Auto),
@@ -2798,7 +2855,19 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
     });
 
     let tsconfig_source = match explicit_tsconfig_path {
-        Some(path) => TsconfigSource::Manual(resolver.resolve_tsconfig(path).ok()),
+        Some((path, _)) => TsconfigSource::Manual(match resolver.resolve_tsconfig(&path) {
+            Ok(tsconfig) => Some(tsconfig),
+            Err(err) => {
+                // A missing file was reported above, with what named it.
+                if fs::exists(&path).unwrap_or(false) {
+                    warn_once(format!(
+                        "{}; running without a tsconfig",
+                        describe_tsconfig_error(&err)
+                    ));
+                }
+                None
+            }
+        }),
         None => TsconfigSource::Auto,
     };
 
@@ -3063,6 +3132,40 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    // Issue #844: a tsconfig that cannot be used is named in a readable warning,
+    // not in oxc_resolver's `Debug` output.
+    #[test]
+    fn tsconfig_errors_name_the_file() {
+        let path = PathBuf::from("/project/tsconfig.json");
+        let json = ResolveError::Json(oxc_resolver::JSONError {
+            path: path.clone(),
+            message: "EOF while parsing an object".to_string(),
+            line: 2,
+            column: 0,
+        });
+        let load_failed = |source: ResolveError| ResolveError::TsconfigLoadFailed {
+            path: path.clone(),
+            source: Box::new(source),
+        };
+        assert_eq!(
+            describe_tsconfig_error(&load_failed(json)),
+            "failed to read the tsconfig /project/tsconfig.json: EOF while parsing an object"
+        );
+        assert_eq!(
+            describe_tsconfig_error(&load_failed(ResolveError::TsconfigNotFound(PathBuf::from(
+                "/project/base.json"
+            )))),
+            "failed to read the tsconfig /project/tsconfig.json: the tsconfig /project/base.json, \
+             which a tsconfig extends or references, does not exist"
+        );
+        assert_eq!(
+            describe_tsconfig_error(&ResolveError::TsconfigNotFound(PathBuf::from(
+                "/project/base.json"
+            ))),
+            "the tsconfig /project/base.json, which a tsconfig extends or references, does not exist"
+        );
+    }
 
     // Issue #843: source is decoded as Node.js decodes it, invalid bytes replaced.
     #[test]
