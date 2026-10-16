@@ -19,8 +19,9 @@ use napi_derive::napi;
 use oxc::{
     allocator::Allocator,
     ast::ast::{
-        Class, Decorator, Program, Statement, TSExternalModuleDeclaration, TSGlobalDeclaration,
-        TSNamespaceDeclaration,
+        ArrowFunctionExpression, AwaitExpression, Class, Decorator, ForOfStatement, Program,
+        Statement, TSExternalModuleDeclaration, TSGlobalDeclaration, TSNamespaceDeclaration,
+        VariableDeclaration,
     },
     ast_visit::{Visit, walk},
     codegen::{Codegen, CodegenOptions, CodegenReturn},
@@ -30,7 +31,7 @@ use oxc::{
     parser::{Parser, ParserReturn},
     semantic::SemanticBuilder,
     span::SourceType,
-    syntax::module_record::ModuleRecord,
+    syntax::{module_record::ModuleRecord, scope::ScopeFlags},
     transformer::{
         ClassPropertiesOptions, CompilerAssumptions, DecoratorOptions, ES2022Options,
         ES2026Options, EnvOptions, HelperLoaderOptions, JsxOptions, JsxRuntime, Module,
@@ -1398,6 +1399,73 @@ fn cts_module_syntax_error(path: &Path) -> Error {
     )
 }
 
+/// The first line of Node.js' `ERR_REQUIRE_ASYNC_MODULE` message, which the `pirates`
+/// hook in `register.mjs` recognises to give the error Node.js' code.
+const REQUIRE_ASYNC_MODULE_MESSAGE: &str = "require() cannot be used on an ESM graph with \
+                                            top-level await. Use import() instead.";
+
+/// The error `require()` of an ES module with top-level await raises, worded as
+/// Node.js words it.
+fn require_async_module_error(path: &Path) -> Error {
+    Error::new(
+        Status::GenericFailure,
+        format!("{REQUIRE_ASYNC_MODULE_MESSAGE}\n  Requiring {}", path.display()),
+    )
+}
+
+/// Whether Node.js runs the file as CommonJS whatever its syntax: a `.cts`/`.cjs`
+/// extension, or an ambiguous one inside a `"type": "commonjs"` package. Without a
+/// `type`, Node.js' syntax detection runs a file with top-level await as an ES module.
+fn is_commonjs_file(path: &Path) -> bool {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("cts") || ext.eq_ignore_ascii_case("cjs") => true,
+        Some(ext) if ext.eq_ignore_ascii_case("mts") || ext.eq_ignore_ascii_case("mjs") => false,
+        _ => {
+            let (Some((resolver, _)), Some(directory), Some(name)) = (
+                RESOLVER_AND_TSCONFIG.get(),
+                path.parent(),
+                path.file_name().and_then(|name| name.to_str()),
+            ) else {
+                return false;
+            };
+            resolver_request(directory, &format!("./{name}"), "")
+                .and_then(|(directory, specifier)| resolver.resolve(&directory, &specifier).ok())
+                .and_then(|resolution| resolution.package_json().and_then(|json| json.r#type()))
+                .is_some_and(|ty| matches!(ty, PackageType::CommonJs))
+        }
+    }
+}
+
+/// Whether `program` awaits at its top level: an `await`, a `for await` or an
+/// `await using` outside every function.
+fn has_top_level_await(program: &Program<'_>) -> bool {
+    struct TopLevelAwaitFinder(bool);
+
+    impl<'a> Visit<'a> for TopLevelAwaitFinder {
+        fn visit_await_expression(&mut self, _it: &AwaitExpression<'a>) {
+            self.0 = true;
+        }
+
+        fn visit_for_of_statement(&mut self, it: &ForOfStatement<'a>) {
+            self.0 |= it.r#await;
+            walk::walk_for_of_statement(self, it);
+        }
+
+        fn visit_variable_declaration(&mut self, it: &VariableDeclaration<'a>) {
+            self.0 |= it.kind.is_await();
+            walk::walk_variable_declaration(self, it);
+        }
+
+        fn visit_function(&mut self, _it: &oxc::ast::ast::Function<'a>, _flags: ScopeFlags) {}
+
+        fn visit_arrow_function_expression(&mut self, _it: &ArrowFunctionExpression<'a>) {}
+    }
+
+    let mut finder = TopLevelAwaitFinder(false);
+    finder.visit_program(program);
+    finder.0
+}
+
 /// A parsed source, plus whether it became valid only when parsed as a module — a
 /// top-level `for await` without any `import`/`export`/`import.meta`, which oxc cannot
 /// resolve to a module on its own.
@@ -1658,6 +1726,17 @@ fn transform_program<'a>(
     .build_with_scoping(scoping, program);
 
     if !diagnostics.is_empty() {
+        // An ES module with top-level await cannot become CommonJS. `require()` of
+        // one is Node.js' `ERR_REQUIRE_ASYNC_MODULE`, which code catches to fall back
+        // to `import()` (issue #842); a CommonJS file's top-level await is a syntax
+        // error to Node.js instead.
+        if matches!(module_target, Some(Module::CommonJS))
+            && enable_top_level_await
+            && has_top_level_await(program)
+            && !is_commonjs_file(src_path)
+        {
+            return Err(require_async_module_error(src_path));
+        }
         let msg = join_errors(diagnostics.into_vec(), source_str, src_path);
         return Err(Error::new(
             Status::GenericFailure,
@@ -2942,6 +3021,26 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    // Issue #842: top-level await is what `require()` of an ES module rejects.
+    #[test]
+    fn top_level_await_is_found_outside_functions_only() {
+        let found = |source: &str| {
+            let allocator = Allocator::default();
+            let program = Parser::new(&allocator, source, SourceType::mjs().with_typescript(true))
+                .parse()
+                .program;
+            has_top_level_await(&program)
+        };
+        assert!(found("await 1;"));
+        assert!(found("if (x) { const y = await f(); }"));
+        assert!(found("for await (const x of xs) {}"));
+        assert!(found("await using r = f();"));
+        assert!(!found("async function f() { await 1 }"));
+        assert!(!found("const f = async () => { for await (const x of xs) {} };"));
+        assert!(!found("class A { async m() { await 1 } }"));
+        assert!(!found("export const v = 1;"));
+    }
 
     // Issue #840: outside `node_modules`, TypeScript resolves before JavaScript
     // and `.js` reaches `.jsx`, as tsc resolves.
