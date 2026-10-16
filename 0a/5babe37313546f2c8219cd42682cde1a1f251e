@@ -1,0 +1,21 @@
+packages/integrate-vitest/__tests__/extension-order.spec.ts
+  s_5b25d6ae40e975::t_60fcbad3cca4d3 133-146
+src/lib.rs
+  s_5b25d6ae40e975::t_0c5ebb4f6962fe 718-721,1913-1918,1926
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0a5babe37313546f2c8219cd42682cde1a1f251e",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
