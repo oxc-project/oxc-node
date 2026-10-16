@@ -2776,28 +2776,36 @@ fn describe_tsconfig_error(err: &ResolveError) -> String {
     match err {
         ResolveError::TsconfigLoadFailed { path, source } => match source.as_ref() {
             ResolveError::Json(json) if json.path == *path => {
-                format!("failed to read the tsconfig {}: {}", path.display(), json.message)
+                format!("failed to read the tsconfig {}: {}", shown(path), json.message)
             }
             source => format!(
                 "failed to read the tsconfig {}: {}",
-                path.display(),
+                shown(path),
                 describe_tsconfig_error(source)
             ),
         },
         ResolveError::Json(json) => {
-            format!("failed to read the tsconfig {}: {}", json.path.display(), json.message)
+            format!("failed to read the tsconfig {}: {}", shown(&json.path), json.message)
         }
         // A missing `extends` or `references` target; the explicitly named file is
         // checked before the resolver ever loads it.
         ResolveError::TsconfigNotFound(path) => {
             format!(
                 "the tsconfig {}, which a tsconfig extends or references, does not exist",
-                path.display()
+                shown(path)
             )
         }
         ResolveError::IOError(err) => err.to_string(),
         err => format!("failed to read a tsconfig: {err}"),
     }
+}
+
+/// `path` as a warning shows it. On Windows the resolver meets the same file
+/// spelled with `/` and with `\\` (from a file URL and from the transform API),
+/// and both must name it the same way, or one config is reported twice.
+fn shown(path: &Path) -> String {
+    let shown = path.display().to_string();
+    if cfg!(windows) { shown.replace('/', "\\") } else { shown }
 }
 
 /// Whether `err` is a tsconfig that exists but could not be read, which
@@ -2815,11 +2823,12 @@ fn is_io_failure(err: &ResolveError) -> bool {
 fn is_tsconfig_file(candidate: &Path) -> bool {
     match fs::metadata(candidate) {
         Ok(metadata) => metadata.is_file(),
+        // Only a refusal says a file is there. Anything else, including what
+        // WASI reports for a path outside every preopened directory (the
+        // browser build preopens none), is no config at all.
         Err(err)
-            if matches!(
-                err.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-            ) =>
+            if cfg!(target_family = "wasm")
+                || err.kind() != std::io::ErrorKind::PermissionDenied =>
         {
             false
         }
@@ -2931,14 +2940,14 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
         (Some((path, source)), Some(Err(err))) => {
             warn_once(format!(
                 "failed to read the tsconfig {source} names, {}: {err}; running without a tsconfig",
-                path.display()
+                shown(path)
             ));
             None
         }
         (Some((path, source)), _) => {
             warn_once(format!(
                 "the tsconfig {source} names, {}, does not exist; running without a tsconfig",
-                path.display()
+                shown(path)
             ));
             None
         }
@@ -3262,7 +3271,7 @@ mod tests {
     // not in oxc_resolver's `Debug` output.
     #[test]
     fn tsconfig_errors_name_the_file() {
-        let path = PathBuf::from("/project/tsconfig.json");
+        let path = PathBuf::from("tsconfig.json");
         let json = ResolveError::Json(oxc_resolver::JSONError {
             path: path.clone(),
             message: "EOF while parsing an object".to_string(),
@@ -3275,13 +3284,13 @@ mod tests {
         };
         assert_eq!(
             describe_tsconfig_error(&load_failed(json)),
-            "failed to read the tsconfig /project/tsconfig.json: EOF while parsing an object"
+            "failed to read the tsconfig tsconfig.json: EOF while parsing an object"
         );
         assert_eq!(
             describe_tsconfig_error(&load_failed(ResolveError::TsconfigNotFound(PathBuf::from(
-                "/project/base.json"
+                "base.json"
             )))),
-            "failed to read the tsconfig /project/tsconfig.json: the tsconfig /project/base.json, \
+            "failed to read the tsconfig tsconfig.json: the tsconfig base.json, \
              which a tsconfig extends or references, does not exist"
         );
         let unreadable = load_failed(ResolveError::from(std::io::Error::from(
@@ -3290,13 +3299,11 @@ mod tests {
         assert!(is_io_failure(&unreadable));
         assert_eq!(
             describe_tsconfig_error(&unreadable),
-            "failed to read the tsconfig /project/tsconfig.json: permission denied"
+            "failed to read the tsconfig tsconfig.json: permission denied"
         );
         assert_eq!(
-            describe_tsconfig_error(&ResolveError::TsconfigNotFound(PathBuf::from(
-                "/project/base.json"
-            ))),
-            "the tsconfig /project/base.json, which a tsconfig extends or references, does not exist"
+            describe_tsconfig_error(&ResolveError::TsconfigNotFound(PathBuf::from("base.json"))),
+            "the tsconfig base.json, which a tsconfig extends or references, does not exist"
         );
     }
 
