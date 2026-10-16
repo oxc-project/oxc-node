@@ -1790,7 +1790,9 @@ pub fn create_resolve<'env>(
         }
     } else if (specifier.starts_with("./")
         || specifier.starts_with("../")
-        || specifier.starts_with('/'))
+        // `//host/…` is a network-path reference whose first segment is the
+        // file URL's host, not a directory: Node's URL resolver answers it.
+        || specifier.starts_with('/') && !specifier.starts_with("//"))
         && url_path(&specifier).contains('%')
     {
         let pathname = url_path(&specifier);

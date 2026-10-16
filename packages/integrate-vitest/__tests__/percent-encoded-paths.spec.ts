@@ -167,6 +167,17 @@ describe("percent-encoded resolved URLs (issue #837)", () => {
     expect(run(root, "./entry.ts")).toBe("URIError\n".repeat(3));
   });
 
+  test.skipIf(isWindows)("network-path references are left to Node", () => {
+    // `//tmp/…/a%20b.ts` names the host `tmp`, which Node refuses; decoding
+    // it as a path would load the local `a b.ts`.
+    const root = realpathSync(fixture({ "a b.ts": WRONG }));
+    writeFileSync(
+      join(root, "entry.ts"),
+      `try { await import(${JSON.stringify(`/${root}/a%20b.ts`)}); } catch (error) { console.log((error as { code: string }).code); }\n`,
+    );
+    expect(run(root, "./entry.ts")).toBe("ERR_INVALID_FILE_URL_HOST\n");
+  });
+
   test("a # beside non-ASCII text still resolves through oxc-node", () => {
     // oxc_resolver drops its `\0#` escape byte by byte and used to mangle
     // `õ`, so `.tsx` and extensionless imports fell back to Node and failed.
