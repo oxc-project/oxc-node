@@ -147,9 +147,25 @@ const SOURCEMAP_MIME = "data:application/json;charset=utf-8;base64,";
 
 const NODE_MODULES_REGEX = /^(?:.*[\\/])?node_modules(?:[\\/].*)?$/;
 
+// The first line of the binding's error for `require()` of an ES module with
+// top-level await, which it words as Node.js does (`REQUIRE_ASYNC_MODULE_MESSAGE`).
+const REQUIRE_ASYNC_MODULE_MESSAGE =
+  "require() cannot be used on an ESM graph with top-level await. Use import() instead.";
+
 addHook(
   (code, filename) => {
-    const output = transformer.transform(filename, code);
+    let output;
+    try {
+      output = transformer.transform(filename, code);
+    } catch (error) {
+      // Node.js' own `require(esm)` reports this as `ERR_REQUIRE_ASYNC_MODULE`, which
+      // code catches to fall back to `import()` (issue #842); the binding's errors can
+      // only carry its `GenericFailure` status.
+      if (error instanceof Error && error.message.startsWith(REQUIRE_ASYNC_MODULE_MESSAGE)) {
+        error.code = "ERR_REQUIRE_ASYNC_MODULE";
+      }
+      throw error;
+    }
     let transformed = output.source();
     const sourceMap = output.sourceMap();
 
