@@ -1167,3 +1167,28 @@ test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+// A `tsconfig.json` symlink whose target is gone, as a removed worktree leaves
+// behind, is skipped by the resolver as if nothing were there.
+test.skipIf(process.platform === "win32")("a dangling tsconfig symlink is reported", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["lib/*"] } },
+    }),
+    "lib/x.ts": 'export const x = "from lib";\n',
+    "sub/entry.ts": 'import { x } from "@lib/x.ts";\nconsole.log(x);\n',
+  });
+  symlinkSync(join(root, "gone.json"), join(root, "sub", "tsconfig.json"));
+  try {
+    const ran = runWithHooks(join(root, "sub"), "./entry.ts");
+    expect(ran.stderr, "the dangling symlink must be reported once").toMatch(
+      new RegExp(
+        `^oxc-node: warning: the tsconfig (/private)?${escapeRegExp(join(root, "sub", "tsconfig.json"))} is a symlink to a file that does not exist; skipping it$`,
+      ),
+    );
+    expect(ran.stdout.trim(), "discovery walks on to the root config").toBe("from lib");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

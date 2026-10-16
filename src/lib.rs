@@ -347,7 +347,9 @@ impl TsconfigSource {
     /// does not say which ancestor referenced it, so then the scan stops at the
     /// first config it can read, which may report fewer than were skipped but
     /// never one the walk did not reach. The outcome depends on the file, as
-    /// ownership does, so each file is scanned once.
+    /// ownership does. A successful lookup is cached by the resolver, which
+    /// then never walks that chain again, so such a file is scanned once; a
+    /// failed one is retried, so it is scanned again each time.
     fn warn_skipped_unreadable(
         resolver: &Resolver,
         path: &Path,
@@ -367,7 +369,9 @@ impl TsconfigSource {
         };
         // Only a stop in the ancestor chain is one the walk can have reached.
         let stop = stop.filter(|stop| directory.starts_with(stop));
-        if !SCANNED.lock().unwrap_or_else(PoisonError::into_inner).insert(path.to_path_buf()) {
+        if found.is_ok()
+            && !SCANNED.lock().unwrap_or_else(PoisonError::into_inner).insert(path.to_path_buf())
+        {
             return;
         }
         // A config found through a reference leaves no stop in the chain, and
@@ -2823,15 +2827,21 @@ fn is_io_failure(err: &ResolveError) -> bool {
 fn is_tsconfig_file(candidate: &Path) -> bool {
     match fs::metadata(candidate) {
         Ok(metadata) => metadata.is_file(),
-        // Only a refusal says a file is there. Anything else, including what
-        // WASI reports for a path outside every preopened directory (the
-        // browser build preopens none), is no config at all.
-        Err(err)
-            if cfg!(target_family = "wasm")
-                || err.kind() != std::io::ErrorKind::PermissionDenied =>
-        {
+        // A symlink to nothing is a config entry that cannot be read, often
+        // left behind by a removed worktree.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if fs::symlink_metadata(candidate).is_ok_and(|m| m.file_type().is_symlink()) {
+                warn_once(format!(
+                    "the tsconfig {} is a symlink to a file that does not exist; skipping it",
+                    shown(candidate)
+                ));
+            }
             false
         }
+        // Only a refusal says a file is there. Anything else, including what
+        // WASI reports for a path outside every preopened directory (the
+        // browser build preopens none: `ENOTCAPABLE`), is no config at all.
+        Err(err) if err.kind() != std::io::ErrorKind::PermissionDenied => false,
         Err(err) => {
             warn_unreadable(&ResolveError::TsconfigLoadFailed {
                 path: candidate.to_path_buf(),
