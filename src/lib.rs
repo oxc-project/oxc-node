@@ -374,7 +374,9 @@ impl TsconfigSource {
 /// steal the specifier from its owner. Windows adds two concrete forms with
 /// no equivalent elsewhere — `\`-rooted or UNC paths and drive prefixes
 /// (`C:\x`) — and a drive is just a one-letter scheme to the check below, so
-/// only the `\` test is compiled conditionally.
+/// only the `\` test is compiled conditionally. Classification follows
+/// WHATWG URL whitespace normalization (trimmed C0 controls/spaces, dropped
+/// tab/newline), since Node.js applies it before scheme detection.
 ///
 /// Only bare specifiers may consult a tsconfig's `paths`: a concrete target
 /// names a file, and `resolve_with_context` tries `paths` before absolute
@@ -383,6 +385,19 @@ impl TsconfigSource {
 /// the named file. oxc_resolver's own gate in `resolve_path_alias` rejects
 /// only `.`-prefixed specifiers, so this check cannot piggyback on it.
 fn is_bare_specifier(specifier: &str) -> bool {
+    // Node.js classifies the specifier through WHATWG URL parsing, which
+    // trims leading/trailing C0 controls and spaces and drops ASCII
+    // tab/newline — `" file:/x"` loads as a file URL. The gate must classify
+    // the same spelling, or a catch-all `paths` entry steals such an import
+    // from Node.js. Classification only: the raw spelling still drives
+    // resolution, exactly as `file_specifier` treats it in `create_resolve`.
+    let cleaned;
+    let specifier = if specifier.bytes().any(|b| b <= b' ') {
+        cleaned = specifier.replace(['\t', '\n', '\r'], "");
+        cleaned.trim_start_matches(|c: char| c <= ' ').trim_end_matches(|c: char| c <= ' ')
+    } else {
+        specifier
+    };
     if specifier.starts_with(['.', '/']) {
         return false;
     }

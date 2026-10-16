@@ -627,6 +627,18 @@ test("the fallback does not redirect absolute specifiers through catch-all paths
     join(root, "scripts", "scheme.ts"),
     'import { v } from "virtual:module";\nconsole.log("scheme:" + v);\n',
   );
+  // WHATWG URL parsing trims leading/trailing controls and spaces and drops
+  // ASCII tab/newline before scheme detection: the first spelling loads as a
+  // file: URL under plain Node.js, the second is rejected — and neither may
+  // be stolen by the catch-all on the way there.
+  writeFileSync(
+    join(root, "scripts", "space-url.ts"),
+    `import { v } from " file:${join(root, "outside", "x.ts")}";\nconsole.log("space-url:" + v);\n`,
+  );
+  writeFileSync(
+    join(root, "scripts", "tab-url.ts"),
+    `import { v } from "fi\\ttle://${join(root, "outside", "x.ts")}";\nconsole.log("tab-url:" + v);\n`,
+  );
   try {
     const ran = runWithHooks(join(root, "scripts"), "./seed.ts");
     expect(ran.stderr, "an absolute specifier must resolve to the file it names").toBe("");
@@ -648,6 +660,16 @@ test("the fallback does not redirect absolute specifiers through catch-all paths
     expect(scheme.stderr, "Node.js itself rejects the unknown scheme").toContain(
       "ERR_UNSUPPORTED_ESM_URL_SCHEME",
     );
+
+    const spaceUrl = runWithHooks(join(root, "scripts"), "./space-url.ts");
+    expect(spaceUrl.stderr, "a space-padded file: URL must load the file it names").toBe("");
+    expect(spaceUrl.stdout.trim(), "a space-padded file: URL must load the file it names").toBe(
+      "space-url:real",
+    );
+
+    const tabUrl = runWithHooks(join(root, "scripts"), "./tab-url.ts");
+    expect(tabUrl.status, "a tab-mangled file: URL must not resolve the shim").not.toBe(0);
+    expect(tabUrl.stdout, "the catch-all shim must not execute").not.toContain("shimmed");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
