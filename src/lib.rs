@@ -378,26 +378,8 @@ impl TsconfigSource {
                 return;
             }
             let candidate = dir.join("tsconfig.json");
-            match fs::metadata(&candidate) {
-                Ok(metadata) if metadata.is_file() => {}
-                Ok(_) => continue,
-                Err(err)
-                    if matches!(
-                        err.kind(),
-                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                    ) =>
-                {
-                    continue;
-                }
-                // The resolver takes a failed lookup for "not a file" and walks on,
-                // so this, too, is a config it skipped.
-                Err(err) => {
-                    warn_unreadable(&ResolveError::TsconfigLoadFailed {
-                        path: candidate,
-                        source: Box::new(ResolveError::from(err)),
-                    });
-                    continue;
-                }
+            if !is_tsconfig_file(&candidate) {
+                continue;
             }
             // A config that fails to load for any other reason is where a failed
             // walk stopped, and every config below it that loads did not claim the
@@ -472,7 +454,7 @@ impl TsconfigSource {
     /// The ancestor walk behind [`Self::nearest`], before memoization.
     fn walk_nearest(resolver: &Resolver, path: &Path) -> Nearest {
         for candidate in path.ancestors().skip(1).map(|dir| dir.join("tsconfig.json")) {
-            if !candidate.is_file() {
+            if !is_tsconfig_file(&candidate) {
                 continue;
             }
             match resolver.resolve_tsconfig(&candidate) {
@@ -2823,6 +2805,32 @@ fn describe_tsconfig_error(err: &ResolveError) -> String {
 fn is_io_failure(err: &ResolveError) -> bool {
     matches!(err, ResolveError::TsconfigLoadFailed { source, .. }
         if matches!(source.as_ref(), ResolveError::IOError(_)))
+}
+
+/// Whether discovery would load `candidate`. The resolver takes a failed
+/// metadata lookup, such as a symlink into a directory that may not be
+/// searched, for "not a file" and walks on; that is a skipped config too, so
+/// it is reported. Every ancestor of a file that was reached is searchable, so
+/// only such an indirection can fail.
+fn is_tsconfig_file(candidate: &Path) -> bool {
+    match fs::metadata(candidate) {
+        Ok(metadata) => metadata.is_file(),
+        Err(err)
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            false
+        }
+        Err(err) => {
+            warn_unreadable(&ResolveError::TsconfigLoadFailed {
+                path: candidate.to_path_buf(),
+                source: Box::new(ResolveError::from(err)),
+            });
+            false
+        }
+    }
 }
 
 fn warn_unreadable(err: &ResolveError) {

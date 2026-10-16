@@ -1136,3 +1136,34 @@ test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+// An importer under `q?x` goes unscanned (discovery walks from the truncated
+// path), so a bare import reaches the nearest-ancestor fallback, which walks
+// the real path and must report the symlinked config it skips just the same.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "the nearest-ancestor fallback reports a tsconfig it cannot look up",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["lib/*"] } },
+        include: ["lib"],
+      }),
+      "lib/x.ts": 'export const x = "from lib";\n',
+      "locked/real.json": "{}",
+      "q?x/entry.ts": 'import { x } from "@lib/x.ts";\nconsole.log(x);\n',
+    });
+    symlinkSync(join(root, "locked", "real.json"), join(root, "q?x", "tsconfig.json"));
+    chmodSync(join(root, "locked"), 0o000);
+    try {
+      const ran = runWithHooks(join(root, "q?x"), "./entry.ts");
+      expect(ran.stderr, "the unreachable config must be reported once").toMatch(
+        warning(join(root, "q?x", "tsconfig.json"), "skipping it"),
+      );
+      expect(ran.stdout.trim(), "the fallback walks on to the root config").toBe("from lib");
+    } finally {
+      chmodSync(join(root, "locked"), 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
