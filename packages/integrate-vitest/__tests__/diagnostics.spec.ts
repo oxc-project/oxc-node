@@ -85,6 +85,15 @@ describe("diagnostics name the line and column", () => {
     expect(stderr).toMatch(/sub dir[\\/]main\.ts:3:24\]/);
   });
 
+  test("a minified line is not copied into the error", () => {
+    const line = `const a = [${"1,".repeat(200_000)}];const b: number = ;`;
+    const root = fixture({ "min.ts": `export {};\n${line}\n` });
+    const stderr = run(root, "./min.ts");
+    expect(stderr).toContain("x Unexpected token");
+    expect(stderr).toMatch(/min\.ts:2:\d+ \(the line is too long to show\)/);
+    expect(stderr.length).toBeLessThan(5_000);
+  });
+
   test("transform error", () => {
     const root = fixture({ "main.mts": "const ok = 1;\nexport = ok;\n" });
     const stderr = run(root, "./main.mts");

@@ -2658,6 +2658,10 @@ fn has_decorator(program: &Program<'_>, source: &str) -> bool {
 /// diagnostic prints only the message, which in a large file leaves no way to
 /// find the error (issue #839). Messages are not wrapped, so each stays on one
 /// line that a search for it still finds.
+///
+/// The code frame prints every line it shows whole, so a frame that is too large
+/// — a minified or generated file — is left out and the report names its
+/// location instead of copying megabytes of source into the error.
 fn join_errors(errors: Vec<OxcDiagnostic>, source: &str, path: &Path) -> String {
     // The load hook hands over a `file:` URL; the report names the file the way an
     // editor or terminal can open it.
@@ -2668,15 +2672,70 @@ fn join_errors(errors: Vec<OxcDiagnostic>, source: &str, path: &Path) -> String 
         .with_links(false);
     errors
         .into_iter()
-        .map(|err| {
-            let report = err.with_source_code(NamedSource::new(&name, source.to_owned()));
+        .map(|mut err| {
             let mut rendered = String::new();
             // Writing into a `String` cannot fail.
-            let _ = handler.render_report(&mut rendered, report.as_ref());
+            if let Some(long) = err.labels.iter().find(|label| {
+                let span = label.span();
+                frame_too_large(source, span.start as usize, span.end as usize)
+            }) {
+                let (line, column) = line_column(source, long.offset() as usize);
+                err.labels.clear();
+                let _ = handler.render_report(&mut rendered, &err);
+                rendered.truncate(rendered.trim_end().len());
+                rendered.push_str(&format!(
+                    "\n  at {name}:{line}:{column} (the line is too long to show)"
+                ));
+            } else {
+                let report = err.with_source_code(NamedSource::new(&name, source.to_owned()));
+                let _ = handler.render_report(&mut rendered, report.as_ref());
+            }
             rendered.trim_end().to_owned()
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The longest source line a code frame shows.
+const MAX_FRAME_LINE_BYTES: usize = 1000;
+
+/// The most source, in bytes, a code frame shows.
+const MAX_FRAME_BYTES: usize = 10_000;
+
+/// The lines a code frame shows on each side of a label (oxc's default).
+const FRAME_CONTEXT_LINES: usize = 1;
+
+/// Whether the code frame for `start..end` — the whole lines the span touches
+/// and [`FRAME_CONTEXT_LINES`] on each side — is too large to print.
+fn frame_too_large(source: &str, start: usize, end: usize) -> bool {
+    let bytes = source.as_bytes();
+    let start = start.min(bytes.len());
+    let end = end.clamp(start, bytes.len());
+    let mut first = memchr::memrchr(b'\n', &bytes[..start]).map_or(0, |index| index + 1);
+    let mut last = memchr::memchr(b'\n', &bytes[end..]).map_or(bytes.len(), |index| end + index);
+    for _ in 0..FRAME_CONTEXT_LINES {
+        if first > 0 {
+            first = memchr::memrchr(b'\n', &bytes[..first - 1]).map_or(0, |index| index + 1);
+        }
+        if last < bytes.len() {
+            last = memchr::memchr(b'\n', &bytes[last + 1..])
+                .map_or(bytes.len(), |index| last + 1 + index);
+        }
+    }
+    let frame = &bytes[first..last];
+    frame.len() > MAX_FRAME_BYTES
+        || frame.split(|byte| *byte == b'\n').any(|line| line.len() > MAX_FRAME_LINE_BYTES)
+}
+
+/// The one-based line and column (in characters) of a byte offset, as the code
+/// frame header counts them.
+fn line_column(source: &str, offset: usize) -> (usize, usize) {
+    let before = source.get(..offset.min(source.len())).unwrap_or(source);
+    let line_start = before.rfind('\n').map_or(0, |index| index + 1);
+    (
+        memchr::memchr_iter(b'\n', before.as_bytes()).count() + 1,
+        before[line_start..].chars().count() + 1,
+    )
 }
 
 #[allow(clippy::type_complexity)]
@@ -2812,6 +2871,24 @@ mod tests {
         assert!(rendered.contains("x Unexpected token"), "{rendered}");
         assert!(rendered.contains("[/x/main.ts:3:24]"), "{rendered}");
         assert!(rendered.contains("3 | const broken: number = ;"), "{rendered}");
+        // A minified line is not copied into the error; its location is named.
+        let long = format!("const a = [{}];\nconst b: number = ;\n", "1,".repeat(2000));
+        let long_at = u32::try_from(long.rfind(';').unwrap()).unwrap();
+        let errors = vec![
+            OxcDiagnostic::error("Unexpected token")
+                .with_label(oxc::span::Span::new(long_at, long_at + 1)),
+        ];
+        let rendered = join_errors(errors, &long, Path::new("/x/min.ts"));
+        assert!(rendered.contains("x Unexpected token"), "{rendered}");
+        assert!(
+            rendered.contains("at /x/min.ts:2:19 (the line is too long to show)"),
+            "{rendered}"
+        );
+        let errors =
+            vec![OxcDiagnostic::error("Unexpected token").with_label(oxc::span::Span::new(12, 13))];
+        let rendered = join_errors(errors, &long, Path::new("/x/min.ts"));
+        assert!(rendered.contains("at /x/min.ts:1:13 (the line"), "{rendered}");
+        assert!(rendered.len() < 200, "{rendered}");
         // A long message is not wrapped.
         let message = "Import assignment cannot be used when targeting ECMAScript modules.";
         let errors =
