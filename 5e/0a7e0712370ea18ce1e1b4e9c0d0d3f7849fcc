@@ -1,0 +1,23 @@
+packages/core/register.mjs
+  s_5b25d6ae40e975::t_aa0a593405fd93 150-154,157-168
+packages/integrate-vitest/__tests__/require-async-module.spec.ts
+  s_5b25d6ae40e975::t_c2f19e9ff23d4f 1-111
+src/lib.rs
+  s_5b25d6ae40e975::t_a02834e497bc86 22-24,34,1402-1468,1729-1739,3025-3044
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5e0a7e0712370ea18ce1e1b4e9c0d0d3f7849fcc",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
