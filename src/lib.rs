@@ -1765,9 +1765,12 @@ pub fn create_resolve<'env>(
         tracing::debug!("short-circuiting builtin resolve: {}", specifier);
         return add_short_circuit(specifier, Some("builtin"), context, next_resolve);
     }
+    // A `data:` URL is no built-in module: `builtin` sent Node.js looking it up as one
+    // (`ERR_UNKNOWN_BUILTIN_MODULE`). Node.js derives the format from the MIME type,
+    // so its answer is kept as it is (issue #841).
     if specifier.starts_with("data:") {
         tracing::debug!("short-circuiting data URL resolve: {}", specifier);
-        return add_short_circuit(specifier, Some("builtin"), context, next_resolve);
+        return add_short_circuit(specifier, None, context, next_resolve);
     }
     #[cfg(target_family = "wasm")]
     let cwd = {
