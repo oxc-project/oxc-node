@@ -330,9 +330,10 @@ impl TsconfigSource {
     /// The walk passed every candidate below the directory it stopped in: the
     /// one holding the config it returned or failed on, or none at all when no
     /// config claims the file. A config resolved through a project reference
-    /// does not say which ancestor referenced it, so then the scan stops at the
-    /// first readable config, which may report fewer than were skipped but
-    /// never one the walk did not reach. The outcome depends on the file, as
+    /// does not say which ancestor referenced it, nor does an error such as a
+    /// missing `extends` target name the config that failed, so then the scan
+    /// stops at the first config it can read, which may report fewer than were
+    /// skipped but never one the walk did not reach. The outcome depends on the file, as
     /// ownership does, so each file is scanned once.
     fn warn_skipped_unreadable(
         resolver: &Resolver,
@@ -353,13 +354,14 @@ impl TsconfigSource {
         };
         // Only a stop in the ancestor chain is one the walk can have reached.
         let stop = stop.filter(|stop| directory.starts_with(stop));
-        let lookup_failed = found.is_err() && stop.is_none();
         if !SCANNED.lock().unwrap_or_else(PoisonError::into_inner).insert(path.to_path_buf()) {
             return;
         }
-        let referenced = matches!(found, Ok(Some(_))) && stop.is_none();
+        // Without a stop in the chain, only the first config the scan can use
+        // or fails on is certainly reached: the walk may have stopped there.
+        let conservative = stop.is_none() && !matches!(found, Ok(None));
         for dir in directory.ancestors() {
-            if lookup_failed || Some(dir) == stop {
+            if Some(dir) == stop {
                 return;
             }
             let candidate = dir.join("tsconfig.json");
@@ -368,7 +370,7 @@ impl TsconfigSource {
             }
             match resolver.resolve_tsconfig(&candidate) {
                 Err(err) if is_io_failure(&err) => warn_unreadable(&err),
-                Ok(_) if !referenced => {}
+                Ok(_) if !conservative => {}
                 _ => return,
             }
         }

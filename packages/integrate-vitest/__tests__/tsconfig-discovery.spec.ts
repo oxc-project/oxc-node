@@ -1019,3 +1019,34 @@ test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+// A missing `references` target fails the lookup without naming the config it
+// failed on; the unreadable config the walk skipped first must still be named.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an unreadable tsconfig below a config with a missing reference is reported",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "tsconfig.json": JSON.stringify({ references: [{ path: "./missing" }] }),
+      "sub/tsconfig.json": "{}",
+      "sub/entry.ts": 'console.log("ran");\n',
+    });
+    chmodSync(join(root, "sub", "tsconfig.json"), 0o000);
+    try {
+      const ran = runWithHooks(join(root, "sub"), "./entry.ts");
+      expect(ran.stderr, "the skipped config must be reported").toMatch(
+        new RegExp(
+          `^oxc-node: warning: failed to read the tsconfig (/private)?${escapeRegExp(join(root, "sub", "tsconfig.json"))}: [^\\n]+; skipping it$`,
+          "m",
+        ),
+      );
+      expect(ran.stderr, "so must the missing reference").toContain(
+        "which a tsconfig extends or references, does not exist; ignoring it",
+      );
+      expect(ran.stdout.trim(), "the run goes on without a config").toBe("ran");
+    } finally {
+      chmodSync(join(root, "sub", "tsconfig.json"), 0o644);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
