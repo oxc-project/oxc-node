@@ -1,0 +1,31 @@
+packages/integrate-vitest/__tests__/percent-encoded-paths.spec.ts
+  s_835383e813158f::t_66c6b4ebacf723 1-215
+src/lib.rs
+  s_835383e813158f::t_2bc9dc15834172 5,291-297,299-306,814-817,822-828,839,870,882-979,1758-1770,1773-1790,1792-1793,1796-1806,1817,1820-1821,1826-1828,2728-2731,2733-2737,2740-2743,2747-2751,2816-2896
+src/windows_file_url.rs
+  s_6aaa16b3e5a0e9::t_1b45e7839797c1 190-194,202-204,206,652-670
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "171ce8c336c38c28568a524a785d5ba1b39bfd89",
+  "prompts": {},
+  "sessions": {
+    "s_6aaa16b3e5a0e9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a0ff556b8294bdaf3",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    },
+    "s_835383e813158f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ad848701b81bb34c5",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
