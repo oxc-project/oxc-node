@@ -633,11 +633,11 @@ test("the fallback does not redirect absolute specifiers through catch-all paths
   // be stolen by the catch-all on the way there.
   writeFileSync(
     join(root, "scripts", "space-url.ts"),
-    `import { v } from " file:${join(root, "outside", "x.ts")}";\nconsole.log("space-url:" + v);\n`,
+    `import { v } from ${JSON.stringify(` file:${join(root, "outside", "x.ts")}`)};\nconsole.log("space-url:" + v);\n`,
   );
   writeFileSync(
     join(root, "scripts", "tab-url.ts"),
-    `import { v } from "fi\\ttle://${join(root, "outside", "x.ts")}";\nconsole.log("tab-url:" + v);\n`,
+    `import { v } from ${JSON.stringify(`fi\ttle://${join(root, "outside", "x.ts")}`)};\nconsole.log("tab-url:" + v);\n`,
   );
   try {
     const ran = runWithHooks(join(root, "scripts"), "./seed.ts");
@@ -668,8 +668,14 @@ test("the fallback does not redirect absolute specifiers through catch-all paths
     );
 
     const tabUrl = runWithHooks(join(root, "scripts"), "./tab-url.ts");
-    expect(tabUrl.status, "a tab-mangled file: URL must not resolve the shim").not.toBe(0);
     expect(tabUrl.stdout, "the catch-all shim must not execute").not.toContain("shimmed");
+    if (tabUrl.status === 0) {
+      // Whether Node.js then loads or rejects the tab-mangled URL is its own
+      // platform behavior; the fallback must simply stay out of it.
+      expect(tabUrl.stdout.trim(), "if Node.js loads it, it must be the named file").toBe(
+        "tab-url:real",
+      );
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
