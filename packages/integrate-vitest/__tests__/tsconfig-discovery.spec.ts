@@ -1192,3 +1192,58 @@ test.skipIf(process.platform === "win32")("a dangling tsconfig symlink is report
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// A symlink cycle fails the lookup with `ELOOP`, not a refusal, and is skipped
+// by the resolver all the same.
+test.skipIf(process.platform === "win32")("a tsconfig symlink cycle is reported", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["lib/*"] } },
+    }),
+    "lib/x.ts": 'export const x = "from lib";\n',
+    "sub/entry.ts": 'import { x } from "@lib/x.ts";\nconsole.log(x);\n',
+  });
+  symlinkSync(join(root, "sub", "tsconfig.json"), join(root, "sub", "tsconfig.json"));
+  try {
+    const ran = runWithHooks(join(root, "sub"), "./entry.ts");
+    expect(ran.stderr, "the cycle must be reported once").toMatch(
+      warning(join(root, "sub", "tsconfig.json"), "skipping it"),
+    );
+    expect(ran.stdout.trim(), "discovery walks on to the root config").toBe("from lib");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Under `q?x` only the nearest-ancestor fallback sees the real chain, so it
+// must report a malformed config it rejects itself.
+test.skipIf(process.platform === "win32")(
+  "the nearest-ancestor fallback reports a malformed config",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["lib/*"] } },
+        include: ["lib"],
+      }),
+      "lib/x.ts": 'export const x = "from lib";\n',
+      "q?x/tsconfig.json": "{ not json",
+      "q?x/entry.ts": 'import { x } from "@lib/x.ts";\nconsole.log(x);\n',
+    });
+    try {
+      const ran = runWithHooks(join(root, "q?x"), "./entry.ts");
+      expect(ran.stderr, "the malformed config must be reported").toMatch(
+        new RegExp(
+          `^oxc-node: warning: failed to read the tsconfig (/private)?${escapeRegExp(join(root, "q?x", "tsconfig.json"))}: [^\\n]+; ignoring it$`,
+          "m",
+        ),
+      );
+      expect(ran.stderr, "the broken nearest config stops the fallback").toContain(
+        "ERR_MODULE_NOT_FOUND",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

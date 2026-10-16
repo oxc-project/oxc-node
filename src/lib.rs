@@ -475,6 +475,9 @@ impl TsconfigSource {
                 }
                 Err(err) => {
                     tracing::debug!(path = ?path, error = ?err, "nearest tsconfig.json is not usable");
+                    // Worded as `discover` words it, so a config both reject is
+                    // reported once.
+                    warn_once(format!("{}; ignoring it", describe_tsconfig_error(&err)));
                     return Nearest::Unusable;
                 }
             }
@@ -2824,6 +2827,9 @@ fn is_io_failure(err: &ResolveError) -> bool {
 /// searched, for "not a file" and walks on; that is a skipped config too, so
 /// it is reported. Every ancestor of a file that was reached is searchable, so
 /// only such an indirection can fail.
+/// wasi-libc's `ENOTCAPABLE`.
+const WASI_ENOTCAPABLE: i32 = 76;
+
 fn is_tsconfig_file(candidate: &Path) -> bool {
     match fs::metadata(candidate) {
         Ok(metadata) => metadata.is_file(),
@@ -2838,10 +2844,14 @@ fn is_tsconfig_file(candidate: &Path) -> bool {
             }
             false
         }
-        // Only a refusal says a file is there. Anything else, including what
-        // WASI reports for a path outside every preopened directory (the
-        // browser build preopens none: `ENOTCAPABLE`), is no config at all.
-        Err(err) if err.kind() != std::io::ErrorKind::PermissionDenied => false,
+        Err(err) if err.kind() == std::io::ErrorKind::NotADirectory => false,
+        // What WASI reports for a path outside every preopened directory; the
+        // browser build preopens none, so it means no filesystem, not a config.
+        Err(err)
+            if cfg!(target_family = "wasm") && err.raw_os_error() == Some(WASI_ENOTCAPABLE) =>
+        {
+            false
+        }
         Err(err) => {
             warn_unreadable(&ResolveError::TsconfigLoadFailed {
                 path: candidate.to_path_buf(),
