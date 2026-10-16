@@ -130,4 +130,18 @@ describe("TypeScript resolves before JavaScript outside node_modules", () => {
     });
     expect(run(root, "./main.ts")).toBe("js js\n");
   });
+
+  test("a package keeps its compiled `.mjs` over a `.jsx` source", () => {
+    const root = fixture({
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        type: "module",
+        main: "./index",
+      }),
+      "node_modules/pkg/index.mjs": "export const v = 'mjs';\n",
+      "node_modules/pkg/index.jsx": "export const v = 'jsx';\n",
+      "main.ts": "import { v } from 'pkg';\nconsole.log(v);\n",
+    });
+    expect(run(root, "./main.ts")).toBe("mjs\n");
+  });
 });

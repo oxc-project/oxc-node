@@ -715,6 +715,10 @@ fn resolver_for_conditions(
     resolver
 }
 
+/// Extensions [`ExtensionOrder::Source`] tries ahead of where
+/// [`ExtensionOrder::Package`] tries them.
+const SOURCE_FIRST_EXTENSIONS: [&str; 5] = ["ts", "tsx", "mts", "cts", "jsx"];
+
 /// The base options with TypeScript tried before JavaScript, in the `.js`,
 /// `.mjs` and `.cjs` aliases and in the extensions an extensionless specifier
 /// tries, and `.jsx` as a `.js` alias target the way tsc maps it.
@@ -1906,8 +1910,12 @@ pub fn create_resolve<'env>(
         };
     let mut resolution = resolve(resolver);
     // TypeScript first is for the project's own files. A package that ships its
-    // `.ts` sources beside the compiled `.js` is still run from what it
-    // compiled, as it is when the package imports itself.
+    // `.ts` (or `.jsx`) sources beside the compiled `.js` is still run from what
+    // it compiled, as it is when the package imports itself. The two orders can
+    // only disagree when the source order lands on an extension it tries ahead
+    // of the package order — every other result means the files tried before it
+    // are absent, so the package order picks it too — and only then is the
+    // request resolved again.
     if order == ExtensionOrder::Source
         && let Ok(resolved) = &resolution
         && in_node_modules(resolved.path())
@@ -1915,7 +1923,7 @@ pub fn create_resolve<'env>(
             .path()
             .extension()
             .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| TS_DEP_EXTENSIONS.contains(&ext))
+            .is_some_and(|ext| SOURCE_FIRST_EXTENSIONS.contains(&ext))
     {
         let package_resolver =
             resolver_for_conditions(base_resolver, &context.conditions, ExtensionOrder::Package);
