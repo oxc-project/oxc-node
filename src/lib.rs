@@ -671,25 +671,70 @@ pub fn freeze_transform_deps() -> String {
     .to_owned()
 }
 
-/// Resolvers for the export conditions resolve requests have asked for so far,
-/// each cloned from the base [`RESOLVER_AND_TSCONFIG`] resolver so they all
+/// Resolvers for the export conditions, and the [`ExtensionOrder`], resolve
+/// requests have asked for so far, each cloned from the base [`RESOLVER_AND_TSCONFIG`] resolver so they all
 /// share its caches. Conditions are part of every request, so the base resolver
 /// must not keep whichever set its first caller happened to pass: a `require()`
 /// of a TypeScript file initialises it with none, and a later `import()` would
 /// then pick a package's `default` export over `import`.
-static CONDITION_RESOLVERS: Mutex<Vec<(Vec<String>, Arc<Resolver>)>> = Mutex::new(Vec::new());
+static CONDITION_RESOLVERS: Mutex<Vec<ConditionResolver>> = Mutex::new(Vec::new());
 
-fn resolver_for_conditions(base: &Resolver, conditions: &[String]) -> Arc<Resolver> {
+/// A resolver for one set of export conditions and one [`ExtensionOrder`].
+type ConditionResolver = (Vec<String>, ExtensionOrder, Arc<Resolver>);
+
+/// Which file wins when several share a name (`dep.js` beside `dep.ts`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ExtensionOrder {
+    /// JavaScript first: what a package publishes is its compiled output, and
+    /// the base resolver's order. Used for importers inside `node_modules`.
+    Package,
+    /// TypeScript first, as tsc and tsx resolve: a project that compiles in
+    /// place, or keeps generated `.js` beside its sources, must run the
+    /// sources rather than stale output (issue #840).
+    Source,
+}
+
+fn resolver_for_conditions(
+    base: &Resolver,
+    conditions: &[String],
+    order: ExtensionOrder,
+) -> Arc<Resolver> {
     let mut resolvers = CONDITION_RESOLVERS.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some((_, resolver)) = resolvers.iter().find(|(names, _)| names == conditions) {
+    if let Some((.., resolver)) =
+        resolvers.iter().find(|(names, o, _)| names == conditions && *o == order)
+    {
         return Arc::clone(resolver);
     }
-    let resolver = Arc::new(base.clone_with_options(ResolveOptions {
-        condition_names: conditions.to_vec(),
-        ..base.options().clone()
-    }));
-    resolvers.push((conditions.to_vec(), Arc::clone(&resolver)));
+    let options = ResolveOptions { condition_names: conditions.to_vec(), ..base.options().clone() };
+    let options = match order {
+        ExtensionOrder::Package => options,
+        ExtensionOrder::Source => source_order(options),
+    };
+    let resolver = Arc::new(base.clone_with_options(options));
+    resolvers.push((conditions.to_vec(), order, Arc::clone(&resolver)));
     resolver
+}
+
+/// Extensions [`ExtensionOrder::Source`] tries ahead of where
+/// [`ExtensionOrder::Package`] tries them.
+const SOURCE_FIRST_EXTENSIONS: [&str; 5] = ["ts", "tsx", "mts", "cts", "jsx"];
+
+/// The base options with TypeScript tried before JavaScript, in the `.js`,
+/// `.mjs` and `.cjs` aliases and in the extensions an extensionless specifier
+/// tries, and `.jsx` as a `.js` alias target the way tsc maps it.
+fn source_order(options: ResolveOptions) -> ResolveOptions {
+    let owned = |extensions: &[&str]| extensions.iter().map(|ext| (*ext).to_owned()).collect();
+    ResolveOptions {
+        extension_alias: vec![
+            (".js".to_owned(), owned(&[".ts", ".tsx", ".js", ".jsx"])),
+            (".mjs".to_owned(), owned(&[".mts", ".mjs"])),
+            (".cjs".to_owned(), owned(&[".cts", ".cjs"])),
+        ],
+        extensions: owned(&[
+            ".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs", ".cts", ".cjs", ".json", ".wasm", ".node",
+        ]),
+        ..options
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1738,8 +1783,6 @@ pub fn create_resolve<'env>(
 
     let (base_resolver, tsconfig_source) =
         RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone()));
-    let resolver = resolver_for_conditions(base_resolver, &context.conditions);
-    let resolver = resolver.as_ref();
 
     // A `file:` URL is an absolute path in every form Node.js hands over,
     // UNC `file://server/…` included. Schemes are case-insensitive, so
@@ -1762,6 +1805,18 @@ pub fn create_resolve<'env>(
             None => None,
         };
     let parent_file = parent_file.as_deref();
+
+    // An importer inside `node_modules` keeps the package order; the entry point
+    // and every file outside it resolve TypeScript first.
+    let in_node_modules =
+        |path: &Path| path.to_str().is_some_and(|path| path.contains(NODE_MODULES_PATH));
+    let order = if parent_file.is_some_and(in_node_modules) {
+        ExtensionOrder::Package
+    } else {
+        ExtensionOrder::Source
+    };
+    let resolver = resolver_for_conditions(base_resolver, &context.conditions, order);
+    let resolver = resolver.as_ref();
 
     let directory = match parent_file {
         Some(parent_file) => parent_file
@@ -1817,36 +1872,63 @@ pub fn create_resolve<'env>(
         Some((Cow::Borrowed(directory), Cow::Borrowed(specifier.as_str())))
     };
 
-    let resolution = match (request, is_absolute_path, tsconfig_source, parent_file) {
-        // The fallback below hands the specifier to Node's own resolution,
-        // which reads the URL exactly or raises Node's own error.
-        (None, ..) => Err(ResolveError::NotFound(specifier.clone())),
-        (Some((directory, resolver_specifier)), true, ..) => {
-            resolver.resolve(&directory, &resolver_specifier)
-        }
-        // `Resolver::resolve` only ever consults a *manually* configured tsconfig,
-        // so under `TsconfigDiscovery::Auto` it would silently ignore `paths` and
-        // `baseUrl`. The obvious alternative, `resolve_file`, rediscovers the
-        // config itself, which would bypass `for_path` — losing both its
-        // JavaScript probe and its "a broken ancestor config means no config"
-        // error handling. `resolve_with_context` is the API that takes an
-        // already-resolved config, so the importer's config is worked out once,
-        // in one place, and handed straight to the resolver. The entry-point
-        // case (no parent URL, only a working directory) has no file to discover
-        // from and still goes through `resolve`.
-        (Some((directory, resolver_specifier)), false, TsconfigSource::Auto, Some(parent_file)) => {
-            let tsconfig = tsconfig_source.for_importer(resolver, parent_file, &specifier);
-            resolver.resolve_with_context(
-                &directory,
-                &resolver_specifier,
-                tsconfig.as_deref(),
-                &mut ResolverContext::default(),
-            )
-        }
-        (Some((directory, resolver_specifier)), ..) => {
-            resolver.resolve(&directory, &resolver_specifier)
-        }
-    };
+    let resolve =
+        |resolver: &Resolver| match (&request, is_absolute_path, tsconfig_source, parent_file) {
+            // The fallback below hands the specifier to Node's own resolution,
+            // which reads the URL exactly or raises Node's own error.
+            (None, ..) => Err(ResolveError::NotFound(specifier.clone())),
+            (Some((directory, resolver_specifier)), true, ..) => {
+                resolver.resolve(directory, resolver_specifier)
+            }
+            // `Resolver::resolve` only ever consults a *manually* configured tsconfig,
+            // so under `TsconfigDiscovery::Auto` it would silently ignore `paths` and
+            // `baseUrl`. The obvious alternative, `resolve_file`, rediscovers the
+            // config itself, which would bypass `for_path` — losing both its
+            // JavaScript probe and its "a broken ancestor config means no config"
+            // error handling. `resolve_with_context` is the API that takes an
+            // already-resolved config, so the importer's config is worked out once,
+            // in one place, and handed straight to the resolver. The entry-point
+            // case (no parent URL, only a working directory) has no file to discover
+            // from and still goes through `resolve`.
+            (
+                Some((directory, resolver_specifier)),
+                false,
+                TsconfigSource::Auto,
+                Some(parent_file),
+            ) => {
+                let tsconfig = tsconfig_source.for_importer(resolver, parent_file, &specifier);
+                resolver.resolve_with_context(
+                    directory,
+                    resolver_specifier,
+                    tsconfig.as_deref(),
+                    &mut ResolverContext::default(),
+                )
+            }
+            (Some((directory, resolver_specifier)), ..) => {
+                resolver.resolve(directory, resolver_specifier)
+            }
+        };
+    let mut resolution = resolve(resolver);
+    // TypeScript first is for the project's own files. A package that ships its
+    // `.ts` (or `.jsx`) sources beside the compiled `.js` is still run from what
+    // it compiled, as it is when the package imports itself. The two orders can
+    // only disagree when the source order lands on an extension it tries ahead
+    // of the package order — every other result means the files tried before it
+    // are absent, so the package order picks it too — and only then is the
+    // request resolved again.
+    if order == ExtensionOrder::Source
+        && let Ok(resolved) = &resolution
+        && in_node_modules(resolved.path())
+        && resolved
+            .path()
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| SOURCE_FIRST_EXTENSIONS.contains(&ext))
+    {
+        let package_resolver =
+            resolver_for_conditions(base_resolver, &context.conditions, ExtensionOrder::Package);
+        resolution = resolve(&package_resolver);
+    }
 
     // JSON modules, resolved with oxc-node's own resolver so that tsconfig `paths`, package
     // `exports` and conditions apply to them like they do to everything else. Deciding this
@@ -2857,6 +2939,23 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    // Issue #840: outside `node_modules`, TypeScript resolves before JavaScript
+    // and `.js` reaches `.jsx`, as tsc resolves.
+    #[test]
+    fn source_order_tries_typescript_first() {
+        let options = source_order(ResolveOptions::default());
+        let alias = |ext: &str| {
+            options.extension_alias.iter().find(|(from, _)| from == ext).map(|(_, to)| to.clone())
+        };
+        assert_eq!(alias(".js").unwrap(), [".ts", ".tsx", ".js", ".jsx"]);
+        assert_eq!(alias(".mjs").unwrap(), [".mts", ".mjs"]);
+        assert_eq!(alias(".cjs").unwrap(), [".cts", ".cjs"]);
+        let position = |ext: &str| options.extensions.iter().position(|e| e == ext).unwrap();
+        assert!(position(".ts") < position(".js"));
+        assert!(position(".tsx") < position(".js"));
+        assert!(position(".js") < position(".jsx"));
+    }
 
     // Issue #839: a diagnostic names the file, line and column and shows the
     // offending line, rather than only its message.
