@@ -59,6 +59,11 @@ test("data: URL imports load with the format of their MIME type", () => {
   });
   expect(result.error, result.error?.message).toBeFalsy();
   expect(result.status, result.stderr).toBe(0);
-  // `text/plain` has no module format, in plain Node.js too.
-  expect(result.stdout).toBe("9 7 3 1 ERR_UNKNOWN_MODULE_FORMAT\n");
+  // `text/plain` has no module format, in plain Node.js too. Which error says so
+  // is Node.js' business: with any `registerHooks()` load hook in the chain —
+  // a pass-through one included — it rejects its own `null` format as
+  // `ERR_INVALID_RETURN_PROPERTY_VALUE` before `ERR_UNKNOWN_MODULE_FORMAT`.
+  expect(result.stdout).toMatch(
+    /^9 7 3 1 (ERR_UNKNOWN_MODULE_FORMAT|ERR_INVALID_RETURN_PROPERTY_VALUE)\n$/,
+  );
 });
