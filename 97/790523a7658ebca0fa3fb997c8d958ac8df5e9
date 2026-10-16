@@ -1,0 +1,21 @@
+packages/integrate-vitest/__tests__/diagnostics.spec.ts
+  s_5b25d6ae40e975::t_3906ecf350f50a 88-96
+src/lib.rs
+  s_5b25d6ae40e975::t_66d53a331728e3 2661-2664,2675,2678-2692,2699-2740,2874-2891
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "97790523a7658ebca0fa3fb997c8d958ac8df5e9",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
