@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     env, fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::{
         Arc, LazyLock, Mutex, OnceLock, PoisonError,
         atomic::{AtomicBool, Ordering},
@@ -288,7 +288,22 @@ impl TsconfigSource {
     /// inside `node_modules`. A broken config somewhere up the tree is reported
     /// as an error; treat that as "no config" so that one bad ancestor cannot
     /// break every transform and every resolution below it.
+    ///
+    /// `find_tsconfig` also parses its argument as a specifier, so a `#` in
+    /// the path would cut it short (`/p#1/src/main.tsx` reads as `/p`) and
+    /// discovery would walk up from a directory nobody has. The resolver's
+    /// `\0#` escape keeps the hash a file-name character. It is only applied
+    /// to ASCII paths without `?`: the resolver drops the escape byte by byte,
+    /// mangling multi-byte characters, and `?` has no escape at all.
     fn discover(resolver: &Resolver, path: &Path) -> Option<Arc<TsConfig>> {
+        let escaped;
+        let path = match path.to_str() {
+            Some(text) if text.contains('#') && text.is_ascii() && !text.contains('?') => {
+                escaped = PathBuf::from(text.replace('#', "\u{0}#"));
+                escaped.as_path()
+            }
+            _ => path,
+        };
         match resolver.find_tsconfig(path) {
             Ok(tsconfig) => tsconfig,
             Err(err) => {
@@ -796,11 +811,21 @@ mod windows_file_url;
 /// past the project and finds nothing, and relative specifiers resolve against
 /// a directory that does not exist.
 ///
+/// The `?query` and `#fragment` are not part of the path and are dropped
+/// before decoding, the way `fileURLToPath` reads only the pathname: an
+/// encoded `%23` or `%3F` is a file-name character, a raw `#` or `?` is not.
+///
 /// Returns `None` if `url` is not a `file://` URL, or if its escapes do not
 /// decode to valid UTF-8.
 #[cfg(not(windows))]
 fn file_url_to_path(url: &str) -> Option<PathBuf> {
-    let path = url.strip_prefix(PATH_PREFIX)?;
+    let path = url_path(url.strip_prefix(PATH_PREFIX)?);
+    decode_url_path(path).map(|path| PathBuf::from(path.into_owned()))
+}
+
+/// Percent-decode a URL pathname, validating the decoded bytes as UTF-8.
+/// Returns `None` if the escapes do not decode to valid UTF-8.
+fn decode_url_path(path: &str) -> Option<Cow<'_, str>> {
     let bytes = path.as_bytes();
 
     // Two vectorised passes carry this function, and the byte loop only ever
@@ -811,7 +836,7 @@ fn file_url_to_path(url: &str) -> Option<PathBuf> {
     // all, and for those this single scan is the whole function: no allocation,
     // no copy, no decode loop.
     let Some(mut index) = memchr::memchr(b'%', bytes) else {
-        return Some(PathBuf::from(path));
+        return Some(Cow::Borrowed(path));
     };
 
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -842,7 +867,7 @@ fn file_url_to_path(url: &str) -> Option<PathBuf> {
     //
     // The decoded bytes are arbitrary, so they still need validating. This is
     // the second vectorised pass, and it is where escape-heavy paths win most.
-    simdutf8::basic::from_utf8(&decoded).ok().map(PathBuf::from)
+    simdutf8::basic::from_utf8(&decoded).ok().map(|text| Cow::Owned(text.to_owned()))
 }
 
 fn hex_digit(byte: u8) -> Option<u8> {
@@ -852,6 +877,104 @@ fn hex_digit(byte: u8) -> Option<u8> {
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
     }
+}
+
+/// Whether a URL pathname holds an encoded path separator (`%2F` or `%5C`,
+/// either case). Node refuses such a specifier with
+/// `ERR_INVALID_MODULE_SPECIFIER` rather than decoding it into a separator
+/// and loading a file from a subdirectory, so oxc-node leaves it to Node.
+fn has_encoded_separator(pathname: &str) -> bool {
+    pathname.as_bytes().windows(3).any(|window| {
+        window[0] == b'%'
+            && (window[1] == b'2' && window[2].eq_ignore_ascii_case(&b'f')
+                || window[1] == b'5' && window[2].eq_ignore_ascii_case(&b'c'))
+    })
+}
+
+/// The resolver request — the directory to resolve from and the specifier —
+/// for the decoded pathname `path` of a URL reference, taken relative to
+/// `base`, and the raw `?query` / `#fragment` that followed it. Returns
+/// `None` when the resolver cannot be asked for the file exactly and Node's
+/// own resolution has to answer.
+///
+/// The resolver parses its specifier for a query and fragment. A decoded `#`
+/// would be parsed as a fragment and a same-named prefix file would win (`a`
+/// over `a#b.ts`), so it is escaped with the resolver's enhanced-resolve
+/// escape (`\0#`) and stays a file-name character. The raw suffix is
+/// re-attached verbatim, where it stays module identity.
+///
+/// Two characters cannot go through the specifier as they are: a `?` (only
+/// legal in POSIX file names), for which the resolver has no escape, and a
+/// `#` in a path that is not ASCII, because oxc_resolver removes the escape
+/// byte by byte and mangles every multi-byte character (`õ` turns into
+/// `Ãµ`). The directory the resolver starts from is a path and is never
+/// parsed, so such a path is resolved as its file name from its directory;
+/// only a file name that holds one of those itself is left to Node.
+fn resolver_request<'a>(
+    base: &'a Path,
+    path: &str,
+    suffix: &str,
+) -> Option<(Cow<'a, Path>, Cow<'static, str>)> {
+    fn exact(path: &str) -> bool {
+        !path.contains('?') && (path.is_ascii() || !path.contains('#'))
+    }
+    fn escaped(path: &str, suffix: &str) -> String {
+        let mut specifier = path.replace('#', "\u{0}#");
+        specifier.push_str(suffix);
+        specifier
+    }
+    if exact(path) {
+        return Some((Cow::Borrowed(base), Cow::Owned(escaped(path, suffix))));
+    }
+    // Normalized lexically, as the URL parser resolves `.` and `..`.
+    let mut full = PathBuf::new();
+    for component in base.join(path).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                full.pop();
+            }
+            component => full.push(component),
+        }
+    }
+    let name = full.file_name()?.to_str()?;
+    if !exact(name) {
+        return None;
+    }
+    let specifier = escaped(&format!("./{name}"), suffix);
+    Some((Cow::Owned(full.parent()?.to_path_buf()), Cow::Owned(specifier)))
+}
+
+/// Percent-encode a filesystem path for the path of a `file:` URL, with the
+/// encode set `pathToFileURL` uses: C0 controls, space, `"` `#` `%` `<` `>`
+/// `?` `[` `\` `]` `^` `` ` `` `{` `|` `}` `~`, DEL and every non-ASCII byte
+/// become `%XX` with uppercase hex; everything else, `/` and `:` included,
+/// stays literal (issue #837). Left raw, a `#` or `?` in a file name starts
+/// the URL's fragment or query and a `%` reads as an escape, so Node loads a
+/// different file. Matching Node exactly, rather than merely encoding enough,
+/// keeps the URL identical to the one Node computes for the same file —
+/// under `--preserve-symlinks` that URL is the module cache key.
+fn encode_file_url_path(path: &str) -> Cow<'_, str> {
+    fn encoded(byte: u8) -> bool {
+        matches!(byte,
+            0x00..=0x20 | b'"' | b'#' | b'%' | b'<' | b'>' | b'?' | b'[' | b'\\' | b']' | b'^'
+                | b'`' | b'{' | b'|' | b'}' | b'~' | 0x7f..)
+    }
+    if !path.bytes().any(encoded) {
+        return Cow::Borrowed(path);
+    }
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut url = String::with_capacity(path.len() + 16);
+    for byte in path.bytes() {
+        if encoded(byte) {
+            url.push('%');
+            url.push(HEX[usize::from(byte >> 4)] as char);
+            url.push(HEX[usize::from(byte & 0xf)] as char);
+        } else {
+            url.push(byte as char);
+        }
+    }
+    Cow::Owned(url)
 }
 
 // Idempotent (`init` uses `try_init`), so it doubles as the embedder hook
@@ -1632,32 +1755,54 @@ pub fn create_resolve<'env>(
     };
     tracing::debug!(directory = ?directory);
 
-    let resolution = match (is_absolute_path, tsconfig_source, parent_file) {
-        (true, ..) => {
+    // What the resolver is asked for — the directory to resolve from and the
+    // specifier — or `None` when it cannot be asked exactly and Node's own
+    // resolution has to answer. A file URL — and, in ESM, a relative or
+    // absolute-path specifier — is a URL reference: its pathname is
+    // percent-encoded (`./dep%23x.ts` names `dep#x.ts`) and a raw `?` or `#`
+    // starts its query or fragment (issue #837). The resolver reads
+    // specifiers as paths, so the pathname is decoded here and its characters
+    // escaped. An encoded separator is never decoded: Node rejects it.
+    let request = if is_absolute_path {
+        let pathname = url_path(file_specifier);
+        if has_encoded_separator(pathname) {
+            None
+        } else {
             let specifier_path = file_url_to_path(file_specifier)
                 .ok_or_else(|| Error::new(Status::GenericFailure, "Specifier is not a file URL"))?;
-            // The path is fully decoded, so a literal `#` in a file name would
-            // be parsed as a fragment here and a same-named prefix file would
-            // win (`a` over `a#b.ts`); the resolver's enhanced-resolve escape
-            // keeps the hash a filename character. The query/fragment are not
-            // part of the path — `file_url_to_path` drops them — so re-attach
-            // the raw suffix afterwards, where it stays module identity.
-            #[cfg(windows)]
-            {
-                let escaped = specifier_path.to_string_lossy().replace('#', "\u{0}#");
-                match file_specifier.find(['?', '#']) {
-                    Some(index) => {
-                        let mut with_suffix = escaped;
-                        with_suffix.push_str(&file_specifier[index..]);
-                        resolver.resolve(Path::new("/"), &with_suffix)
-                    }
-                    None => resolver.resolve(Path::new("/"), &escaped),
+            resolver_request(
+                Path::new("/"),
+                &specifier_path.to_string_lossy(),
+                &file_specifier[pathname.len()..],
+            )
+        }
+    } else if (specifier.starts_with("./")
+        || specifier.starts_with("../")
+        || specifier.starts_with('/'))
+        && url_path(&specifier).contains('%')
+    {
+        let pathname = url_path(&specifier);
+        if has_encoded_separator(pathname) {
+            None
+        } else {
+            match decode_url_path(pathname) {
+                Some(decoded) => {
+                    resolver_request(directory, &decoded, &specifier[pathname.len()..])
                 }
+                // Escapes that do not decode to UTF-8 stay as written.
+                None => Some((Cow::Borrowed(directory), Cow::Borrowed(specifier.as_str()))),
             }
-            #[cfg(not(windows))]
-            {
-                resolver.resolve(Path::new("/"), &specifier_path.to_string_lossy())
-            }
+        }
+    } else {
+        Some((Cow::Borrowed(directory), Cow::Borrowed(specifier.as_str())))
+    };
+
+    let resolution = match (request, is_absolute_path, tsconfig_source, parent_file) {
+        // The fallback below hands the specifier to Node's own resolution,
+        // which reads the URL exactly or raises Node's own error.
+        (None, ..) => Err(ResolveError::NotFound(specifier.clone())),
+        (Some((directory, resolver_specifier)), true, ..) => {
+            resolver.resolve(&directory, &resolver_specifier)
         }
         // `Resolver::resolve` only ever consults a *manually* configured tsconfig,
         // so under `TsconfigDiscovery::Auto` it would silently ignore `paths` and
@@ -1669,16 +1814,18 @@ pub fn create_resolve<'env>(
         // in one place, and handed straight to the resolver. The entry-point
         // case (no parent URL, only a working directory) has no file to discover
         // from and still goes through `resolve`.
-        (false, TsconfigSource::Auto, Some(parent_file)) => {
+        (Some((directory, resolver_specifier)), false, TsconfigSource::Auto, Some(parent_file)) => {
             let tsconfig = tsconfig_source.for_importer(resolver, parent_file, &specifier);
             resolver.resolve_with_context(
-                directory,
-                &specifier,
+                &directory,
+                &resolver_specifier,
                 tsconfig.as_deref(),
                 &mut ResolverContext::default(),
             )
         }
-        _ => resolver.resolve(directory, &specifier),
+        (Some((directory, resolver_specifier)), ..) => {
+            resolver.resolve(&directory, &resolver_specifier)
+        }
     };
 
     // JSON modules, resolved with oxc-node's own resolver so that tsconfig `paths`, package
@@ -2578,30 +2725,28 @@ fn url_path(url: &str) -> &str {
     &url[..end]
 }
 
-#[cfg(not(windows))]
+/// The `file:` URL for a resolution: the percent-encoded path, then the
+/// query and fragment verbatim — they are module identity (`./mod.ts?v=1`),
+/// not file-name characters, and encoding them would name another file.
+/// Both already carry their leading `?` / `#`.
 fn oxc_resolved_path_to_url(resolution: &Resolution) -> String {
-    if resolution.query().is_some() || resolution.fragment().is_some() {
-        format!("{PATH_PREFIX}{}", resolution.full_path().to_string_lossy())
-    } else {
-        format!("{PATH_PREFIX}{}", resolution.path().to_string_lossy())
-    }
+    file_url_with_suffix(
+        &resolution.path().to_string_lossy(),
+        resolution.query(),
+        resolution.fragment(),
+    )
 }
 
-#[cfg(windows)]
-fn oxc_resolved_path_to_url(resolution: &Resolution) -> String {
-    // The path goes through `path_to_file_url` on its own: its percent-encode
-    // set differs from the raw query and fragment, which must be appended
-    // verbatim or a `?`/`#` inside the path would be misparsed.
-    let mut url = path_to_file_url(&resolution.path().to_string_lossy());
-    if let Some(query) = resolution.query() {
-        url.push('?');
-        url.push_str(query);
-    }
-    if let Some(fragment) = resolution.fragment() {
-        url.push('#');
-        url.push_str(fragment);
-    }
+fn file_url_with_suffix(path: &str, query: Option<&str>, fragment: Option<&str>) -> String {
+    let mut url = path_to_file_url(path);
+    url.push_str(query.unwrap_or_default());
+    url.push_str(fragment.unwrap_or_default());
     url
+}
+
+#[cfg(not(windows))]
+fn path_to_file_url(path: &str) -> String {
+    format!("{PATH_PREFIX}{}", encode_file_url_path(path))
 }
 
 #[cfg(windows)]
@@ -2667,5 +2812,86 @@ mod tests {
     fn non_windows_behavior_is_unchanged() {
         assert_eq!(file_url_to_path("file:///a/b.ts"), Some(PathBuf::from("/a/b.ts")));
         assert_eq!(file_url_to_path("file:///a%20b.ts"), Some(PathBuf::from("/a b.ts")));
+    }
+
+    // Expected strings below are what Node's `pathToFileURL` writes for the
+    // same path (issue #837).
+    #[test]
+    fn file_url_path_encoding_matches_path_to_file_url() {
+        assert_eq!(encode_file_url_path("/x/main.ts"), "/x/main.ts");
+        assert_eq!(encode_file_url_path("/x/main#hash.ts"), "/x/main%23hash.ts");
+        assert_eq!(encode_file_url_path("/x/main%41.ts"), "/x/main%2541.ts");
+        assert_eq!(encode_file_url_path("/x/main?q.ts"), "/x/main%3Fq.ts");
+        assert_eq!(encode_file_url_path("/x/main space.ts"), "/x/main%20space.ts");
+        assert_eq!(encode_file_url_path("/x/é~[]^|"), "/x/%C3%A9%7E%5B%5D%5E%7C");
+        assert_eq!(encode_file_url_path("/x/\"\t\u{7f}`{}<>"), "/x/%22%09%7F%60%7B%7D%3C%3E");
+        // Sub-delimiters, `:` and `@` stay literal, as Node keeps them.
+        assert_eq!(encode_file_url_path("/x/a(1)!$&'*+,;=:@.ts"), "/x/a(1)!$&'*+,;=:@.ts");
+    }
+
+    #[test]
+    fn resolved_suffix_is_appended_verbatim() {
+        // The resolver's query and fragment carry their own `?` / `#`, and
+        // must not be encoded or doubled.
+        #[cfg(not(windows))]
+        let path = "/x/a#b/mod.ts";
+        #[cfg(windows)]
+        let path = "C:\\x\\a#b\\mod.ts";
+        let url = file_url_with_suffix(path, Some("?v=1"), Some("#x"));
+        assert!(url.starts_with("file:///"), "{url}");
+        assert!(url.ends_with("/x/a%23b/mod.ts?v=1#x"), "{url}");
+        assert!(file_url_with_suffix(path, None, None).ends_with("/x/a%23b/mod.ts"));
+    }
+
+    #[test]
+    fn encoded_separators_are_detected() {
+        for pathname in ["./a%2Fb.ts", "./a%2fb.ts", "./a%5Cb.ts", "./a%5cb", "/x/%2F"] {
+            assert!(has_encoded_separator(pathname), "{pathname}");
+        }
+        for pathname in ["./a%23b.ts", "./a%25 2F.ts", "./a%2", "./a%5", "./a/b.ts"] {
+            assert!(!has_encoded_separator(pathname), "{pathname}");
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn resolver_request_keeps_hash_and_question_mark_file_name_characters() {
+        let base = Path::new("/base");
+        let request = |path: &str, suffix: &str| {
+            resolver_request(base, path, suffix)
+                .map(|(directory, specifier)| (directory.into_owned(), specifier.into_owned()))
+        };
+        // Plain and ASCII paths go through the specifier, `#` escaped.
+        assert_eq!(request("./a.ts", ""), Some((base.into(), "./a.ts".into())));
+        assert_eq!(request("/x/a#b.ts", "?v=1"), Some((base.into(), "/x/a\u{0}#b.ts?v=1".into())));
+        assert_eq!(request("./é.ts", "#f"), Some((base.into(), "./é.ts#f".into())));
+        // A `?` or a `#` beside non-ASCII text is kept in the directory.
+        assert_eq!(
+            request("/x/d?x/m.tsx", "?v=1"),
+            Some((PathBuf::from("/x/d?x"), "./m.tsx?v=1".into()))
+        );
+        assert_eq!(
+            request("./p#õ/../q#õ/a#b.ts", ""),
+            Some((PathBuf::from("/base/q#õ"), "./a\u{0}#b.ts".into()))
+        );
+        // Unless the file name itself holds one.
+        assert_eq!(request("/x/w?.tsx", ""), None);
+        assert_eq!(request("/x/é#x.ts", ""), None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn posix_file_url_round_trips() {
+        for path in ["/x/main#hash.ts", "/x/main%41.ts", "/x/main%file.ts", "/x/hash#dir/main.ts"] {
+            let url = path_to_file_url(path);
+            assert_eq!(file_url_to_path(&url), Some(PathBuf::from(path)), "{url}");
+        }
+        assert_eq!(path_to_file_url("/x/main#hash.ts"), "file:///x/main%23hash.ts");
+        // The query and fragment are not part of the path.
+        assert_eq!(
+            file_url_to_path("file:///x/main%23hash.ts?v=a/b#c"),
+            Some(PathBuf::from("/x/main#hash.ts"))
+        );
+        assert_eq!(file_url_to_path("file:///x/q%3Fx.ts"), Some(PathBuf::from("/x/q?x.ts")));
     }
 }
