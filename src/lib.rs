@@ -344,10 +344,9 @@ impl TsconfigSource {
     /// The walk passed every candidate below the directory it stopped in: the
     /// one holding the config it returned or failed on, or none at all when no
     /// config claims the file. A config resolved through a project reference
-    /// does not say which ancestor referenced it, nor does an error such as a
-    /// missing `extends` target name the config that failed, so then the scan
-    /// stops at the first config it can read, which may report fewer than were
-    /// skipped but never one the walk did not reach. The outcome depends on the file, as
+    /// does not say which ancestor referenced it, so then the scan stops at the
+    /// first config it can read, which may report fewer than were skipped but
+    /// never one the walk did not reach. The outcome depends on the file, as
     /// ownership does, so each file is scanned once.
     fn warn_skipped_unreadable(
         resolver: &Resolver,
@@ -371,17 +370,38 @@ impl TsconfigSource {
         if !SCANNED.lock().unwrap_or_else(PoisonError::into_inner).insert(path.to_path_buf()) {
             return;
         }
-        // Without a stop in the chain, only the first config the scan can use
-        // or fails on is certainly reached: the walk may have stopped there.
-        let conservative = stop.is_none() && !matches!(found, Ok(None));
+        // A config found through a reference leaves no stop in the chain, and
+        // then only the first config the scan can use is certainly reached.
+        let conservative = stop.is_none() && matches!(found, Ok(Some(_)));
         for dir in directory.ancestors() {
             if Some(dir) == stop {
                 return;
             }
             let candidate = dir.join("tsconfig.json");
-            if !candidate.is_file() {
-                continue;
+            match fs::metadata(&candidate) {
+                Ok(metadata) if metadata.is_file() => {}
+                Ok(_) => continue,
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                    ) =>
+                {
+                    continue;
+                }
+                // The resolver takes a failed lookup for "not a file" and walks on,
+                // so this, too, is a config it skipped.
+                Err(err) => {
+                    warn_unreadable(&ResolveError::TsconfigLoadFailed {
+                        path: candidate,
+                        source: Box::new(ResolveError::from(err)),
+                    });
+                    continue;
+                }
             }
+            // A config that fails to load for any other reason is where a failed
+            // walk stopped, and every config below it that loads did not claim the
+            // file, or the walk would have stopped there instead.
             match resolver.resolve_tsconfig(&candidate) {
                 Err(err) if is_io_failure(&err) => warn_unreadable(&err),
                 Ok(_) if !conservative => {}

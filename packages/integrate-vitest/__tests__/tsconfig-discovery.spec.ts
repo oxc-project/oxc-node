@@ -1073,3 +1073,66 @@ test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+// The resolver takes a `tsconfig.json` whose metadata cannot be read, here a
+// symlink into a directory that may not be searched, for "not a file" and
+// walks on; that is a skipped config too.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "a tsconfig symlinked into an unsearchable directory is reported as skipped",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["lib/*"] } },
+      }),
+      "lib/x.ts": 'export const x = "from lib";\n',
+      "locked/real.json": "{}",
+      "sub/entry.ts": 'import { x } from "@lib/x.ts";\nconsole.log(x);\n',
+    });
+    symlinkSync(join(root, "locked", "real.json"), join(root, "sub", "tsconfig.json"));
+    chmodSync(join(root, "locked"), 0o000);
+    try {
+      const ran = runWithHooks(join(root, "sub"), "./entry.ts");
+      expect(ran.stderr, "the unreachable config must be reported once").toMatch(
+        warning(join(root, "sub", "tsconfig.json"), "skipping it"),
+      );
+      expect(ran.stdout.trim(), "discovery walks on to the root config").toBe("from lib");
+    } finally {
+      chmodSync(join(root, "locked"), 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+// A failed lookup stops at the config that failed; a readable config below it
+// that does not claim the file was walked past, and so was the unreadable one
+// between them.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an unreadable tsconfig between a non-owning config and a failing one is reported",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "tsconfig.json": JSON.stringify({ references: [{ path: "./missing" }] }),
+      "mid/tsconfig.json": "{}",
+      "mid/sub/tsconfig.json": JSON.stringify({ include: ["other"] }),
+      "mid/sub/entry.ts": 'console.log("ran");\n',
+    });
+    chmodSync(join(root, "mid", "tsconfig.json"), 0o000);
+    try {
+      const ran = runWithHooks(join(root, "mid", "sub"), "./entry.ts");
+      expect(ran.stderr, "the skipped config must be reported").toMatch(
+        new RegExp(
+          `^oxc-node: warning: failed to read the tsconfig (/private)?${escapeRegExp(join(root, "mid", "tsconfig.json"))}: [^\\n]+; skipping it$`,
+          "m",
+        ),
+      );
+      expect(ran.stderr, "so must the missing reference").toContain(
+        "which a tsconfig extends or references, does not exist; ignoring it",
+      );
+      expect(ran.stdout.trim(), "the run goes on without a config").toBe("ran");
+    } finally {
+      chmodSync(join(root, "mid", "tsconfig.json"), 0o644);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
