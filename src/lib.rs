@@ -2919,7 +2919,7 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
         (None, _) => Some(TsconfigDiscovery::Auto),
     };
 
-    let resolver = Resolver::new(ResolveOptions {
+    let mut resolver = Resolver::new(ResolveOptions {
         tsconfig,
         extension_alias: vec![
             (".js".to_owned(), vec![".js".to_owned(), ".ts".to_owned(), ".tsx".to_owned()]),
@@ -2955,6 +2955,13 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
                         describe_tsconfig_error(&err)
                     ));
                 }
+                // `Resolver::resolve` loads the manual config on every call, so
+                // keeping it would fail every resolution rather than run without
+                // it.
+                resolver = resolver.clone_with_options(ResolveOptions {
+                    tsconfig: None,
+                    ..resolver.options().clone()
+                });
                 None
             }
         }),

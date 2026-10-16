@@ -884,7 +884,9 @@ test("an explicit tsconfig that cannot be parsed is reported", () => {
   const root = createProject({
     "package.json": JSON.stringify({ type: "module" }),
     "broken.json": "{ not json",
-    "entry.ts": 'console.log("ran");\n',
+    "a.ts": 'export const a = "ran";\n',
+    // `./a.js` -> `a.ts` needs oxc-node's own resolver, which must still work.
+    "entry.ts": 'import { a } from "./a.js";\nconsole.log(a);\n',
   });
   try {
     const ran = runWithHooks(root, "./entry.ts", { TS_NODE_PROJECT: join(root, "broken.json") });
