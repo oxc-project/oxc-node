@@ -1,0 +1,21 @@
+packages/integrate-vitest/__tests__/data-urls.spec.ts
+  s_5b25d6ae40e975::t_8bca3c2a990885 1-64
+src/lib.rs
+  s_5b25d6ae40e975::t_e0455bf3085728 1768-1770,1773
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "6846e09a2bf0546f4b961efcd85cbf466ac1d44b",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
