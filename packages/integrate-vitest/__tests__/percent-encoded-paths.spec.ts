@@ -178,6 +178,22 @@ describe("percent-encoded resolved URLs (issue #837)", () => {
     expect(run(root, "./entry.ts")).toBe("ERR_INVALID_FILE_URL_HOST\n");
   });
 
+  // `\` is not a legal Windows file-name character, and is a separator there.
+  test.skipIf(isWindows)("a backslash in a specifier is a separator, as in Node", () => {
+    // The URL parser reads `\` as `/`; the resolver would pick the file
+    // literally named `dir\foo bar.ts`, whose URL Node then rejects.
+    const root = fixture({
+      "dir/foo bar.ts": OK,
+      "dir\\foo bar.ts": WRONG,
+      "dir/plain.ts": OK,
+      "dir\\plain.ts": WRONG,
+      "entry.ts": 'await import("./dir\\\\foo%20bar.ts");\nawait import("./dir\\\\plain.ts");\n',
+    });
+    expect(run(root, "./entry.ts")).toBe(
+      `OK ${urlOf(root, "dir/foo bar.ts")}\nOK ${urlOf(root, "dir/plain.ts")}\n`,
+    );
+  });
+
   test("a # beside non-ASCII text still resolves through oxc-node", () => {
     // oxc_resolver drops its `\0#` escape byte by byte and used to mangle
     // `õ`, so `.tsx` and extensionless imports fell back to Node and failed.

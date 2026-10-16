@@ -820,7 +820,10 @@ mod windows_file_url;
 #[cfg(not(windows))]
 fn file_url_to_path(url: &str) -> Option<PathBuf> {
     let path = url_path(url.strip_prefix(PATH_PREFIX)?);
-    decode_url_path(path).map(|path| PathBuf::from(path.into_owned()))
+    // The URL parser reads a raw `\` as `/`, as it does in every special URL.
+    let path =
+        if path.contains('\\') { Cow::Owned(path.replace('\\', "/")) } else { Cow::Borrowed(path) };
+    decode_url_path(&path).map(|path| PathBuf::from(path.into_owned()))
 }
 
 /// Percent-decode a URL pathname, validating the decoded bytes as UTF-8.
@@ -1792,16 +1795,19 @@ pub fn create_resolve<'env>(
         || specifier.starts_with("../")
         // `//host/…` is a network-path reference whose first segment is the
         // file URL's host, not a directory: Node's URL resolver answers it.
-        || specifier.starts_with('/') && !specifier.starts_with("//"))
-        && url_path(&specifier).contains('%')
+        || specifier.starts_with('/') && !matches!(specifier.as_bytes().get(1), Some(b'/' | b'\\')))
+        && url_path(&specifier).contains(['%', '\\'])
     {
         let pathname = url_path(&specifier);
         if has_encoded_separator(pathname) || has_malformed_escape(pathname) {
             None
         } else {
-            // Escapes that do not decode to UTF-8 (`%FF`) are malformed to
-            // Node too.
-            decode_url_path(pathname).and_then(|decoded| {
+            // A raw `\` is a `/` to the URL parser (`./dir\a.ts` names
+            // `dir/a.ts`), while the resolver would read it as a POSIX
+            // file-name character. Escapes that do not decode to UTF-8
+            // (`%FF`) are malformed to Node too.
+            let pathname_slashes = pathname.replace('\\', "/");
+            decode_url_path(&pathname_slashes).and_then(|decoded| {
                 resolver_request(directory, &decoded, &specifier[pathname.len()..])
             })
         }
@@ -2915,5 +2921,9 @@ mod tests {
             Some(PathBuf::from("/x/main#hash.ts"))
         );
         assert_eq!(file_url_to_path("file:///x/q%3Fx.ts"), Some(PathBuf::from("/x/q?x.ts")));
+        // A raw backslash is a separator to the URL parser; an encoded one
+        // is a file-name character.
+        assert_eq!(file_url_to_path("file:///x/d\\a.ts"), Some(PathBuf::from("/x/d/a.ts")));
+        assert_eq!(file_url_to_path("file:///x/d%5Ca.ts"), Some(PathBuf::from("/x/d\\a.ts")));
     }
 }
