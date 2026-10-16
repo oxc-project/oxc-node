@@ -1522,7 +1522,8 @@ fn oxc_transform<S: TryAsStr>(
     // instead and would then run that `require()` in an ES module. Only the caller
     // knows which it is, so let it say.
     let source_type = source_type_from_path(src_path).unwrap_or_default().with_module(is_es_module);
-    let source_str = code.try_as_str()?;
+    let source = code.to_source()?;
+    let source_str = &*source;
     let allow_module_retry = !is_es_module
         && matches!(module_target, Some(Module::Preserve))
         && source_type.is_unambiguous();
@@ -2523,7 +2524,8 @@ fn transform_output(
             }
 
             if is_json {
-                let source_str = output.source.as_ref().unwrap().try_as_str()?;
+                let source = output.source.as_ref().unwrap().to_source()?;
+                let source_str = &*source;
                 let json: serde_json::Value = serde_json::from_str(source_str)?;
                 if let serde_json::Value::Object(obj) = json {
                     let obj_len = obj.len();
@@ -2601,7 +2603,21 @@ fn transform_output(
 }
 
 trait TryAsStr {
+    /// The source as UTF-8, or an error if it is not. For telling source code from
+    /// bytes that are not source at all (a `.node` addon reported as `commonjs`).
     fn try_as_str(&self) -> Result<&str>;
+
+    /// The source as text to transform, decoded the way Node.js decodes a module:
+    /// UTF-8 with every invalid byte sequence replaced by U+FFFD (issue #843).
+    fn to_source(&self) -> Result<Cow<'_, str>>;
+}
+
+/// Decode source bytes as Node.js does, borrowing them when they are valid UTF-8.
+fn decode_source(bytes: &[u8]) -> Cow<'_, str> {
+    match simdutf8::basic::from_utf8(bytes) {
+        Ok(source) => Cow::Borrowed(source),
+        Err(_) => String::from_utf8_lossy(bytes),
+    }
 }
 
 impl TryAsStr for Either<String, &[u8]> {
@@ -2615,6 +2631,13 @@ impl TryAsStr for Either<String, &[u8]> {
                 )
             }),
         }
+    }
+
+    fn to_source(&self) -> Result<Cow<'_, str>> {
+        Ok(match self {
+            Either::A(s) => Cow::Borrowed(s.as_str()),
+            Either::B(b) => decode_source(b),
+        })
     }
 }
 
@@ -2634,6 +2657,14 @@ impl TryAsStr for Either3<String, Uint8Array, Buffer> {
             }),
         }
     }
+
+    fn to_source(&self) -> Result<Cow<'_, str>> {
+        Ok(match self {
+            Either3::A(s) => Cow::Borrowed(s.as_str()),
+            Either3::B(arr) => decode_source(arr),
+            Either3::C(buf) => decode_source(buf),
+        })
+    }
 }
 
 impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
@@ -2646,6 +2677,17 @@ impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
             Either4::C(buf) => std::str::from_utf8(buf).map_err(|_| {
                 Error::new(Status::GenericFailure, "Failed to convert Buffer to Vec<u8>")
             }),
+            Either4::D(_) => {
+                Err(Error::new(Status::InvalidArg, "Invalid value type in LoadFnOutput::source"))
+            }
+        }
+    }
+
+    fn to_source(&self) -> Result<Cow<'_, str>> {
+        match self {
+            Either4::A(s) => Ok(Cow::Borrowed(s.as_str())),
+            Either4::B(arr) => Ok(decode_source(arr)),
+            Either4::C(buf) => Ok(decode_source(buf)),
             Either4::D(_) => {
                 Err(Error::new(Status::InvalidArg, "Invalid value type in LoadFnOutput::source"))
             }
@@ -3021,6 +3063,16 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    // Issue #843: source is decoded as Node.js decodes it, invalid bytes replaced.
+    #[test]
+    fn source_decodes_invalid_utf8_lossily() {
+        assert!(matches!(decode_source(b"const a = 1;"), Cow::Borrowed("const a = 1;")));
+        assert_eq!(decode_source(b"\"caf\xe9\""), "\"caf\u{fffd}\"");
+        assert_eq!(decode_source(b"x\xff\xfey"), "x\u{fffd}\u{fffd}y");
+        // A truncated multi-byte sequence is one replacement, as in `TextDecoder`.
+        assert_eq!(decode_source(b"a\xe2\x82"), "a\u{fffd}");
+    }
 
     // Issue #842: top-level await is what `require()` of an ES module rejects.
     #[test]
