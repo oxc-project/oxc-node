@@ -726,6 +726,51 @@ test("a broken nearest tsconfig means no fallback and the walk stops", () => {
   }
 });
 
+// A malformed nearest config must not stay poisoned for the process:
+// discovery's own cache retries parse failures (`get_or_try_init` caches no
+// error), so a corrected config — still not claiming the importer — must
+// apply its `paths` to the next resolution in the same process.
+test("a malformed nearest tsconfig can be corrected mid-process", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": "{ not json",
+    "src/lib/x.ts": 'export const x = "from lib";\n',
+  });
+  mkdirSync(join(root, "scripts"));
+  writeFileSync(
+    join(root, "scripts", "seed.ts"),
+    `const attempt = async (label) => {
+  try {
+    await import("@lib/x.ts");
+    console.log(label + ":resolved");
+  } catch {
+    console.log(label + ":failed");
+  }
+};
+await attempt("first");
+const { writeFileSync } = await import("node:fs");
+writeFileSync(
+  new URL("../tsconfig.json", import.meta.url),
+  JSON.stringify({
+    compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["src/lib/*"] } },
+    include: ["src"],
+  }),
+);
+await attempt("second");
+`,
+  );
+  try {
+    const ran = runWithHooks(join(root, "scripts"), "./seed.ts");
+    expect(ran.stderr, "both imports are caught; nothing should reach stderr").toBe("");
+    expect(ran.stdout.trim().split("\n"), "a corrected config must be picked up").toEqual([
+      "first:failed",
+      "second:resolved",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // The transform API takes a path and a working directory, and nothing says the
 // path has to be absolute — the sibling `index.spec.ts` passes `"foo.ts"`.
 // Discovery only accepts absolute paths, so a relative one has to be joined

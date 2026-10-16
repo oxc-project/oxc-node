@@ -163,12 +163,25 @@ const JS_EXTENSIONS: [&str; 4] = ["js", "jsx", "mjs", "cjs"];
 /// its ancestor walk would otherwise repeat the same `stat` syscalls for every
 /// edge out of the same directory. Everything around it is already amortized
 /// for the process — oxc_resolver caches per-directory discovery, per-file
-/// results, file metadata and parsed configs, never invalidated — so memoize
-/// the terminal outcome the same way, `None` included. A config created
-/// mid-process is already invisible to discovery's cached `None`s, so this
-/// adds no new class of staleness.
+/// results, file metadata and parsed configs — so memoize the terminal
+/// outcome the same way, with one exception: a config that does not parse is
+/// never memoized, because discovery's `get_or_try_init` does not cache parse
+/// errors either, and a corrected `tsconfig.json` must be picked up on the
+/// next resolution. A config *created* mid-process stays invisible, matching
+/// discovery's cached `None`s.
 static NEAREST_TSCONFIG: LazyLock<Mutex<HashMap<PathBuf, Option<Arc<TsConfig>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The outcome of [`TsconfigSource::walk_nearest`].
+enum Nearest {
+    /// A usable config answers for the tree.
+    Found(Arc<TsConfig>),
+    /// No ancestor has a `tsconfig.json`.
+    NotFound,
+    /// The nearest config exists but does not parse; never memoized, so a
+    /// corrected config is retried on the next resolution.
+    Unusable,
+}
 
 impl TsconfigSource {
     /// The `tsconfig.json` that governs `path`, if any, by strict ownership.
@@ -311,7 +324,8 @@ impl TsconfigSource {
     /// `find_tsconfig_auto`: an unreadable one (permission denied, any I/O
     /// error) is skipped and the walk continues to a grandparent, while an
     /// unparseable one is treated as "no config" and stops the walk — never
-    /// walk past it to a grandparent.
+    /// walk past it to a grandparent — and the failure is not memoized, so a
+    /// corrected config is picked up on the next resolution.
     fn nearest(resolver: &Resolver, path: &Path) -> Option<Arc<TsConfig>> {
         // No paths resolution for dependencies, matching both tsx's dependency
         // gate and `find_tsconfig`, which returns None inside node_modules.
@@ -329,21 +343,28 @@ impl TsconfigSource {
             return cached.clone();
         }
         let found = Self::walk_nearest(resolver, path);
+        if let Nearest::Unusable = found {
+            return None;
+        }
+        let outcome = match found {
+            Nearest::Found(tsconfig) => Some(tsconfig),
+            Nearest::NotFound | Nearest::Unusable => None,
+        };
         NEAREST_TSCONFIG
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(directory.to_path_buf(), found.clone());
-        found
+            .insert(directory.to_path_buf(), outcome.clone());
+        outcome
     }
 
     /// The ancestor walk behind [`Self::nearest`], before memoization.
-    fn walk_nearest(resolver: &Resolver, path: &Path) -> Option<Arc<TsConfig>> {
+    fn walk_nearest(resolver: &Resolver, path: &Path) -> Nearest {
         for candidate in path.ancestors().skip(1).map(|dir| dir.join("tsconfig.json")) {
             if !candidate.is_file() {
                 continue;
             }
             match resolver.resolve_tsconfig(&candidate) {
-                Ok(tsconfig) => return Some(tsconfig),
+                Ok(tsconfig) => return Nearest::Found(tsconfig),
                 // `find_tsconfig_auto` skips a tsconfig that fails with an I/O
                 // error and keeps walking; do the same here.
                 Err(ResolveError::TsconfigLoadFailed { source, .. })
@@ -357,11 +378,11 @@ impl TsconfigSource {
                 }
                 Err(err) => {
                     tracing::debug!(path = ?path, error = ?err, "nearest tsconfig.json is not usable");
-                    return None;
+                    return Nearest::Unusable;
                 }
             }
         }
-        None
+        Nearest::NotFound
     }
 }
 
