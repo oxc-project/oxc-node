@@ -299,7 +299,7 @@ impl TsconfigSource {
     /// to ASCII paths without `?`: the resolver drops the escape byte by byte,
     /// mangling multi-byte characters, and `?` has no escape at all.
     fn discover(resolver: &Resolver, path: &Path) -> Option<Arc<TsConfig>> {
-        Self::warn_skipped_unreadable(resolver, path);
+        let original = path;
         let escaped;
         let path = match path.to_str() {
             Some(text) if text.contains('#') && text.is_ascii() && !text.contains('?') => {
@@ -308,7 +308,9 @@ impl TsconfigSource {
             }
             _ => path,
         };
-        match resolver.find_tsconfig(path) {
+        let found = resolver.find_tsconfig(path);
+        Self::warn_skipped_unreadable(resolver, original, &found);
+        match found {
             Ok(tsconfig) => tsconfig,
             Err(err) => {
                 tracing::debug!(path = ?path, error = ?err, "failed to discover tsconfig");
@@ -325,12 +327,18 @@ impl TsconfigSource {
     /// because it could not be read (permission denied, any I/O error); the
     /// resolver skips those without returning an error (issue #844).
     ///
-    /// Only candidates below the first readable config are reported: the walk
-    /// stops at a config that claims the file, which is a readable one, so it
-    /// certainly passed every unreadable candidate below that, and may never
-    /// have reached one above it. The scan depends only on the directory, so it
-    /// runs once per directory.
-    fn warn_skipped_unreadable(resolver: &Resolver, path: &Path) {
+    /// The walk passed every candidate below the directory it stopped in: the
+    /// one holding the config it returned or failed on, or none at all when no
+    /// config claims the file. A config resolved through a project reference
+    /// does not say which ancestor referenced it, so then the scan stops at the
+    /// first readable config, which may report fewer than were skipped but
+    /// never one the walk did not reach. The outcome depends on the file, as
+    /// ownership does, so each file is scanned once.
+    fn warn_skipped_unreadable(
+        resolver: &Resolver,
+        path: &Path,
+        found: &std::result::Result<Option<Arc<TsConfig>>, ResolveError>,
+    ) {
         static SCANNED: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(Default::default);
         if !path.is_absolute() || path.components().any(|c| c.as_os_str() == "node_modules") {
             return;
@@ -338,17 +346,29 @@ impl TsconfigSource {
         let Some(directory) = path.parent() else {
             return;
         };
-        if !SCANNED.lock().unwrap_or_else(PoisonError::into_inner).insert(directory.to_path_buf()) {
+        let stop = match found {
+            Ok(Some(tsconfig)) => tsconfig.path().parent(),
+            Err(ResolveError::TsconfigLoadFailed { path, .. }) => path.parent(),
+            Ok(None) | Err(_) => None,
+        };
+        // Only a stop in the ancestor chain is one the walk can have reached.
+        let stop = stop.filter(|stop| directory.starts_with(stop));
+        let lookup_failed = found.is_err() && stop.is_none();
+        if !SCANNED.lock().unwrap_or_else(PoisonError::into_inner).insert(path.to_path_buf()) {
             return;
         }
-        for candidate in directory.ancestors().map(|dir| dir.join("tsconfig.json")) {
+        let referenced = matches!(found, Ok(Some(_))) && stop.is_none();
+        for dir in directory.ancestors() {
+            if lookup_failed || Some(dir) == stop {
+                return;
+            }
+            let candidate = dir.join("tsconfig.json");
             if !candidate.is_file() {
                 continue;
             }
             match resolver.resolve_tsconfig(&candidate) {
-                Err(err) if is_io_failure(&err) => {
-                    warn_unreadable(&err);
-                }
+                Err(err) if is_io_failure(&err) => warn_unreadable(&err),
+                Ok(_) if !referenced => {}
                 _ => return,
             }
         }
@@ -2849,21 +2869,29 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
         deps.consumed = Some(deps.mode.unwrap_or_else(deps_mode_from_env));
     }
 
-    let tsconfig = match &explicit_tsconfig_path {
+    // `Err` when the path cannot even be checked, such as a parent directory
+    // that may not be searched: the file may exist, but it cannot be read.
+    let explicit_exists = explicit_tsconfig_path.as_ref().map(|(path, _)| fs::exists(path));
+    let tsconfig = match (&explicit_tsconfig_path, &explicit_exists) {
         // Pointing `Manual` at a file that does not exist would make *every*
         // `resolve()` call fail, so disable tsconfig handling instead. Falling
         // back to `Auto` is not an option: an explicit request for a missing
         // config must not quietly pick up a different one.
-        Some((path, _)) if fs::exists(path).unwrap_or(false) => {
-            Some(TsconfigDiscovery::Manual(TsconfigOptions {
-                config_file: path.clone(),
-                references: TsconfigReferences::Auto,
-            }))
-        }
+        (Some((path, _)), Some(Ok(true))) => Some(TsconfigDiscovery::Manual(TsconfigOptions {
+            config_file: path.clone(),
+            references: TsconfigReferences::Auto,
+        })),
         // Silently running without a config left an unrelated `ERR_MODULE_NOT_FOUND`
         // for a `paths` alias as the first sign — typically a `TS_NODE_PROJECT` left
         // over from ts-node (issue #844).
-        Some((path, source)) => {
+        (Some((path, source)), Some(Err(err))) => {
+            warn_once(format!(
+                "failed to read the tsconfig {source} names, {}: {err}; running without a tsconfig",
+                path.display()
+            ));
+            None
+        }
+        (Some((path, source)), _) => {
             warn_once(format!(
                 "the tsconfig {source} names, {}, does not exist; running without a tsconfig",
                 path.display()
@@ -2872,7 +2900,7 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
         }
         // Nothing was requested: let the resolver find, per file, the nearest
         // `tsconfig.json` that actually claims it.
-        None => Some(TsconfigDiscovery::Auto),
+        (None, _) => Some(TsconfigDiscovery::Auto),
     };
 
     let resolver = Resolver::new(ResolveOptions {
@@ -2903,8 +2931,9 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
         Some((path, _)) => TsconfigSource::Manual(match resolver.resolve_tsconfig(&path) {
             Ok(tsconfig) => Some(tsconfig),
             Err(err) => {
-                // A missing file was reported above, with what named it.
-                if fs::exists(&path).unwrap_or(false) {
+                // A missing or uncheckable file was reported above, with what
+                // named it.
+                if matches!(explicit_exists, Some(Ok(true))) {
                     warn_once(format!(
                         "{}; running without a tsconfig",
                         describe_tsconfig_error(&err)

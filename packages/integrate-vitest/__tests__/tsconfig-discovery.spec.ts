@@ -963,3 +963,59 @@ test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+// A readable config that does not claim the file does not stop discovery, so
+// an unreadable one above it is still walked past and must still be reported.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an unreadable tsconfig above a config that does not claim the file is reported",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["lib/*"] } },
+      }),
+      "lib/x.ts": 'export const x = "from lib";\n',
+      "mid/tsconfig.json": "{}",
+      "mid/sub/tsconfig.json": JSON.stringify({ include: ["other"] }),
+      "mid/sub/entry.ts": 'import { x } from "@lib/x.ts";\nconsole.log(x);\n',
+    });
+    chmodSync(join(root, "mid", "tsconfig.json"), 0o000);
+    try {
+      const ran = runWithHooks(join(root, "mid", "sub"), "./entry.ts");
+      expect(ran.stderr, "the unreadable config must be reported once").toMatch(
+        warning(join(root, "mid", "tsconfig.json"), "skipping it"),
+      );
+      expect(ran.stdout.trim(), "discovery walks on to the root config").toBe("from lib");
+    } finally {
+      chmodSync(join(root, "mid", "tsconfig.json"), 0o644);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+// A config behind a directory that may not be searched may well exist; saying
+// it does not would send the user looking for a typo.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an explicit tsconfig that cannot be checked is reported as unreadable",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "locked/tsconfig.json": "{}",
+      "entry.ts": 'console.log("ran");\n',
+    });
+    const config = join(root, "locked", "tsconfig.json");
+    chmodSync(join(root, "locked"), 0o000);
+    try {
+      const ran = runWithHooks(root, "./entry.ts", { TS_NODE_PROJECT: config });
+      expect(ran.stderr, "the config must be reported as unreadable, once").toMatch(
+        new RegExp(
+          `^oxc-node: warning: failed to read the tsconfig TS_NODE_PROJECT names, ${escapeRegExp(config)}: [^\\n]+; running without a tsconfig$`,
+        ),
+      );
+      expect(ran.stdout.trim(), "the run goes on without the config").toBe("ran");
+    } finally {
+      chmodSync(join(root, "locked"), 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
