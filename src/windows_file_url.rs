@@ -187,7 +187,11 @@ pub(super) fn path_to_url(path: &str) -> String {
     if let Some(stripped) = path.strip_prefix("\\\\").or_else(|| path.strip_prefix("//")) {
         return unc_path_to_url(stripped);
     }
-    format!("file:///{path}").replace('\\', "/")
+    // Drive form: `\` becomes `/` and the rest is encoded like any URL path —
+    // a raw `#`, `%` or space would cut or rewrite the path Node reads back
+    // (issue #837). The drive letter keeps its case and its `:` stays literal,
+    // which the encode set already guarantees: `C%3A` fails the drive check.
+    format!("file:///{}", super::encode_file_url_path(&path.replace('\\', "/")))
 }
 
 fn unc_path_to_url(stripped: &str) -> String {
@@ -195,13 +199,11 @@ fn unc_path_to_url(stripped: &str) -> String {
         Some(index) => (&stripped[..index], &stripped[index + 1..]),
         None => (stripped, ""),
     };
-    // The path is encoded the way the `file:` URL path setter encodes
-    // it: `/` separators stay, everything outside the unreserved set
-    // becomes `%XX`. Over-encoding is safe — a URL parser decodes
-    // `%XX` back to the same file — while under-encoding is not: a
-    // literal `%` would be read as an escape and a `#` as a fragment.
+    // The path is encoded the way `pathToFileURL` encodes it: `/`
+    // separators stay, and a literal `%` or `#` becomes an escape instead
+    // of being read as one or as a fragment.
     let rest = rest.replace('\\', "/");
-    let rest = encode_path(&rest);
+    let rest = super::encode_file_url_path(&rest);
     format!("file://{}/{rest}", encode_host(host))
 }
 
@@ -604,12 +606,6 @@ fn forbidden_host_byte(byte: u8) -> bool {
             | 0x5e | 0x7c | 0x7f)
 }
 
-/// Percent-encode a resolved path for the URL path: `/` separators stay,
-/// everything else outside the unreserved ASCII set becomes `%XX`.
-fn encode_path(path: &str) -> Cow<'_, str> {
-    percent_encode(path, b"/")
-}
-
 fn percent_encode<'a>(input: &'a str, extra_allowed: &[u8]) -> Cow<'a, str> {
     fn unreserved(byte: u8) -> bool {
         byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
@@ -651,6 +647,25 @@ mod tests {
     #[test]
     fn windows_drive_path_generates() {
         assert_eq!(path_to_url("C:\\a\\b.ts"), "file:///C:/a/b.ts");
+    }
+
+    // Issue #837: the drive form is percent-encoded like `pathToFileURL`
+    // writes it, while the drive letter keeps its case and its `:`.
+    #[test]
+    fn windows_drive_path_is_percent_encoded() {
+        assert_eq!(path_to_url("C:\\a#b\\%41.ts"), "file:///C:/a%23b/%2541.ts");
+        assert_eq!(path_to_url("C:\\main#hash.ts"), "file:///C:/main%23hash.ts");
+        assert_eq!(path_to_url("C:\\main%file.ts"), "file:///C:/main%25file.ts");
+        assert_eq!(path_to_url("C:\\a b\\õ.ts"), "file:///C:/a%20b/%C3%B5.ts");
+        assert_eq!(path_to_url("c:\\a:b\\x.ts"), "file:///c:/a:b/x.ts");
+        assert_eq!(path_to_url("\\\\?\\C:\\a#b.ts"), "file:///C:/a%23b.ts");
+        for path in ["C:\\a#b\\%41.ts", "C:\\a b\\õ.ts", "C:\\hash#dir\\main.ts"] {
+            assert_eq!(
+                url_to_path(&path_to_url(path)),
+                Some(PathBuf::from(path.replace('\\', "/"))),
+                "{path}"
+            );
+        }
     }
 
     #[test]
