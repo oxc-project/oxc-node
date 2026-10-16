@@ -1,0 +1,21 @@
+packages/integrate-vitest/__tests__/invalid-utf8.spec.ts
+  s_5b25d6ae40e975::t_7f63d8991d5861 1-76
+src/lib.rs
+  s_5b25d6ae40e975::t_7b251fdec9aa38 1525-1526,2527-2528,2606-2607,2609-2620,2635-2641,2660-2667,2685-2695,3067-3076
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9f253084c3bdcbeda8f302da5262d67dbd937247",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
