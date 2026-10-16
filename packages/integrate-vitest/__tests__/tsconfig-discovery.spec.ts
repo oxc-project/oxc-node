@@ -386,7 +386,12 @@ test("tsconfig paths apply to JavaScript importers with allowJs unset", () => {
   }
 });
 
-test("the JavaScript probe does not resurrect a config that excludes the directory", () => {
+// tsx applies a config's `paths` to every importer outside node_modules,
+// including files `exclude` names; only compiler options honour `exclude`.
+// The nearest-ancestor fallback in `for_importer` matches that, so the runs
+// below resolve their aliases, while `for_path` keeps compiler options off the
+// excluded files.
+test("tsconfig paths apply to importers the config excludes, for resolution only", () => {
   const root = createProject({
     "package.json": JSON.stringify({ type: "module" }),
     "tsconfig.json": JSON.stringify({
@@ -402,14 +407,365 @@ test("the JavaScript probe does not resurrect a config that excludes the directo
     "src/excluded/from-ts.ts": ALIAS_IMPORTER("ts"),
   });
   try {
-    // `exclude` must win for JavaScript exactly as it does for TypeScript.
-    for (const entry of ["./from-mjs.mjs", "./from-ts.ts"]) {
+    for (const [entry, label] of [
+      ["./from-mjs.mjs", "mjs"],
+      ["./from-ts.ts", "ts"],
+    ]) {
       const ran = runWithHooks(join(root, "src", "excluded"), entry);
-      expect(ran.status, `${entry} is excluded, so the alias must not resolve`).not.toBe(0);
-      expect(ran.stderr, `${entry} is excluded, so the alias must not resolve`).toContain(
-        "ERR_MODULE_NOT_FOUND",
+      expect(ran.stderr, `${entry} should resolve its alias`).toBe("");
+      expect(ran.stdout.trim(), `${entry} should resolve its alias`).toBe(`${label}:bar`);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The issue #835 layout: the root config covers `src`, and a repository script
+// outside `include` imports the same aliases. No config claims the script, so
+// the nearest ancestor `tsconfig.json` answers for resolution. The `.mjs`
+// importer exercises the full chain — discovery, then the JavaScript probe,
+// then the fallback.
+test("tsconfig paths apply to an importer outside the root config's include", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        baseUrl: ".",
+        target: "ESNext",
+        paths: { "@lib/*": ["src/lib/*"] },
+      },
+      include: ["src"],
+    }),
+    "src/lib/x.ts": 'export const x = "from lib";\n',
+    "scripts/seed.ts": 'import { x } from "@lib/x.ts";\nconsole.log("ts:" + x);\n',
+    "scripts/seed.mjs": 'import { x } from "@lib/x.ts";\nconsole.log("mjs:" + x);\n',
+  });
+  try {
+    for (const [entry, label] of [
+      ["./seed.ts", "ts"],
+      ["./seed.mjs", "mjs"],
+    ]) {
+      const ran = runWithHooks(join(root, "scripts"), entry);
+      expect(ran.stderr, `${entry} should resolve its alias`).toBe("");
+      expect(ran.stdout.trim(), `${entry} should resolve its alias`).toBe(`${label}:from lib`);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The split the fallback must keep: the same config whose `paths` now reach
+// `scripts/` for resolution must not compile it. Ownership still decides
+// compiler options (`for_path` is unchanged), so a decorator in `scripts/`
+// fails exactly as it did before the fallback existed.
+test("compiler options still do not reach a directory the config does not include", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        baseUrl: ".",
+        experimentalDecorators: true,
+        target: "ES2022",
+        paths: { "@lib/*": ["src/lib/*"] },
+      },
+      include: ["src"],
+    }),
+    "src/lib/x.ts": 'export const x = "from lib";\n',
+    "scripts/seed.ts": 'import { x } from "@lib/x.ts";\nconsole.log("ts:" + x);\n',
+    "scripts/decorated.ts": DECORATED,
+  });
+  try {
+    const ran = runWithHooks(join(root, "scripts"), "./seed.ts");
+    expect(ran.stderr, "the alias should resolve through the fallback").toBe("");
+    expect(ran.stdout.trim(), "the alias should resolve through the fallback").toBe("ts:from lib");
+
+    const emitted = emit(root, join(root, "scripts"), "./decorated.ts");
+    expect(emitted.stderr, "scripts/ is outside include, so no compiler options").toContain(
+      NO_LEGACY_DECORATORS,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Neither config claims `sub/scripts/seed.ts`: the root covers only `src` and
+// the sub-project only `lib`. The fallback takes the nearer of the two, so the
+// alias resolves through the sub-project's `paths`, not the root's.
+test("the nearest tsconfig wins when no ancestor config claims the file", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        baseUrl: ".",
+        target: "ESNext",
+        paths: { "@lib/x.ts": ["src/root-x.ts"] },
+      },
+      include: ["src"],
+    }),
+    "src/root-x.ts": 'export const x = "root-x";\n',
+    "sub/tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        baseUrl: ".",
+        target: "ESNext",
+        paths: { "@lib/x.ts": ["lib/sub-x.ts"] },
+      },
+      include: ["lib"],
+    }),
+    "sub/lib/sub-x.ts": 'export const x = "sub-x";\n',
+    "sub/scripts/seed.ts": 'import { x } from "@lib/x.ts";\nconsole.log("nearest:" + x);\n',
+  });
+  try {
+    const ran = runWithHooks(join(root, "sub", "scripts"), "./seed.ts");
+    expect(ran.stderr, "the alias should resolve through the nearest config").toBe("");
+    expect(ran.stdout.trim(), "the sub config is nearer than the root").toBe("nearest:sub-x");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The fallback must never reach a dependency: without the node_modules guard
+// the ancestor walk would escape the package and hand it the workspace root's
+// aliases. Plain `.mjs`, so no transform is involved — only the resolve hook.
+test("no tsconfig fallback for importers inside node_modules", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        baseUrl: ".",
+        target: "ESNext",
+        paths: { "@lib/*": ["src/lib/*"] },
+      },
+      include: ["src"],
+    }),
+    "src/lib/x.ts": 'export const x = "from lib";\n',
+    "node_modules/some-dep/entry.mjs": 'import { x } from "@lib/x.ts";\nconsole.log("dep:" + x);\n',
+  });
+  try {
+    const ran = runWithHooks(join(root, "node_modules", "some-dep"), "./entry.mjs");
+    expect(ran.status, "a dependency must not see the workspace root's aliases").not.toBe(0);
+    expect(ran.stderr, "a dependency must not see the workspace root's aliases").toContain(
+      "ERR_MODULE_NOT_FOUND",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// tsx applies only `paths`/`baseUrl` — never `rootDirs`, which is the one
+// thing a tsconfig context adds to RELATIVE resolution in oxc_resolver. The
+// nearest-ancestor fallback therefore serves bare specifiers only: a missing
+// `./dep.js` in the importer's own root must fail exactly as it does under tsx
+// and plain Node.js, never escape to another configured root. Bare aliases
+// through the same config keep working.
+test("the fallback does not extend rootDirs to relative imports", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        rootDirs: ["a", "b"],
+        paths: { "@lib/*": ["src/lib/*"] },
+      },
+      include: ["src"],
+    }),
+    "src/lib/x.ts": 'export const x = "from lib";\n',
+    "a/seed.ts": 'import { x } from "@lib/x.ts";\nconsole.log("alias:" + x);\n',
+    "a/relative.ts": 'import { dep } from "./dep.js";\nconsole.log("relative:" + dep);\n',
+    "b/dep.ts": 'export const dep = "from-b";\n',
+  });
+  try {
+    const aliased = runWithHooks(join(root, "a"), "./seed.ts");
+    expect(aliased.stderr, "the alias should still resolve through the fallback").toBe("");
+    expect(aliased.stdout.trim(), "the alias should still resolve through the fallback").toBe(
+      "alias:from lib",
+    );
+
+    const relative = runWithHooks(join(root, "a"), "./relative.ts");
+    expect(relative.status, "rootDirs must not redirect a missing relative import").not.toBe(0);
+    expect(relative.stderr, "rootDirs must not redirect a missing relative import").toContain(
+      "ERR_MODULE_NOT_FOUND",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// An absolute specifier names a file: the fallback must not let a catch-all
+// `paths` mapping redirect it (`resolve_with_context` tries `paths` before
+// absolute resolution). tsx and plain Node.js resolve the requested file;
+// only bare specifiers consult the nearest config.
+test("the fallback does not redirect absolute specifiers through catch-all paths", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        baseUrl: ".",
+        target: "ESNext",
+        paths: { "*": ["src/shim.ts"] },
+      },
+      include: ["src"],
+    }),
+    "src/shim.ts": 'export const v = "shimmed";\n',
+    "outside/x.ts": 'export const v = "real";\n',
+  });
+  // The seeds need the fixture's own absolute path, so they are written after
+  // `createProject` returns the root. The second uses a single-slash `file:`
+  // URL, a spelling Node.js accepts (WHATWG normalizes it to `file:///…`) that
+  // carries no `://` (`file:C:/x.ts` on Windows).
+  mkdirSync(join(root, "scripts"));
+  writeFileSync(
+    join(root, "scripts", "seed.ts"),
+    `import { v } from ${JSON.stringify(join(root, "outside", "x.ts"))};\nconsole.log("abs:" + v);\n`,
+  );
+  writeFileSync(
+    join(root, "scripts", "file-url.ts"),
+    `import { v } from ${JSON.stringify(`file:${join(root, "outside", "x.ts")}`)};\nconsole.log("file-url:" + v);\n`,
+  );
+  // A custom scheme belongs to Node.js or another loader in the chain:
+  // `paths` trying first would steal the specifier from its owner, so the
+  // fallback must leave it alone (tsx aliases it; that is tsx's bug to keep).
+  writeFileSync(
+    join(root, "scripts", "scheme.ts"),
+    'import { v } from "virtual:module";\nconsole.log("scheme:" + v);\n',
+  );
+  // WHATWG URL parsing trims leading/trailing controls and spaces and drops
+  // ASCII tab/newline before scheme detection: the first spelling loads as a
+  // file: URL under plain Node.js, the second is rejected — and neither may
+  // be stolen by the catch-all on the way there.
+  writeFileSync(
+    join(root, "scripts", "space-url.ts"),
+    `import { v } from ${JSON.stringify(` file:${join(root, "outside", "x.ts")}`)};\nconsole.log("space-url:" + v);\n`,
+  );
+  writeFileSync(
+    join(root, "scripts", "tab-url.ts"),
+    `import { v } from ${JSON.stringify(`fi\ttle://${join(root, "outside", "x.ts")}`)};\nconsole.log("tab-url:" + v);\n`,
+  );
+  try {
+    const ran = runWithHooks(join(root, "scripts"), "./seed.ts");
+    expect(ran.stderr, "an absolute specifier must resolve to the file it names").toBe("");
+    expect(ran.stdout.trim(), "an absolute specifier must resolve to the file it names").toBe(
+      "abs:real",
+    );
+
+    const fileUrl = runWithHooks(join(root, "scripts"), "./file-url.ts");
+    expect(fileUrl.stderr, "a single-slash file: URL must load the file it names").toBe("");
+    expect(fileUrl.stdout.trim(), "a single-slash file: URL must load the file it names").toBe(
+      "file-url:real",
+    );
+
+    const scheme = runWithHooks(join(root, "scripts"), "./scheme.ts");
+    expect(
+      scheme.stdout,
+      "the catch-all shim must not execute for a schemed specifier",
+    ).not.toContain("shimmed");
+    expect(scheme.stderr, "Node.js itself rejects the unknown scheme").toContain(
+      "ERR_UNSUPPORTED_ESM_URL_SCHEME",
+    );
+
+    const spaceUrl = runWithHooks(join(root, "scripts"), "./space-url.ts");
+    expect(spaceUrl.stderr, "a space-padded file: URL must load the file it names").toBe("");
+    expect(spaceUrl.stdout.trim(), "a space-padded file: URL must load the file it names").toBe(
+      "space-url:real",
+    );
+
+    const tabUrl = runWithHooks(join(root, "scripts"), "./tab-url.ts");
+    expect(tabUrl.stdout, "the catch-all shim must not execute").not.toContain("shimmed");
+    if (tabUrl.status === 0) {
+      // Whether Node.js then loads or rejects the tab-mangled URL is its own
+      // platform behavior; the fallback must simply stay out of it.
+      expect(tabUrl.stdout.trim(), "if Node.js loads it, it must be the named file").toBe(
+        "tab-url:real",
       );
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A broken nearest config is "no config", exactly as `discover` treats a
+// broken ancestor: the alias must not resolve, and the walk must not continue
+// past it to the valid root config. Everything that needs no config — the
+// relative import — keeps working.
+test("a broken nearest tsconfig means no fallback and the walk stops", () => {
+  const project = (seed: string) => ({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        baseUrl: ".",
+        target: "ESNext",
+        paths: { "@lib/*": ["src/lib/*"] },
+      },
+      include: ["src"],
+    }),
+    "src/lib/x.ts": 'export const x = "from lib";\n',
+    "mid/tsconfig.json": "{ not json",
+    "mid/scripts/dep.ts": 'export const dep = "dep-ok";\n',
+    "mid/scripts/seed.ts": seed,
+  });
+  const aliased = createProject(
+    project('import { x } from "@lib/x.ts";\nconsole.log("aliased:" + x);\n'),
+  );
+  try {
+    const ran = runWithHooks(join(aliased, "mid", "scripts"), "./seed.ts");
+    expect(ran.status, "the walk must stop at the broken config").not.toBe(0);
+    expect(ran.stderr, "the alias must not resolve past the broken config").toContain(
+      "ERR_MODULE_NOT_FOUND",
+    );
+  } finally {
+    rmSync(aliased, { recursive: true, force: true });
+  }
+
+  const relative = createProject(
+    project('import { dep } from "./dep.js";\nconsole.log("relative:" + dep);\n'),
+  );
+  try {
+    const ran = runWithHooks(join(relative, "mid", "scripts"), "./seed.ts");
+    expect(ran.stderr, "a broken nearest config should only cost the aliases").toBe("");
+    expect(ran.stdout.trim(), "relative resolution needs no config").toBe("relative:dep-ok");
+  } finally {
+    rmSync(relative, { recursive: true, force: true });
+  }
+});
+
+// A malformed nearest config must not stay poisoned for the process:
+// discovery's own cache retries parse failures (`get_or_try_init` caches no
+// error), so a corrected config — still not claiming the importer — must
+// apply its `paths` to the next resolution in the same process.
+test("a malformed nearest tsconfig can be corrected mid-process", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": "{ not json",
+    "src/lib/x.ts": 'export const x = "from lib";\n',
+  });
+  mkdirSync(join(root, "scripts"));
+  writeFileSync(
+    join(root, "scripts", "seed.ts"),
+    `const attempt = async (label) => {
+  try {
+    await import("@lib/x.ts");
+    console.log(label + ":resolved");
+  } catch {
+    console.log(label + ":failed");
+  }
+};
+await attempt("first");
+const { writeFileSync } = await import("node:fs");
+writeFileSync(
+  new URL("../tsconfig.json", import.meta.url),
+  JSON.stringify({
+    compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["src/lib/*"] } },
+    include: ["src"],
+  }),
+);
+await attempt("second");
+`,
+  );
+  try {
+    const ran = runWithHooks(join(root, "scripts"), "./seed.ts");
+    expect(ran.stderr, "both imports are caught; nothing should reach stderr").toBe("");
+    expect(ran.stdout.trim().split("\n"), "a corrected config must be picked up").toEqual([
+      "first:failed",
+      "second:resolved",
+    ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
