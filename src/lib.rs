@@ -301,15 +301,29 @@ impl TsconfigSource {
     fn discover(resolver: &Resolver, path: &Path) -> Option<Arc<TsConfig>> {
         let original = path;
         let escaped;
+        // Whether the resolver walks up from `path` itself rather than from
+        // a truncated or lossily converted one.
+        let mut faithful = true;
         let path = match path.to_str() {
             Some(text) if text.contains('#') && text.is_ascii() && !text.contains('?') => {
                 escaped = PathBuf::from(text.replace('#', "\u{0}#"));
                 escaped.as_path()
             }
-            _ => path,
+            Some(text) => {
+                faithful = !text.contains('#') && !text.contains('?');
+                path
+            }
+            None => {
+                faithful = false;
+                path
+            }
         };
         let found = resolver.find_tsconfig(path);
-        Self::warn_skipped_unreadable(resolver, original, &found);
+        // Scanning a chain the walk never saw could report a config it never
+        // skipped, so a path it cannot represent goes unscanned.
+        if faithful {
+            Self::warn_skipped_unreadable(resolver, original, &found);
+        }
         match found {
             Ok(tsconfig) => tsconfig,
             Err(err) => {

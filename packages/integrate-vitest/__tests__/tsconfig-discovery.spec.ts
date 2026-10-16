@@ -1050,3 +1050,24 @@ test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+// Discovery reads `?` as the start of a query and walks up from the truncated
+// path, so it never sees a config in the directory named `q?x`; reporting that
+// config as skipped would be wrong.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an unreadable tsconfig discovery never reached is not reported",
+  () => {
+    const root = createProject({
+      "q?x/tsconfig.json": "{}",
+      "q?x/entry.ts": "export const x: number = 1;\n",
+    });
+    chmodSync(join(root, "q?x", "tsconfig.json"), 0o000);
+    try {
+      const emitted = emit(root, root, "./q?x/entry.ts");
+      expect(emitted.stderr, "nothing was skipped, so nothing is reported").toBe("");
+    } finally {
+      chmodSync(join(root, "q?x", "tsconfig.json"), 0o644);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
