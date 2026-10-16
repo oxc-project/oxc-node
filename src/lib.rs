@@ -2852,11 +2852,15 @@ fn is_tsconfig_file(candidate: &Path) -> bool {
         {
             false
         }
+        // Only an entry that is there was skipped: under a directory that may
+        // not be searched, the lookup fails whether or not the file exists.
         Err(err) => {
-            warn_unreadable(&ResolveError::TsconfigLoadFailed {
-                path: candidate.to_path_buf(),
-                source: Box::new(ResolveError::from(err)),
-            });
+            if fs::symlink_metadata(candidate).is_ok() {
+                warn_unreadable(&ResolveError::TsconfigLoadFailed {
+                    path: candidate.to_path_buf(),
+                    source: Box::new(ResolveError::from(err)),
+                });
+            }
             false
         }
     }
@@ -2868,10 +2872,14 @@ fn warn_unreadable(err: &ResolveError) {
 
 /// Print a warning to stderr, once per process for each distinct message.
 fn warn_once(message: String) {
+    use std::io::Write as _;
+
     static WARNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let mut warned = WARNED.lock().unwrap_or_else(PoisonError::into_inner);
     if !warned.contains(&message) {
-        eprintln!("oxc-node: warning: {message}");
+        // A closed stderr must not turn a diagnostic into a failure, as
+        // `eprintln!` would by panicking.
+        let _ = writeln!(std::io::stderr(), "oxc-node: warning: {message}");
         warned.push(message);
     }
 }

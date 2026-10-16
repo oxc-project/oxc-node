@@ -1247,3 +1247,30 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+// Under a directory that may not be searched, every lookup fails whether or
+// not a config is there; a path the transform API is merely handed must not
+// make up a skipped config.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "a path under an unsearchable directory reports no config that is not there",
+  () => {
+    const root = createProject({ "locked/.keep": "" });
+    writeFileSync(
+      join(root, "virtual.mjs"),
+      `import { join } from "node:path";
+import { OxcTransformer } from "@oxc-node/core";
+const transformer = new OxcTransformer(process.cwd());
+console.log(transformer.transform(join(process.cwd(), "locked", "virtual.ts"), "export const x: number = 1;").source().trim());
+`,
+    );
+    chmodSync(join(root, "locked"), 0o000);
+    try {
+      const ran = runNode(root, [join(root, "virtual.mjs")]);
+      expect(ran.stderr, "no config is there, so none is reported").toBe("");
+      expect(ran.stdout, "the file is still transformed").toContain("export const x = 1;");
+    } finally {
+      chmodSync(join(root, "locked"), 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
