@@ -152,6 +152,21 @@ describe("percent-encoded resolved URLs (issue #837)", () => {
     expect(run(root, "./entry.ts")).toBe("ERR_INVALID_MODULE_SPECIFIER\n".repeat(5));
   });
 
+  test("malformed escapes are left to Node, which rejects them", () => {
+    // `%zz` is not an escape and `%FF` does not decode to UTF-8; resolving
+    // either spelling verbatim would load the literally named file.
+    const root = fixture({
+      "entry.ts": [
+        'for (const s of ["./a%FF.ts", "./b%zz.ts", new URL("./b%zz.ts", import.meta.url).href]) {',
+        "  try { await import(s); } catch (error) { console.log((error as Error).name); }",
+        "}",
+      ].join("\n"),
+      "a%FF.ts": WRONG,
+      "b%zz.ts": WRONG,
+    });
+    expect(run(root, "./entry.ts")).toBe("URIError\n".repeat(3));
+  });
+
   test("a # beside non-ASCII text still resolves through oxc-node", () => {
     // oxc_resolver drops its `\0#` escape byte by byte and used to mangle
     // `õ`, so `.tsx` and extensionless imports fell back to Node and failed.

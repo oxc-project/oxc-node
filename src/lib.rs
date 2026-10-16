@@ -891,6 +891,17 @@ fn has_encoded_separator(pathname: &str) -> bool {
     })
 }
 
+/// Whether a URL pathname holds a `%` that is not followed by two hex digits
+/// (`%zz`, a trailing `%`). Node's `fileURLToPath` throws `URIError: URI
+/// malformed` for it; resolving the spelling verbatim would load a file
+/// literally named `a%zz.ts` instead, so oxc-node leaves it to Node.
+fn has_malformed_escape(pathname: &str) -> bool {
+    let bytes = pathname.as_bytes();
+    memchr::memchr_iter(b'%', bytes).any(|index| {
+        !bytes.get(index + 1..index + 3).is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+    })
+}
+
 /// The resolver request — the directory to resolve from and the specifier —
 /// for the decoded pathname `path` of a URL reference, taken relative to
 /// `base`, and the raw `?query` / `#fragment` that followed it. Returns
@@ -1762,10 +1773,11 @@ pub fn create_resolve<'env>(
     // percent-encoded (`./dep%23x.ts` names `dep#x.ts`) and a raw `?` or `#`
     // starts its query or fragment (issue #837). The resolver reads
     // specifiers as paths, so the pathname is decoded here and its characters
-    // escaped. An encoded separator is never decoded: Node rejects it.
+    // escaped. An encoded separator or a malformed escape is never decoded:
+    // Node rejects it.
     let request = if is_absolute_path {
         let pathname = url_path(file_specifier);
-        if has_encoded_separator(pathname) {
+        if has_encoded_separator(pathname) || has_malformed_escape(pathname) {
             None
         } else {
             let specifier_path = file_url_to_path(file_specifier)
@@ -1782,16 +1794,14 @@ pub fn create_resolve<'env>(
         && url_path(&specifier).contains('%')
     {
         let pathname = url_path(&specifier);
-        if has_encoded_separator(pathname) {
+        if has_encoded_separator(pathname) || has_malformed_escape(pathname) {
             None
         } else {
-            match decode_url_path(pathname) {
-                Some(decoded) => {
-                    resolver_request(directory, &decoded, &specifier[pathname.len()..])
-                }
-                // Escapes that do not decode to UTF-8 stay as written.
-                None => Some((Cow::Borrowed(directory), Cow::Borrowed(specifier.as_str()))),
-            }
+            // Escapes that do not decode to UTF-8 (`%FF`) are malformed to
+            // Node too.
+            decode_url_path(pathname).and_then(|decoded| {
+                resolver_request(directory, &decoded, &specifier[pathname.len()..])
+            })
         }
     } else {
         Some((Cow::Borrowed(directory), Cow::Borrowed(specifier.as_str())))
@@ -2850,6 +2860,16 @@ mod tests {
         }
         for pathname in ["./a%23b.ts", "./a%25 2F.ts", "./a%2", "./a%5", "./a/b.ts"] {
             assert!(!has_encoded_separator(pathname), "{pathname}");
+        }
+    }
+
+    #[test]
+    fn malformed_escapes_are_detected() {
+        for pathname in ["./a%zz.ts", "./a%.ts", "./a%4", "./a%", "./a%41%g1.ts"] {
+            assert!(has_malformed_escape(pathname), "{pathname}");
+        }
+        for pathname in ["./a%41.ts", "./a%2541.ts", "./a%FF.ts", "./a.ts", "./%C3%A9"] {
+            assert!(!has_malformed_escape(pathname), "{pathname}");
         }
     }
 
