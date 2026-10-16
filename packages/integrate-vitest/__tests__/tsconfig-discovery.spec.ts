@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -934,3 +934,32 @@ test("a tsconfig that extends a missing file is reported", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Discovery skips a tsconfig it cannot open and walks on to a grandparent
+// without returning an error, so the skip is reported on its own. Mode bits
+// stop neither root nor Windows from reading the file.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an unreadable discovered tsconfig is reported as skipped",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["lib/*"] } },
+      }),
+      "lib/x.ts": 'export const x = "from lib";\n',
+      "sub/tsconfig.json": "{}",
+      "sub/entry.ts": 'import { x } from "@lib/x.ts";\nconsole.log(x);\n',
+    });
+    chmodSync(join(root, "sub", "tsconfig.json"), 0o000);
+    try {
+      const ran = runWithHooks(join(root, "sub"), "./entry.ts");
+      expect(ran.stderr, "the unreadable config must be reported once").toMatch(
+        warning(join(root, "sub", "tsconfig.json"), "skipping it"),
+      );
+      expect(ran.stdout.trim(), "discovery walks on to the root config").toBe("from lib");
+    } finally {
+      chmodSync(join(root, "sub", "tsconfig.json"), 0o644);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

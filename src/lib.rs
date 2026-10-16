@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs,
     path::{Component, Path, PathBuf},
     sync::{
@@ -299,6 +299,7 @@ impl TsconfigSource {
     /// to ASCII paths without `?`: the resolver drops the escape byte by byte,
     /// mangling multi-byte characters, and `?` has no escape at all.
     fn discover(resolver: &Resolver, path: &Path) -> Option<Arc<TsConfig>> {
+        Self::warn_skipped_unreadable(resolver, path);
         let escaped;
         let path = match path.to_str() {
             Some(text) if text.contains('#') && text.is_ascii() && !text.contains('?') => {
@@ -316,6 +317,39 @@ impl TsconfigSource {
                 // (issue #844).
                 warn_once(format!("{}; ignoring it", describe_tsconfig_error(&err)));
                 None
+            }
+        }
+    }
+
+    /// Report each ancestor `tsconfig.json` that `find_tsconfig` walked past
+    /// because it could not be read (permission denied, any I/O error); the
+    /// resolver skips those without returning an error (issue #844).
+    ///
+    /// Only candidates below the first readable config are reported: the walk
+    /// stops at a config that claims the file, which is a readable one, so it
+    /// certainly passed every unreadable candidate below that, and may never
+    /// have reached one above it. The scan depends only on the directory, so it
+    /// runs once per directory.
+    fn warn_skipped_unreadable(resolver: &Resolver, path: &Path) {
+        static SCANNED: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(Default::default);
+        if !path.is_absolute() || path.components().any(|c| c.as_os_str() == "node_modules") {
+            return;
+        }
+        let Some(directory) = path.parent() else {
+            return;
+        };
+        if !SCANNED.lock().unwrap_or_else(PoisonError::into_inner).insert(directory.to_path_buf()) {
+            return;
+        }
+        for candidate in directory.ancestors().map(|dir| dir.join("tsconfig.json")) {
+            if !candidate.is_file() {
+                continue;
+            }
+            match resolver.resolve_tsconfig(&candidate) {
+                Err(err) if is_io_failure(&err) => {
+                    warn_unreadable(&err);
+                }
+                _ => return,
             }
         }
     }
@@ -389,14 +423,13 @@ impl TsconfigSource {
                 Ok(tsconfig) => return Nearest::Found(tsconfig),
                 // `find_tsconfig_auto` skips a tsconfig that fails with an I/O
                 // error and keeps walking; do the same here.
-                Err(ResolveError::TsconfigLoadFailed { source, .. })
-                    if matches!(source.as_ref(), ResolveError::IOError(_)) =>
-                {
+                Err(err) if is_io_failure(&err) => {
                     tracing::debug!(
                         path = ?path,
-                        error = ?source,
+                        error = ?err,
                         "nearest tsconfig.json is unreadable; walking on"
                     );
+                    warn_unreadable(&err);
                 }
                 Err(err) => {
                     tracing::debug!(path = ?path, error = ?err, "nearest tsconfig.json is not usable");
@@ -2724,8 +2757,20 @@ fn describe_tsconfig_error(err: &ResolveError) -> String {
                 path.display()
             )
         }
+        ResolveError::IOError(err) => err.to_string(),
         err => format!("failed to read a tsconfig: {err}"),
     }
+}
+
+/// Whether `err` is a tsconfig that exists but could not be read, which
+/// discovery skips to keep walking up rather than treating as "no config".
+fn is_io_failure(err: &ResolveError) -> bool {
+    matches!(err, ResolveError::TsconfigLoadFailed { source, .. }
+        if matches!(source.as_ref(), ResolveError::IOError(_)))
+}
+
+fn warn_unreadable(err: &ResolveError) {
+    warn_once(format!("{}; skipping it", describe_tsconfig_error(err)));
 }
 
 /// Print a warning to stderr, once per process for each distinct message.
@@ -3158,6 +3203,14 @@ mod tests {
             )))),
             "failed to read the tsconfig /project/tsconfig.json: the tsconfig /project/base.json, \
              which a tsconfig extends or references, does not exist"
+        );
+        let unreadable = load_failed(ResolveError::from(std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied,
+        )));
+        assert!(is_io_failure(&unreadable));
+        assert_eq!(
+            describe_tsconfig_error(&unreadable),
+            "failed to read the tsconfig /project/tsconfig.json: permission denied"
         );
         assert_eq!(
             describe_tsconfig_error(&ResolveError::TsconfigNotFound(PathBuf::from(
