@@ -24,7 +24,9 @@ use oxc::{
     },
     ast_visit::{Visit, walk},
     codegen::{Codegen, CodegenOptions, CodegenReturn},
-    diagnostics::{Diagnostics, OxcDiagnostic},
+    diagnostics::{
+        Diagnostics, GraphicalReportHandler, GraphicalTheme, NamedSource, OxcDiagnostic,
+    },
     parser::{Parser, ParserReturn},
     semantic::SemanticBuilder,
     span::SourceType,
@@ -1419,10 +1421,10 @@ fn oxc_transform<S: TryAsStr>(
         if is_cts(source_type) && cts_uses_import_meta(source_str, source_type) {
             return Err(cts_module_syntax_error(src_path));
         }
-        let msg = join_errors(diagnostics.into_vec(), source_str);
+        let msg = join_errors(diagnostics.into_vec(), source_str, src_path);
         return Err(Error::new(
             Status::GenericFailure,
-            format!("Failed to parse {}: {}", src_path.display(), msg),
+            format!("Failed to parse {}:\n{}", src_path.display(), msg),
         ));
     }
     // A `.ts`/`.js` file inside a CommonJS package is reported as `commonjs`, but nothing
@@ -1611,10 +1613,10 @@ fn transform_program<'a>(
     .build_with_scoping(scoping, program);
 
     if !diagnostics.is_empty() {
-        let msg = join_errors(diagnostics.into_vec(), source_str);
+        let msg = join_errors(diagnostics.into_vec(), source_str, src_path);
         return Err(Error::new(
             Status::GenericFailure,
-            format!("Failed to transform {}: {}", src_path.display(), msg),
+            format!("Failed to transform {}:\n{}", src_path.display(), msg),
         ));
     }
 
@@ -2126,10 +2128,10 @@ fn load_commonjs_esm(
     // From here on the file is handed back as an ES module, so surface parse errors
     // exactly as the source-bearing path would.
     if !diagnostics.is_empty() {
-        let msg = join_errors(diagnostics.into_vec(), source);
+        let msg = join_errors(diagnostics.into_vec(), source, &path);
         return Err(Error::new(
             Status::GenericFailure,
-            format!("Failed to parse {}: {}", path.display(), msg),
+            format!("Failed to parse {}:\n{}", path.display(), msg),
         ));
     }
     // A module keeps its top-level awaits, hence the last `false`. `Module::Esm` emits
@@ -2650,10 +2652,29 @@ fn has_decorator(program: &Program<'_>, source: &str) -> bool {
     finder.0
 }
 
-fn join_errors(errors: Vec<OxcDiagnostic>, source_str: &str) -> String {
+/// Render each diagnostic as a colorless report with its location — a
+/// `path:line:column` header and the offending lines — the way esbuild, tsc
+/// and Node.js' type stripping point at a syntax error. `Display` on the
+/// diagnostic prints only the message, which in a large file leaves no way to
+/// find the error (issue #839). Messages are not wrapped, so each stays on one
+/// line that a search for it still finds.
+fn join_errors(errors: Vec<OxcDiagnostic>, source: &str, path: &Path) -> String {
+    // The load hook hands over a `file:` URL; the report names the file the way an
+    // editor or terminal can open it.
+    let name = path.to_str().and_then(file_url_to_path).unwrap_or_else(|| path.to_path_buf());
+    let name = name.to_string_lossy();
+    let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none())
+        .with_width(usize::MAX)
+        .with_links(false);
     errors
         .into_iter()
-        .map(|err| err.with_source_code(source_str.to_owned()).to_string())
+        .map(|err| {
+            let report = err.with_source_code(NamedSource::new(&name, source.to_owned()));
+            let mut rendered = String::new();
+            // Writing into a `String` cannot fail.
+            let _ = handler.render_report(&mut rendered, report.as_ref());
+            rendered.trim_end().to_owned()
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -2777,6 +2798,36 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    // Issue #839: a diagnostic names the file, line and column and shows the
+    // offending line, rather than only its message.
+    #[test]
+    fn diagnostics_render_location_and_code_frame() {
+        let source = "const ok = 1;\nconsole.log(ok);\nconst broken: number = ;\n";
+        let at = u32::try_from(source.rfind(';').unwrap()).unwrap();
+        let errors = vec![
+            OxcDiagnostic::error("Unexpected token").with_label(oxc::span::Span::new(at, at + 1)),
+        ];
+        let rendered = join_errors(errors, source, Path::new("/x/main.ts"));
+        assert!(rendered.contains("x Unexpected token"), "{rendered}");
+        assert!(rendered.contains("[/x/main.ts:3:24]"), "{rendered}");
+        assert!(rendered.contains("3 | const broken: number = ;"), "{rendered}");
+        // A long message is not wrapped.
+        let message = "Import assignment cannot be used when targeting ECMAScript modules.";
+        let errors =
+            vec![OxcDiagnostic::error(message).with_label(oxc::span::Span::new(at, at + 1))];
+        assert!(join_errors(errors, source, Path::new("/x/main.ts")).contains(message));
+        // A `file:` URL from the load hook is named by its decoded path.
+        #[cfg(not(windows))]
+        {
+            let errors = vec![
+                OxcDiagnostic::error("Unexpected token")
+                    .with_label(oxc::span::Span::new(at, at + 1)),
+            ];
+            let rendered = join_errors(errors, source, Path::new("file:///x/a%20b/m%231.ts"));
+            assert!(rendered.contains("[/x/a b/m#1.ts:3:24]"), "{rendered}");
+        }
+    }
 
     // The Windows `file:` URL matrix lives with the module in
     // windows_file_url.rs; what remains here is the platform behavior this
