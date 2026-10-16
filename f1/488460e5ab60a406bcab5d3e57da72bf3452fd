@@ -1,0 +1,21 @@
+packages/integrate-vitest/__tests__/tsconfig-discovery.spec.ts
+  s_5b25d6ae40e975::t_5f18c40a54b9d2 1053-1073
+src/lib.rs
+  s_5b25d6ae40e975::t_c884c124e3bef0 304-306,312-319,322-326
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f1488460e5ab60a406bcab5d3e57da72bf3452fd",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
