@@ -1,0 +1,21 @@
+packages/integrate-vitest/__tests__/percent-encoded-paths.spec.ts
+  s_5b25d6ae40e975::t_1a004eac0642f1 181-196
+src/lib.rs
+  s_5b25d6ae40e975::t_23b795f32fba65 823-826,1798-1799,1805-1810,2924-2927
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "45e52fcb72ac682e395fd3f7e35b32c3ca092194",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
