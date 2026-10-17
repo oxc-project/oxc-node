@@ -1,0 +1,21 @@
+packages/integrate-vitest/__tests__/bom.spec.ts
+  s_5b25d6ae40e975::t_375f459c904830 1-93
+src/lib.rs
+  s_5b25d6ae40e975::t_cd370b77e77500 1718,2489,2549,2821-2829,3505-3519
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "62fe05766b31704b0e03e51f383f208aa852bea2",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
