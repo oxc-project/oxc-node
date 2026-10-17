@@ -1,0 +1,21 @@
+packages/integrate-vitest/__tests__/preserve-symlinks.spec.ts
+  s_5b25d6ae40e975::t_29d4a7e6b9d8c2 5,14-20,56
+packages/integrate-vitest/__tests__/stdin-tty.spec.ts
+  s_5b25d6ae40e975::t_88b83d87839751 33-34,67-68,123-124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3566ccaf6208902024257bf746fcfceb270e92ca",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
