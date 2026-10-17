@@ -53,7 +53,7 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     // other — and the URL parser removes every ASCII tab or newline before
     // parsing, so `fi\tle://…` is one too.
     let cleaned;
-    let url = if url.contains(['\t', '\n', '\r']) {
+    let url = if memchr::memchr3(b'\t', b'\n', b'\r', url.as_bytes()).is_some() {
         cleaned = url.replace(['\t', '\n', '\r'], "");
         &cleaned
     } else {
@@ -69,7 +69,7 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     // The query and fragment are not part of the filesystem path — Node
     // validates and decodes the pathname only — so split them off before the
     // separator checks; `create_resolve` re-attaches them for module identity.
-    let (rest, _suffix) = match rest.find(['?', '#']) {
+    let (rest, _suffix) = match memchr::memchr2(b'?', b'#', rest.as_bytes()) {
         Some(index) => (&rest[..index], &rest[index..]),
         None => (rest, ""),
     };
@@ -96,7 +96,7 @@ pub(super) fn url_to_path(url: &str) -> Option<PathBuf> {
     // UNC form: `file://server/share/a`. The URL parser treats `\` as `/`
     // in special schemes, so an absolute specifier may arrive with either
     // separator and the authority ends at the first of either.
-    let (host, path) = match rest.find(['/', '\\']) {
+    let (host, path) = match memchr::memchr2(b'/', b'\\', rest.as_bytes()) {
         Some(index) => (&rest[..index], &rest[index + 1..]),
         None => (rest, ""),
     };
@@ -195,7 +195,7 @@ pub(super) fn path_to_url(path: &str) -> String {
 }
 
 fn unc_path_to_url(stripped: &str) -> String {
-    let (host, rest) = match stripped.find(['\\', '/']) {
+    let (host, rest) = match memchr::memchr2(b'\\', b'/', stripped.as_bytes()) {
         Some(index) => (&stripped[..index], &stripped[index + 1..]),
         None => (stripped, ""),
     };
@@ -502,7 +502,7 @@ fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
     let mut buf: Option<String> = None;
     let mut cur: &str = path;
 
-    if cur.contains('\\') {
+    if memchr::memchr(b'\\', cur.as_bytes()).is_some() {
         buf = Some(cur.replace('\\', "/"));
         cur = buf.as_deref().unwrap_or_default();
     }
@@ -518,7 +518,7 @@ fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
 
     let bytes = cur.as_bytes();
     let mut search_from = 0;
-    while let Some(relative) = bytes[search_from..].iter().position(|&byte| byte == b'%') {
+    while let Some(relative) = memchr::memchr(b'%', &bytes[search_from..]) {
         let index = search_from + relative;
         match hex_byte(bytes, index) {
             Some(0x2f | 0x5c) => return None,
@@ -533,7 +533,7 @@ fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
         // names anyway, so the literal name can only fail — Node fails too
         // (ENOENT) — and failing here matches that.
         Some(Cow::Borrowed(_)) => {
-            if cur.contains('?') {
+            if memchr::memchr(b'?', cur.as_bytes()).is_some() {
                 return None;
             }
             Some(match buf {
@@ -542,7 +542,7 @@ fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
             })
         }
         Some(Cow::Owned(decoded)) => {
-            if decoded.contains('?') {
+            if memchr::memchr(b'?', decoded.as_bytes()).is_some() {
                 return None;
             }
             Some(Cow::Owned(decoded))
@@ -558,7 +558,7 @@ fn decode_path_string(path: &str) -> Option<Cow<'_, str>> {
 fn has_forbidden_host_escape(host: &str) -> bool {
     let bytes = host.as_bytes();
     let mut search_from = 0;
-    while let Some(relative) = bytes[search_from..].iter().position(|&byte| byte == b'%') {
+    while let Some(relative) = memchr::memchr(b'%', &bytes[search_from..]) {
         let index = search_from + relative;
         match hex_byte(bytes, index) {
             Some(byte) if forbidden_host_byte(byte) => return true,

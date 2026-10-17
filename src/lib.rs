@@ -306,13 +306,16 @@ impl TsconfigSource {
         // a truncated or lossily converted one.
         let mut faithful = true;
         let path = match path.to_str() {
-            Some(text) if text.contains('#') && text.is_ascii() && !text.contains('?') => {
-                escaped = PathBuf::from(text.replace('#', "\u{0}#"));
-                escaped.as_path()
-            }
             Some(text) => {
-                faithful = !text.contains('#') && !text.contains('?');
-                path
+                let hash = memchr::memchr(b'#', text.as_bytes()).is_some();
+                let query = memchr::memchr(b'?', text.as_bytes()).is_some();
+                if hash && text.is_ascii() && !query {
+                    escaped = PathBuf::from(text.replace('#', "\u{0}#"));
+                    escaped.as_path()
+                } else {
+                    faithful = !hash && !query;
+                    path
+                }
             }
             None => {
                 faithful = false;
@@ -537,7 +540,7 @@ fn is_bare_specifier(specifier: &str) -> bool {
     // up first keeps a bare name — which never contains one — to a single
     // memchr-backed scan; the per-byte validation runs only when a colon
     // exists at all.
-    match specifier.find(':') {
+    match memchr::memchr(b':', specifier.as_bytes()) {
         None | Some(0) => true,
         Some(end) => {
             let bytes = specifier.as_bytes();
@@ -1059,8 +1062,11 @@ mod windows_file_url;
 fn file_url_to_path(url: &str) -> Option<PathBuf> {
     let path = url_path(url.strip_prefix(PATH_PREFIX)?);
     // The URL parser reads a raw `\` as `/`, as it does in every special URL.
-    let path =
-        if path.contains('\\') { Cow::Owned(path.replace('\\', "/")) } else { Cow::Borrowed(path) };
+    let path = if memchr::memchr(b'\\', path.as_bytes()).is_some() {
+        Cow::Owned(path.replace('\\', "/"))
+    } else {
+        Cow::Borrowed(path)
+    };
     decode_url_path(&path).map(|path| PathBuf::from(path.into_owned()))
 }
 
@@ -1125,10 +1131,12 @@ fn hex_digit(byte: u8) -> Option<u8> {
 /// `ERR_INVALID_MODULE_SPECIFIER` rather than decoding it into a separator
 /// and loading a file from a subdirectory, so oxc-node leaves it to Node.
 fn has_encoded_separator(pathname: &str) -> bool {
-    pathname.as_bytes().windows(3).any(|window| {
-        window[0] == b'%'
-            && (window[1] == b'2' && window[2].eq_ignore_ascii_case(&b'f')
-                || window[1] == b'5' && window[2].eq_ignore_ascii_case(&b'c'))
+    let bytes = pathname.as_bytes();
+    memchr::memchr_iter(b'%', bytes).any(|index| {
+        bytes.get(index + 1..index + 3).is_some_and(|hex| {
+            hex[0] == b'2' && hex[1].eq_ignore_ascii_case(&b'f')
+                || hex[0] == b'5' && hex[1].eq_ignore_ascii_case(&b'c')
+        })
     })
 }
 
@@ -1165,7 +1173,9 @@ fn has_malformed_escape(pathname: &str) -> bool {
 /// only a file name that holds one of those itself is left to Node.
 fn resolver_request<'a>(base: &'a Path, path: &str) -> Option<(Cow<'a, Path>, Cow<'static, str>)> {
     fn exact(path: &str) -> bool {
-        !path.contains('?') && (path.is_ascii() || !path.contains('#'))
+        let bytes = path.as_bytes();
+        memchr::memchr(b'?', bytes).is_none()
+            && (path.is_ascii() || memchr::memchr(b'#', bytes).is_none())
     }
     fn escaped(path: &str) -> String {
         path.replace('#', "\u{0}#")
@@ -2016,7 +2026,7 @@ pub fn create_resolve<'env>(
     #[cfg(windows)]
     let cleaned;
     #[cfg(windows)]
-    let file_specifier = if specifier.contains(['\t', '\n', '\r']) {
+    let file_specifier = if memchr::memchr3(b'\t', b'\n', b'\r', specifier.as_bytes()).is_some() {
         cleaned = specifier.replace(['\t', '\n', '\r'], "");
         cleaned.as_str()
     } else {
@@ -2132,7 +2142,12 @@ pub fn create_resolve<'env>(
             suffix = &file_specifier[pathname.len()..];
             resolver_request(Path::new("/"), &specifier_path.to_string_lossy())
         }
-    } else if is_path_reference && specifier.contains(['%', '\\', '?', '#']) {
+    } else if is_path_reference
+        // `memchr3` takes at most three bytes, and two passes still beat one
+        // pass of a `char` set, which decodes every character.
+        && (memchr::memchr3(b'%', b'\\', b'?', specifier.as_bytes()).is_some()
+            || memchr::memchr(b'#', specifier.as_bytes()).is_some())
+    {
         let pathname = url_path(&specifier);
         if has_encoded_separator(pathname) || has_malformed_escape(pathname) {
             None
@@ -3294,15 +3309,20 @@ fn frame_too_large(source: &str, start: usize, end: usize) -> bool {
         }
     }
     let frame = &bytes[first..last];
+    let mut line_start = 0;
     frame.len() > MAX_FRAME_BYTES
-        || frame.split(|byte| *byte == b'\n').any(|line| line.len() > MAX_FRAME_LINE_BYTES)
+        || memchr::memchr_iter(b'\n', frame).chain([frame.len()]).any(|line_end| {
+            let long = line_end - line_start > MAX_FRAME_LINE_BYTES;
+            line_start = line_end + 1;
+            long
+        })
 }
 
 /// The one-based line and column (in characters) of a byte offset, as the code
 /// frame header counts them.
 fn line_column(source: &str, offset: usize) -> (usize, usize) {
     let before = source.get(..offset.min(source.len())).unwrap_or(source);
-    let line_start = before.rfind('\n').map_or(0, |index| index + 1);
+    let line_start = memchr::memrchr(b'\n', before.as_bytes()).map_or(0, |index| index + 1);
     (
         memchr::memchr_iter(b'\n', before.as_bytes()).count() + 1,
         before[line_start..].chars().count() + 1,
@@ -3390,7 +3410,7 @@ fn typescript_dep_format(output: &mut ResolveFnOutput) {
 /// supports `import "./mod.ts?v=1"`, and `Path::extension()` on the full URL would report
 /// `ts?v=1`.
 fn url_path(url: &str) -> &str {
-    let end = url.find(['?', '#']).unwrap_or(url.len());
+    let end = memchr::memchr2(b'?', b'#', url.as_bytes()).unwrap_or(url.len());
     &url[..end]
 }
 
@@ -3703,6 +3723,30 @@ mod tests {
         }
         for pathname in ["./a%23b.ts", "./a%25 2F.ts", "./a%2", "./a%5", "./a/b.ts"] {
             assert!(!has_encoded_separator(pathname), "{pathname}");
+        }
+    }
+
+    #[test]
+    fn frame_too_large_measures_each_line() {
+        let fits = "x".repeat(MAX_FRAME_LINE_BYTES);
+        let long = "x".repeat(MAX_FRAME_LINE_BYTES + 1);
+        // The span is on the middle line, so the frame holds all three; the
+        // last one has no trailing newline.
+        for (lines, expected) in [
+            ([fits.as_str(), "a", fits.as_str()], false),
+            ([long.as_str(), "a", "b"], true),
+            (["a", long.as_str(), "b"], true),
+            (["a", "b", long.as_str()], true),
+        ] {
+            let source = lines.join("\n");
+            let start = lines[0].len() + 1;
+            assert_eq!(
+                frame_too_large(&source, start, start),
+                expected,
+                "{:?}",
+                lines.map(str::len)
+            );
+            assert_eq!(frame_too_large(&format!("{source}\n"), start, start), expected);
         }
     }
 
