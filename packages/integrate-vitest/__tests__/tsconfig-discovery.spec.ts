@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -93,6 +93,18 @@ const runNode = (cwd: string, args: string[], env: Record<string, string | undef
   return { ...result, stderr: stripNodeWarnings(result.stderr) };
 };
 
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Matches stderr that holds exactly one warning that `path` could not be read.
+ * On macOS the temporary directory is a symlink, so the resolver may report
+ * the canonical `/private` path.
+ */
+const warning = (path: string, outcome: string) =>
+  new RegExp(
+    `^oxc-node: warning: failed to read the tsconfig (/private)?${escapeRegExp(path)}: [^\n]+; ${outcome}$`,
+  );
+
 /** The code the transformer emits for `entry`, run from `cwd` inside `root`. */
 const emit = (root: string, cwd: string, entry: string, env?: Record<string, string | undefined>) =>
   runNode(cwd, [join(root, "dump.mjs"), entry], env);
@@ -153,7 +165,11 @@ test("a broken project reference in an ancestor that does not own the file break
   });
   try {
     const ran = runWithHooks(join(root, "sub"), "./entry.ts");
-    expect(ran.stderr, "resolution should not fail").toBe("");
+    expect(ran.stderr, "the missing reference is reported, nothing more").toMatch(
+      new RegExp(
+        `^oxc-node: warning: the tsconfig (/private)?${escapeRegExp(join(root, "missing"))}, which a tsconfig extends or references, does not exist; ignoring it$`,
+      ),
+    );
     expect(ran.stdout.trim(), "./dep.js should still resolve to dep.ts").toBe("resolved:dep-ok");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -168,6 +184,9 @@ test("an explicit TS_NODE_PROJECT that does not exist disables discovery entirel
     });
     expect(emitted.stderr, "an explicit missing config must not fall back to discovery").toContain(
       NO_LEGACY_DECORATORS,
+    );
+    expect(emitted.stderr, "the missing config must be reported").toContain(
+      `oxc-node: warning: the tsconfig TS_NODE_PROJECT names, ${join(root, "does-not-exist.json")}, does not exist; running without a tsconfig`,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -719,7 +738,9 @@ test("a broken nearest tsconfig means no fallback and the walk stops", () => {
   );
   try {
     const ran = runWithHooks(join(relative, "mid", "scripts"), "./seed.ts");
-    expect(ran.stderr, "a broken nearest config should only cost the aliases").toBe("");
+    expect(ran.stderr, "a broken nearest config should only cost the aliases").toMatch(
+      warning(join(relative, "mid", "tsconfig.json"), "ignoring it"),
+    );
     expect(ran.stdout.trim(), "relative resolution needs no config").toBe("relative:dep-ok");
   } finally {
     rmSync(relative, { recursive: true, force: true });
@@ -761,7 +782,9 @@ await attempt("second");
   );
   try {
     const ran = runWithHooks(join(root, "scripts"), "./seed.ts");
-    expect(ran.stderr, "both imports are caught; nothing should reach stderr").toBe("");
+    expect(ran.stderr, "both imports are caught; only the warning reaches stderr").toMatch(
+      warning(join(root, "tsconfig.json"), "ignoring it"),
+    );
     expect(ran.stdout.trim().split("\n"), "a corrected config must be picked up").toEqual([
       "first:failed",
       "second:resolved",
@@ -840,3 +863,414 @@ test("a project directory with a space and non-ASCII characters still resolves",
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Issue #844: a tsconfig that cannot be used is reported once on stderr
+// instead of being dropped without a word, and the run goes on without it.
+test("a missing OXC_TSCONFIG_PATH is reported", () => {
+  const root = createProject({ "tsconfig.json": DECORATORS_TSCONFIG, "entry.ts": DECORATED });
+  try {
+    const emitted = emit(root, root, "./entry.ts", {
+      OXC_TSCONFIG_PATH: join(root, "does-not-exist.json"),
+    });
+    expect(emitted.stderr, "the missing config must be reported").toContain(
+      `oxc-node: warning: the tsconfig OXC_TSCONFIG_PATH names, ${join(root, "does-not-exist.json")}, does not exist; running without a tsconfig`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an explicit tsconfig that cannot be parsed is reported", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "broken.json": "{ not json",
+    "a.ts": 'export const a = "ran";\n',
+    // `./a.js` -> `a.ts` needs oxc-node's own resolver, which must still work.
+    "entry.ts": 'import { a } from "./a.js";\nconsole.log(a);\n',
+  });
+  try {
+    const ran = runWithHooks(root, "./entry.ts", { TS_NODE_PROJECT: join(root, "broken.json") });
+    expect(ran.stderr, "the broken config must be reported once").toMatch(
+      warning(join(root, "broken.json"), "running without a tsconfig"),
+    );
+    expect(ran.stdout.trim(), "the run goes on without the config").toBe("ran");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a discovered tsconfig that cannot be parsed is reported once per process", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": "{ not json",
+    "a.ts": 'export const a = "a";\n',
+    "b.ts": 'export const b = "b";\n',
+    "entry.ts": 'import { a } from "./a.ts";\nimport { b } from "./b.ts";\nconsole.log(a + b);\n',
+  });
+  try {
+    const ran = runWithHooks(root, "./entry.ts");
+    expect(ran.stderr, "three files share the config; it is reported once").toMatch(
+      warning(join(root, "tsconfig.json"), "ignoring it"),
+    );
+    expect(ran.stdout.trim(), "the run goes on without the config").toBe("ab");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a tsconfig that extends a missing file is reported", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({ extends: "./missing-base.json" }),
+    "entry.ts": 'console.log("ran");\n',
+  });
+  try {
+    const ran = runWithHooks(root, "./entry.ts");
+    expect(ran.stderr, "the missing base must be named").toMatch(
+      new RegExp(
+        `^oxc-node: warning: the tsconfig (/private)?${escapeRegExp(join(root, "missing-base.json"))}, which a tsconfig extends or references, does not exist; ignoring it$`,
+      ),
+    );
+    expect(ran.stdout.trim(), "the run goes on without the config").toBe("ran");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Discovery skips a tsconfig it cannot open and walks on to a grandparent
+// without returning an error, so the skip is reported on its own. Mode bits
+// stop neither root nor Windows from reading the file.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an unreadable discovered tsconfig is reported as skipped",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["lib/*"] } },
+      }),
+      "lib/x.ts": 'export const x = "from lib";\n',
+      "sub/tsconfig.json": "{}",
+      "sub/entry.ts": 'import { x } from "@lib/x.ts";\nconsole.log(x);\n',
+    });
+    chmodSync(join(root, "sub", "tsconfig.json"), 0o000);
+    try {
+      const ran = runWithHooks(join(root, "sub"), "./entry.ts");
+      expect(ran.stderr, "the unreadable config must be reported once").toMatch(
+        warning(join(root, "sub", "tsconfig.json"), "skipping it"),
+      );
+      expect(ran.stdout.trim(), "discovery walks on to the root config").toBe("from lib");
+    } finally {
+      chmodSync(join(root, "sub", "tsconfig.json"), 0o644);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+// A readable config that does not claim the file does not stop discovery, so
+// an unreadable one above it is still walked past and must still be reported.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an unreadable tsconfig above a config that does not claim the file is reported",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["lib/*"] } },
+      }),
+      "lib/x.ts": 'export const x = "from lib";\n',
+      "mid/tsconfig.json": "{}",
+      "mid/sub/tsconfig.json": JSON.stringify({ include: ["other"] }),
+      "mid/sub/entry.ts": 'import { x } from "@lib/x.ts";\nconsole.log(x);\n',
+    });
+    chmodSync(join(root, "mid", "tsconfig.json"), 0o000);
+    try {
+      const ran = runWithHooks(join(root, "mid", "sub"), "./entry.ts");
+      expect(ran.stderr, "the unreadable config must be reported once").toMatch(
+        warning(join(root, "mid", "tsconfig.json"), "skipping it"),
+      );
+      expect(ran.stdout.trim(), "discovery walks on to the root config").toBe("from lib");
+    } finally {
+      chmodSync(join(root, "mid", "tsconfig.json"), 0o644);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+// A config behind a directory that may not be searched may well exist; saying
+// it does not would send the user looking for a typo.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an explicit tsconfig that cannot be checked is reported as unreadable",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "locked/tsconfig.json": "{}",
+      "entry.ts": 'console.log("ran");\n',
+    });
+    const config = join(root, "locked", "tsconfig.json");
+    chmodSync(join(root, "locked"), 0o000);
+    try {
+      const ran = runWithHooks(root, "./entry.ts", { TS_NODE_PROJECT: config });
+      expect(ran.stderr, "the config must be reported as unreadable, once").toMatch(
+        new RegExp(
+          `^oxc-node: warning: failed to read the tsconfig TS_NODE_PROJECT names, ${escapeRegExp(config)}: [^\\n]+; running without a tsconfig$`,
+        ),
+      );
+      expect(ran.stdout.trim(), "the run goes on without the config").toBe("ran");
+    } finally {
+      chmodSync(join(root, "locked"), 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+// A missing `references` target fails the lookup without naming the config it
+// failed on; the unreadable config the walk skipped first must still be named.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an unreadable tsconfig below a config with a missing reference is reported",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "tsconfig.json": JSON.stringify({ references: [{ path: "./missing" }] }),
+      "sub/tsconfig.json": "{}",
+      "sub/entry.ts": 'console.log("ran");\n',
+    });
+    chmodSync(join(root, "sub", "tsconfig.json"), 0o000);
+    try {
+      const ran = runWithHooks(join(root, "sub"), "./entry.ts");
+      expect(ran.stderr, "the skipped config must be reported").toMatch(
+        new RegExp(
+          `^oxc-node: warning: failed to read the tsconfig (/private)?${escapeRegExp(join(root, "sub", "tsconfig.json"))}: [^\\n]+; skipping it$`,
+          "m",
+        ),
+      );
+      expect(ran.stderr, "so must the missing reference").toContain(
+        "which a tsconfig extends or references, does not exist; ignoring it",
+      );
+      expect(ran.stdout.trim(), "the run goes on without a config").toBe("ran");
+    } finally {
+      chmodSync(join(root, "sub", "tsconfig.json"), 0o644);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+// Discovery reads `?` as the start of a query and walks up from the truncated
+// path, so it never sees a config in the directory named `q?x`; reporting that
+// config as skipped would be wrong.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an unreadable tsconfig discovery never reached is not reported",
+  () => {
+    const root = createProject({
+      "q?x/tsconfig.json": "{}",
+      "q?x/entry.ts": "export const x: number = 1;\n",
+    });
+    chmodSync(join(root, "q?x", "tsconfig.json"), 0o000);
+    try {
+      const emitted = emit(root, root, "./q?x/entry.ts");
+      expect(emitted.stderr, "nothing was skipped, so nothing is reported").toBe("");
+    } finally {
+      chmodSync(join(root, "q?x", "tsconfig.json"), 0o644);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+// The resolver takes a `tsconfig.json` whose metadata cannot be read, here a
+// symlink into a directory that may not be searched, for "not a file" and
+// walks on; that is a skipped config too.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "a tsconfig symlinked into an unsearchable directory is reported as skipped",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["lib/*"] } },
+      }),
+      "lib/x.ts": 'export const x = "from lib";\n',
+      "locked/real.json": "{}",
+      "sub/entry.ts": 'import { x } from "@lib/x.ts";\nconsole.log(x);\n',
+    });
+    symlinkSync(join(root, "locked", "real.json"), join(root, "sub", "tsconfig.json"));
+    chmodSync(join(root, "locked"), 0o000);
+    try {
+      const ran = runWithHooks(join(root, "sub"), "./entry.ts");
+      expect(ran.stderr, "the unreachable config must be reported once").toMatch(
+        warning(join(root, "sub", "tsconfig.json"), "skipping it"),
+      );
+      expect(ran.stdout.trim(), "discovery walks on to the root config").toBe("from lib");
+    } finally {
+      chmodSync(join(root, "locked"), 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+// A failed lookup stops at the config that failed; a readable config below it
+// that does not claim the file was walked past, and so was the unreadable one
+// between them.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an unreadable tsconfig between a non-owning config and a failing one is reported",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "tsconfig.json": JSON.stringify({ references: [{ path: "./missing" }] }),
+      "mid/tsconfig.json": "{}",
+      "mid/sub/tsconfig.json": JSON.stringify({ include: ["other"] }),
+      "mid/sub/entry.ts": 'console.log("ran");\n',
+    });
+    chmodSync(join(root, "mid", "tsconfig.json"), 0o000);
+    try {
+      const ran = runWithHooks(join(root, "mid", "sub"), "./entry.ts");
+      expect(ran.stderr, "the skipped config must be reported").toMatch(
+        new RegExp(
+          `^oxc-node: warning: failed to read the tsconfig (/private)?${escapeRegExp(join(root, "mid", "tsconfig.json"))}: [^\\n]+; skipping it$`,
+          "m",
+        ),
+      );
+      expect(ran.stderr, "so must the missing reference").toContain(
+        "which a tsconfig extends or references, does not exist; ignoring it",
+      );
+      expect(ran.stdout.trim(), "the run goes on without a config").toBe("ran");
+    } finally {
+      chmodSync(join(root, "mid", "tsconfig.json"), 0o644);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+// An importer under `q?x` goes unscanned (discovery walks from the truncated
+// path), so a bare import reaches the nearest-ancestor fallback, which walks
+// the real path and must report the symlinked config it skips just the same.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "the nearest-ancestor fallback reports a tsconfig it cannot look up",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["lib/*"] } },
+        include: ["lib"],
+      }),
+      "lib/x.ts": 'export const x = "from lib";\n',
+      "locked/real.json": "{}",
+      "q?x/entry.ts": 'import { x } from "@lib/x.ts";\nconsole.log(x);\n',
+    });
+    symlinkSync(join(root, "locked", "real.json"), join(root, "q?x", "tsconfig.json"));
+    chmodSync(join(root, "locked"), 0o000);
+    try {
+      const ran = runWithHooks(join(root, "q?x"), "./entry.ts");
+      expect(ran.stderr, "the unreachable config must be reported once").toMatch(
+        warning(join(root, "q?x", "tsconfig.json"), "skipping it"),
+      );
+      expect(ran.stdout.trim(), "the fallback walks on to the root config").toBe("from lib");
+    } finally {
+      chmodSync(join(root, "locked"), 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+// A `tsconfig.json` symlink whose target is gone, as a removed worktree leaves
+// behind, is skipped by the resolver as if nothing were there.
+test.skipIf(process.platform === "win32")("a dangling tsconfig symlink is reported", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["lib/*"] } },
+    }),
+    "lib/x.ts": 'export const x = "from lib";\n',
+    "sub/entry.ts": 'import { x } from "@lib/x.ts";\nconsole.log(x);\n',
+  });
+  symlinkSync(join(root, "gone.json"), join(root, "sub", "tsconfig.json"));
+  try {
+    const ran = runWithHooks(join(root, "sub"), "./entry.ts");
+    expect(ran.stderr, "the dangling symlink must be reported once").toMatch(
+      new RegExp(
+        `^oxc-node: warning: the tsconfig (/private)?${escapeRegExp(join(root, "sub", "tsconfig.json"))} is a symlink to a file that does not exist; skipping it$`,
+      ),
+    );
+    expect(ran.stdout.trim(), "discovery walks on to the root config").toBe("from lib");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A symlink cycle fails the lookup with `ELOOP`, not a refusal, and is skipped
+// by the resolver all the same.
+test.skipIf(process.platform === "win32")("a tsconfig symlink cycle is reported", () => {
+  const root = createProject({
+    "package.json": JSON.stringify({ type: "module" }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["lib/*"] } },
+    }),
+    "lib/x.ts": 'export const x = "from lib";\n',
+    "sub/entry.ts": 'import { x } from "@lib/x.ts";\nconsole.log(x);\n',
+  });
+  symlinkSync(join(root, "sub", "tsconfig.json"), join(root, "sub", "tsconfig.json"));
+  try {
+    const ran = runWithHooks(join(root, "sub"), "./entry.ts");
+    expect(ran.stderr, "the cycle must be reported once").toMatch(
+      warning(join(root, "sub", "tsconfig.json"), "skipping it"),
+    );
+    expect(ran.stdout.trim(), "discovery walks on to the root config").toBe("from lib");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Under `q?x` only the nearest-ancestor fallback sees the real chain, so it
+// must report a malformed config it rejects itself.
+test.skipIf(process.platform === "win32")(
+  "the nearest-ancestor fallback reports a malformed config",
+  () => {
+    const root = createProject({
+      "package.json": JSON.stringify({ type: "module" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["lib/*"] } },
+        include: ["lib"],
+      }),
+      "lib/x.ts": 'export const x = "from lib";\n',
+      "q?x/tsconfig.json": "{ not json",
+      "q?x/entry.ts": 'import { x } from "@lib/x.ts";\nconsole.log(x);\n',
+    });
+    try {
+      const ran = runWithHooks(join(root, "q?x"), "./entry.ts");
+      expect(ran.stderr, "the malformed config must be reported").toMatch(
+        new RegExp(
+          `^oxc-node: warning: failed to read the tsconfig (/private)?${escapeRegExp(join(root, "q?x", "tsconfig.json"))}: [^\\n]+; ignoring it$`,
+          "m",
+        ),
+      );
+      expect(ran.stderr, "the broken nearest config stops the fallback").toContain(
+        "ERR_MODULE_NOT_FOUND",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+// Under a directory that may not be searched, every lookup fails whether or
+// not a config is there; a path the transform API is merely handed must not
+// make up a skipped config.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "a path under an unsearchable directory reports no config that is not there",
+  () => {
+    const root = createProject({ "locked/.keep": "" });
+    writeFileSync(
+      join(root, "virtual.mjs"),
+      `import { join } from "node:path";
+import { OxcTransformer } from "@oxc-node/core";
+const transformer = new OxcTransformer(process.cwd());
+console.log(transformer.transform(join(process.cwd(), "locked", "virtual.ts"), "export const x: number = 1;").source().trim());
+`,
+    );
+    chmodSync(join(root, "locked"), 0o000);
+    try {
+      const ran = runNode(root, [join(root, "virtual.mjs")]);
+      expect(ran.stderr, "no config is there, so none is reported").toBe("");
+      expect(ran.stdout, "the file is still transformed").toContain("export const x = 1;");
+    } finally {
+      chmodSync(join(root, "locked"), 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

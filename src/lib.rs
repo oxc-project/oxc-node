@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs,
     path::{Component, Path, PathBuf},
     sync::{
@@ -299,19 +299,99 @@ impl TsconfigSource {
     /// to ASCII paths without `?`: the resolver drops the escape byte by byte,
     /// mangling multi-byte characters, and `?` has no escape at all.
     fn discover(resolver: &Resolver, path: &Path) -> Option<Arc<TsConfig>> {
+        let original = path;
         let escaped;
+        // Whether the resolver walks up from `path` itself rather than from
+        // a truncated or lossily converted one.
+        let mut faithful = true;
         let path = match path.to_str() {
             Some(text) if text.contains('#') && text.is_ascii() && !text.contains('?') => {
                 escaped = PathBuf::from(text.replace('#', "\u{0}#"));
                 escaped.as_path()
             }
-            _ => path,
+            Some(text) => {
+                faithful = !text.contains('#') && !text.contains('?');
+                path
+            }
+            None => {
+                faithful = false;
+                path
+            }
         };
-        match resolver.find_tsconfig(path) {
+        let found = resolver.find_tsconfig(path);
+        // Scanning a chain the walk never saw could report a config it never
+        // skipped, so a path it cannot represent goes unscanned.
+        if faithful {
+            Self::warn_skipped_unreadable(resolver, original, &found);
+        }
+        match found {
             Ok(tsconfig) => tsconfig,
             Err(err) => {
                 tracing::debug!(path = ?path, error = ?err, "failed to discover tsconfig");
+                // Ignoring a broken config is what keeps one bad ancestor from failing
+                // every file, but doing it silently hides why `paths` stopped applying
+                // (issue #844).
+                warn_once(format!("{}; ignoring it", describe_tsconfig_error(&err)));
                 None
+            }
+        }
+    }
+
+    /// Report each ancestor `tsconfig.json` that `find_tsconfig` walked past
+    /// because it could not be read (permission denied, any I/O error); the
+    /// resolver skips those without returning an error (issue #844).
+    ///
+    /// The walk passed every candidate below the directory it stopped in: the
+    /// one holding the config it returned or failed on, or none at all when no
+    /// config claims the file. A config resolved through a project reference
+    /// does not say which ancestor referenced it, so then the scan stops at the
+    /// first config it can read, which may report fewer than were skipped but
+    /// never one the walk did not reach. The outcome depends on the file, as
+    /// ownership does. A successful lookup is cached by the resolver, which
+    /// then never walks that chain again, so such a file is scanned once; a
+    /// failed one is retried, so it is scanned again each time.
+    fn warn_skipped_unreadable(
+        resolver: &Resolver,
+        path: &Path,
+        found: &std::result::Result<Option<Arc<TsConfig>>, ResolveError>,
+    ) {
+        static SCANNED: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(Default::default);
+        if !path.is_absolute() || path.components().any(|c| c.as_os_str() == "node_modules") {
+            return;
+        }
+        let Some(directory) = path.parent() else {
+            return;
+        };
+        let stop = match found {
+            Ok(Some(tsconfig)) => tsconfig.path().parent(),
+            Err(ResolveError::TsconfigLoadFailed { path, .. }) => path.parent(),
+            Ok(None) | Err(_) => None,
+        };
+        // Only a stop in the ancestor chain is one the walk can have reached.
+        let stop = stop.filter(|stop| directory.starts_with(stop));
+        if found.is_ok()
+            && !SCANNED.lock().unwrap_or_else(PoisonError::into_inner).insert(path.to_path_buf())
+        {
+            return;
+        }
+        // A config found through a reference leaves no stop in the chain, and
+        // then only the first config the scan can use is certainly reached.
+        let conservative = stop.is_none() && matches!(found, Ok(Some(_)));
+        for dir in directory.ancestors() {
+            if Some(dir) == stop {
+                return;
+            }
+            let candidate = dir.join("tsconfig.json");
+            if !is_tsconfig_file(&candidate) {
+                continue;
+            }
+            // A config that fails to load for any other reason is where a failed
+            // walk stopped, and every config below it that loads did not claim the
+            // file, or the walk would have stopped there instead.
+            match resolver.resolve_tsconfig(&candidate) {
+                Err(err) if is_io_failure(&err) => warn_unreadable(&err),
+                Ok(_) if !conservative => {}
+                _ => return,
             }
         }
     }
@@ -378,24 +458,26 @@ impl TsconfigSource {
     /// The ancestor walk behind [`Self::nearest`], before memoization.
     fn walk_nearest(resolver: &Resolver, path: &Path) -> Nearest {
         for candidate in path.ancestors().skip(1).map(|dir| dir.join("tsconfig.json")) {
-            if !candidate.is_file() {
+            if !is_tsconfig_file(&candidate) {
                 continue;
             }
             match resolver.resolve_tsconfig(&candidate) {
                 Ok(tsconfig) => return Nearest::Found(tsconfig),
                 // `find_tsconfig_auto` skips a tsconfig that fails with an I/O
                 // error and keeps walking; do the same here.
-                Err(ResolveError::TsconfigLoadFailed { source, .. })
-                    if matches!(source.as_ref(), ResolveError::IOError(_)) =>
-                {
+                Err(err) if is_io_failure(&err) => {
                     tracing::debug!(
                         path = ?path,
-                        error = ?source,
+                        error = ?err,
                         "nearest tsconfig.json is unreadable; walking on"
                     );
+                    warn_unreadable(&err);
                 }
                 Err(err) => {
                     tracing::debug!(path = ?path, error = ?err, "nearest tsconfig.json is not usable");
+                    // Worded as `discover` words it, so a config both reject is
+                    // reported once.
+                    warn_once(format!("{}; ignoring it", describe_tsconfig_error(&err)));
                     return Nearest::Unusable;
                 }
             }
@@ -2695,6 +2777,113 @@ impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
     }
 }
 
+/// A tsconfig load failure, naming the file. oxc_resolver's own message for a parse
+/// error is its `Debug` output, struct syntax included.
+fn describe_tsconfig_error(err: &ResolveError) -> String {
+    match err {
+        ResolveError::TsconfigLoadFailed { path, source } => match source.as_ref() {
+            ResolveError::Json(json) if json.path == *path => {
+                format!("failed to read the tsconfig {}: {}", shown(path), json.message)
+            }
+            source => format!(
+                "failed to read the tsconfig {}: {}",
+                shown(path),
+                describe_tsconfig_error(source)
+            ),
+        },
+        ResolveError::Json(json) => {
+            format!("failed to read the tsconfig {}: {}", shown(&json.path), json.message)
+        }
+        // A missing `extends` or `references` target; the explicitly named file is
+        // checked before the resolver ever loads it.
+        ResolveError::TsconfigNotFound(path) => {
+            format!(
+                "the tsconfig {}, which a tsconfig extends or references, does not exist",
+                shown(path)
+            )
+        }
+        ResolveError::IOError(err) => err.to_string(),
+        err => format!("failed to read a tsconfig: {err}"),
+    }
+}
+
+/// `path` as a warning shows it. On Windows the resolver meets the same file
+/// spelled with `/` and with `\\` (from a file URL and from the transform API),
+/// and both must name it the same way, or one config is reported twice.
+fn shown(path: &Path) -> String {
+    let shown = path.display().to_string();
+    if cfg!(windows) { shown.replace('/', "\\") } else { shown }
+}
+
+/// Whether `err` is a tsconfig that exists but could not be read, which
+/// discovery skips to keep walking up rather than treating as "no config".
+fn is_io_failure(err: &ResolveError) -> bool {
+    matches!(err, ResolveError::TsconfigLoadFailed { source, .. }
+        if matches!(source.as_ref(), ResolveError::IOError(_)))
+}
+
+/// Whether discovery would load `candidate`. The resolver takes a failed
+/// metadata lookup, such as a symlink into a directory that may not be
+/// searched, for "not a file" and walks on; that is a skipped config too, so
+/// it is reported. Every ancestor of a file that was reached is searchable, so
+/// only such an indirection can fail.
+/// wasi-libc's `ENOTCAPABLE`.
+const WASI_ENOTCAPABLE: i32 = 76;
+
+fn is_tsconfig_file(candidate: &Path) -> bool {
+    match fs::metadata(candidate) {
+        Ok(metadata) => metadata.is_file(),
+        // A symlink to nothing is a config entry that cannot be read, often
+        // left behind by a removed worktree.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if fs::symlink_metadata(candidate).is_ok_and(|m| m.file_type().is_symlink()) {
+                warn_once(format!(
+                    "the tsconfig {} is a symlink to a file that does not exist; skipping it",
+                    shown(candidate)
+                ));
+            }
+            false
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotADirectory => false,
+        // What WASI reports for a path outside every preopened directory; the
+        // browser build preopens none, so it means no filesystem, not a config.
+        Err(err)
+            if cfg!(target_family = "wasm") && err.raw_os_error() == Some(WASI_ENOTCAPABLE) =>
+        {
+            false
+        }
+        // Only an entry that is there was skipped: under a directory that may
+        // not be searched, the lookup fails whether or not the file exists.
+        Err(err) => {
+            if fs::symlink_metadata(candidate).is_ok() {
+                warn_unreadable(&ResolveError::TsconfigLoadFailed {
+                    path: candidate.to_path_buf(),
+                    source: Box::new(ResolveError::from(err)),
+                });
+            }
+            false
+        }
+    }
+}
+
+fn warn_unreadable(err: &ResolveError) {
+    warn_once(format!("{}; skipping it", describe_tsconfig_error(err)));
+}
+
+/// Print a warning to stderr, once per process for each distinct message.
+fn warn_once(message: String) {
+    use std::io::Write as _;
+
+    static WARNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let mut warned = WARNED.lock().unwrap_or_else(PoisonError::into_inner);
+    if !warned.contains(&message) {
+        // A closed stderr must not turn a diagnostic into a failure, as
+        // `eprintln!` would by panicking.
+        let _ = writeln!(std::io::stderr(), "oxc-node: warning: {message}");
+        warned.push(message);
+    }
+}
+
 /// Read an environment variable, treating an empty value as unset.
 ///
 /// Continuous integration wrappers and `.env` files routinely export variables
@@ -2734,15 +2923,20 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
         let mut tsconfig_override =
             TSCONFIG_OVERRIDE.lock().unwrap_or_else(PoisonError::into_inner);
         tracing::debug!(api_tsconfig = ?tsconfig_override.path);
-        let explicit_tsconfig = tsconfig_override.path.clone().or_else(|| {
-            let explicit_tsconfig =
-                non_empty_env("TS_NODE_PROJECT").or_else(|| non_empty_env("OXC_TSCONFIG_PATH"));
-            tracing::debug!(explicit_tsconfig = ?explicit_tsconfig);
-            explicit_tsconfig.map(PathBuf::from)
-        });
-        let explicit_tsconfig_path =
-            explicit_tsconfig.map(|tsconfig| absolute_tsconfig_path(&cwd, tsconfig));
-        tsconfig_override.consumed = Some((cwd.clone(), explicit_tsconfig_path.clone()));
+        let explicit_tsconfig =
+            tsconfig_override.path.clone().map(|path| (path, "setTsconfigPath()")).or_else(|| {
+                let explicit_tsconfig = non_empty_env("TS_NODE_PROJECT")
+                    .map(|path| (path, "TS_NODE_PROJECT"))
+                    .or_else(|| {
+                        non_empty_env("OXC_TSCONFIG_PATH").map(|path| (path, "OXC_TSCONFIG_PATH"))
+                    });
+                tracing::debug!(explicit_tsconfig = ?explicit_tsconfig);
+                explicit_tsconfig.map(|(path, source)| (PathBuf::from(path), source))
+            });
+        let explicit_tsconfig_path = explicit_tsconfig
+            .map(|(tsconfig, source)| (absolute_tsconfig_path(&cwd, tsconfig), source));
+        tsconfig_override.consumed =
+            Some((cwd.clone(), explicit_tsconfig_path.as_ref().map(|(path, _)| path.clone())));
         explicit_tsconfig_path
     };
     tracing::debug!(explicit_tsconfig_path = ?explicit_tsconfig_path);
@@ -2756,24 +2950,41 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
         deps.consumed = Some(deps.mode.unwrap_or_else(deps_mode_from_env));
     }
 
-    let tsconfig = match &explicit_tsconfig_path {
+    // `Err` when the path cannot even be checked, such as a parent directory
+    // that may not be searched: the file may exist, but it cannot be read.
+    let explicit_exists = explicit_tsconfig_path.as_ref().map(|(path, _)| fs::exists(path));
+    let tsconfig = match (&explicit_tsconfig_path, &explicit_exists) {
         // Pointing `Manual` at a file that does not exist would make *every*
         // `resolve()` call fail, so disable tsconfig handling instead. Falling
         // back to `Auto` is not an option: an explicit request for a missing
         // config must not quietly pick up a different one.
-        Some(path) if fs::exists(path).unwrap_or(false) => {
-            Some(TsconfigDiscovery::Manual(TsconfigOptions {
-                config_file: path.clone(),
-                references: TsconfigReferences::Auto,
-            }))
+        (Some((path, _)), Some(Ok(true))) => Some(TsconfigDiscovery::Manual(TsconfigOptions {
+            config_file: path.clone(),
+            references: TsconfigReferences::Auto,
+        })),
+        // Silently running without a config left an unrelated `ERR_MODULE_NOT_FOUND`
+        // for a `paths` alias as the first sign — typically a `TS_NODE_PROJECT` left
+        // over from ts-node (issue #844).
+        (Some((path, source)), Some(Err(err))) => {
+            warn_once(format!(
+                "failed to read the tsconfig {source} names, {}: {err}; running without a tsconfig",
+                shown(path)
+            ));
+            None
         }
-        Some(_) => None,
+        (Some((path, source)), _) => {
+            warn_once(format!(
+                "the tsconfig {source} names, {}, does not exist; running without a tsconfig",
+                shown(path)
+            ));
+            None
+        }
         // Nothing was requested: let the resolver find, per file, the nearest
         // `tsconfig.json` that actually claims it.
-        None => Some(TsconfigDiscovery::Auto),
+        (None, _) => Some(TsconfigDiscovery::Auto),
     };
 
-    let resolver = Resolver::new(ResolveOptions {
+    let mut resolver = Resolver::new(ResolveOptions {
         tsconfig,
         extension_alias: vec![
             (".js".to_owned(), vec![".js".to_owned(), ".ts".to_owned(), ".tsx".to_owned()]),
@@ -2798,7 +3009,27 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
     });
 
     let tsconfig_source = match explicit_tsconfig_path {
-        Some(path) => TsconfigSource::Manual(resolver.resolve_tsconfig(path).ok()),
+        Some((path, _)) => TsconfigSource::Manual(match resolver.resolve_tsconfig(&path) {
+            Ok(tsconfig) => Some(tsconfig),
+            Err(err) => {
+                // A missing or uncheckable file was reported above, with what
+                // named it.
+                if matches!(explicit_exists, Some(Ok(true))) {
+                    warn_once(format!(
+                        "{}; running without a tsconfig",
+                        describe_tsconfig_error(&err)
+                    ));
+                }
+                // `Resolver::resolve` loads the manual config on every call, so
+                // keeping it would fail every resolution rather than run without
+                // it.
+                resolver = resolver.clone_with_options(ResolveOptions {
+                    tsconfig: None,
+                    ..resolver.options().clone()
+                });
+                None
+            }
+        }),
         None => TsconfigSource::Auto,
     };
 
@@ -3063,6 +3294,46 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    // Issue #844: a tsconfig that cannot be used is named in a readable warning,
+    // not in oxc_resolver's `Debug` output.
+    #[test]
+    fn tsconfig_errors_name_the_file() {
+        let path = PathBuf::from("tsconfig.json");
+        let json = ResolveError::Json(oxc_resolver::JSONError {
+            path: path.clone(),
+            message: "EOF while parsing an object".to_string(),
+            line: 2,
+            column: 0,
+        });
+        let load_failed = |source: ResolveError| ResolveError::TsconfigLoadFailed {
+            path: path.clone(),
+            source: Box::new(source),
+        };
+        assert_eq!(
+            describe_tsconfig_error(&load_failed(json)),
+            "failed to read the tsconfig tsconfig.json: EOF while parsing an object"
+        );
+        assert_eq!(
+            describe_tsconfig_error(&load_failed(ResolveError::TsconfigNotFound(PathBuf::from(
+                "base.json"
+            )))),
+            "failed to read the tsconfig tsconfig.json: the tsconfig base.json, \
+             which a tsconfig extends or references, does not exist"
+        );
+        let unreadable = load_failed(ResolveError::from(std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied,
+        )));
+        assert!(is_io_failure(&unreadable));
+        assert_eq!(
+            describe_tsconfig_error(&unreadable),
+            "failed to read the tsconfig tsconfig.json: permission denied"
+        );
+        assert_eq!(
+            describe_tsconfig_error(&ResolveError::TsconfigNotFound(PathBuf::from("base.json"))),
+            "the tsconfig base.json, which a tsconfig extends or references, does not exist"
+        );
+    }
 
     // Issue #843: source is decoded as Node.js decodes it, invalid bytes replaced.
     #[test]
