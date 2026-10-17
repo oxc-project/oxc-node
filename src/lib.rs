@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    cell::OnceCell,
     collections::{HashMap, HashSet},
     env, fs,
     path::{Component, Path, PathBuf},
@@ -754,6 +755,109 @@ pub fn freeze_transform_deps() -> String {
     .to_owned()
 }
 
+/// Node.js' `--preserve-symlinks` and `--preserve-symlinks-main`.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+struct PreserveSymlinks {
+    preserve_symlinks: bool,
+    preserve_symlinks_main: bool,
+}
+
+impl PreserveSymlinks {
+    /// The flags as Node.js reads them: `NODE_PRESERVE_SYMLINKS=1` first, then
+    /// `NODE_OPTIONS`, then the command line (`process.execArgv`), the last
+    /// mention of a flag winning. Option names take `_` for `-`, and a boolean
+    /// option takes a `--no-` prefix. Node.js also accepts `=<anything>` after
+    /// either form and ignores the value: `--preserve-symlinks=false` preserves.
+    fn parse(env_flag: Option<&str>, node_options: Option<&str>, exec_argv: &[String]) -> Self {
+        let mut flags = Self { preserve_symlinks: env_flag == Some("1"), ..Self::default() };
+        let node_options = node_options.map(split_node_options).unwrap_or_default();
+        for arg in
+            node_options.iter().map(String::as_str).chain(exec_argv.iter().map(String::as_str))
+        {
+            let Some(name) = arg.strip_prefix("--") else {
+                continue;
+            };
+            let name = name.split_once('=').map_or(name, |(name, _)| name).replace('_', "-");
+            let (name, value) = match name.strip_prefix("no-") {
+                Some(name) => (name, false),
+                None => (name.as_str(), true),
+            };
+            match name {
+                "preserve-symlinks" => flags.preserve_symlinks = value,
+                "preserve-symlinks-main" => flags.preserve_symlinks_main = value,
+                _ => {}
+            }
+        }
+        flags
+    }
+}
+
+/// `NODE_OPTIONS` split into arguments as Node.js splits it: on spaces, with
+/// `"…"` quoting a value that holds them and `\` escaping inside quotes.
+fn split_node_options(options: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_arg = false;
+    let mut quoted = false;
+    let mut chars = options.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if quoted => {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            }
+            '"' => {
+                quoted = !quoted;
+                in_arg = true;
+            }
+            ' ' if !quoted => {
+                if in_arg {
+                    args.push(std::mem::take(&mut current));
+                    in_arg = false;
+                }
+            }
+            c => {
+                current.push(c);
+                in_arg = true;
+            }
+        }
+    }
+    if in_arg {
+        args.push(current);
+    }
+    args
+}
+
+/// This thread's [`PreserveSymlinks`], read once from its `process`: the flags
+/// are fixed when a Node.js environment starts, and only `process.execArgv`
+/// carries the command line on every thread and on WASI alike. Each `Worker`
+/// has its own environment, on its own thread, and may be started with its own
+/// `execArgv`, so the answer is kept per thread rather than for the process.
+fn preserve_symlinks(env: &Env) -> PreserveSymlinks {
+    thread_local! {
+        static FLAGS: OnceCell<PreserveSymlinks> = const { OnceCell::new() };
+    }
+    FLAGS.with(|flags| {
+        *flags.get_or_init(|| {
+            let read = || -> Result<PreserveSymlinks> {
+                let process: Object = env.get_global()?.get_named_property("process")?;
+                let exec_argv: Vec<String> = process.get_named_property("execArgv")?;
+                let process_env: Object = process.get_named_property("env")?;
+                let var = |name: &str| -> Result<Option<String>> {
+                    process_env.get_named_property::<Option<String>>(name)
+                };
+                Ok(PreserveSymlinks::parse(
+                    var("NODE_PRESERVE_SYMLINKS")?.as_deref(),
+                    var("NODE_OPTIONS")?.as_deref(),
+                    &exec_argv,
+                ))
+            };
+            read().unwrap_or_default()
+        })
+    })
+}
+
 /// Resolvers for the export conditions, and the [`ExtensionOrder`], resolve
 /// requests have asked for so far, each cloned from the base [`RESOLVER_AND_TSCONFIG`] resolver so they all
 /// share its caches. Conditions are part of every request, so the base resolver
@@ -762,8 +866,9 @@ pub fn freeze_transform_deps() -> String {
 /// then pick a package's `default` export over `import`.
 static CONDITION_RESOLVERS: Mutex<Vec<ConditionResolver>> = Mutex::new(Vec::new());
 
-/// A resolver for one set of export conditions and one [`ExtensionOrder`].
-type ConditionResolver = (Vec<String>, ExtensionOrder, Arc<Resolver>);
+/// A resolver for one set of export conditions, one [`ExtensionOrder`] and
+/// one answer to whether symlinks resolve to their real path.
+type ConditionResolver = (Vec<String>, ExtensionOrder, bool, Arc<Resolver>);
 
 /// Which file wins when several share a name (`dep.js` beside `dep.ts`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -781,20 +886,23 @@ fn resolver_for_conditions(
     base: &Resolver,
     conditions: &[String],
     order: ExtensionOrder,
+    symlinks: bool,
 ) -> Arc<Resolver> {
     let mut resolvers = CONDITION_RESOLVERS.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some((.., resolver)) =
-        resolvers.iter().find(|(names, o, _)| names == conditions && *o == order)
+    if let Some((.., resolver)) = resolvers
+        .iter()
+        .find(|(names, o, s, _)| names == conditions && *o == order && *s == symlinks)
     {
         return Arc::clone(resolver);
     }
-    let options = ResolveOptions { condition_names: conditions.to_vec(), ..base.options().clone() };
+    let options =
+        ResolveOptions { condition_names: conditions.to_vec(), symlinks, ..base.options().clone() };
     let options = match order {
         ExtensionOrder::Package => options,
         ExtensionOrder::Source => source_order(options),
     };
     let resolver = Arc::new(base.clone_with_options(options));
-    resolvers.push((conditions.to_vec(), order, Arc::clone(&resolver)));
+    resolvers.push((conditions.to_vec(), order, symlinks, Arc::clone(&resolver)));
     resolver
 }
 
@@ -1153,7 +1261,9 @@ fn init() {
     // <https://github.com/tokio-rs/tracing/issues/1436#issuecomment-918528013>
     let _ = tracing_subscriber::registry()
         .with(targets)
-        .with(tracing_subscriber::fmt::layer())
+        // stderr, as Node.js' own diagnostics go: on stdout the log interleaved with
+        // the program's output and broke whatever read it (issue #845).
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .try_init();
 }
 
@@ -1980,7 +2090,15 @@ pub fn create_resolve<'env>(
     } else {
         ExtensionOrder::Source
     };
-    let resolver = resolver_for_conditions(base_resolver, &context.conditions, order);
+    // Node.js keeps a symlinked path under `--preserve-symlinks`, and the entry
+    // point's under `--preserve-symlinks-main` (issue #845).
+    let preserve = preserve_symlinks(env);
+    let symlinks = !if parent_file.is_none() {
+        preserve.preserve_symlinks_main
+    } else {
+        preserve.preserve_symlinks
+    };
+    let resolver = resolver_for_conditions(base_resolver, &context.conditions, order, symlinks);
     let resolver = resolver.as_ref();
 
     let directory = match parent_file {
@@ -2090,8 +2208,12 @@ pub fn create_resolve<'env>(
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| SOURCE_FIRST_EXTENSIONS.contains(&ext))
     {
-        let package_resolver =
-            resolver_for_conditions(base_resolver, &context.conditions, ExtensionOrder::Package);
+        let package_resolver = resolver_for_conditions(
+            base_resolver,
+            &context.conditions,
+            ExtensionOrder::Package,
+            symlinks,
+        );
         resolution = resolve(&package_resolver);
     }
 
@@ -3294,6 +3416,40 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    // Issue #845: the symlink flags are read as Node.js reads them.
+    #[test]
+    fn preserve_symlinks_follow_node() {
+        let args = |args: &[&str]| args.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
+        let parse = |env: Option<&str>, options: Option<&str>, argv: &[&str]| {
+            let flags = PreserveSymlinks::parse(env, options, &args(argv));
+            (flags.preserve_symlinks, flags.preserve_symlinks_main)
+        };
+        assert_eq!(parse(None, None, &[]), (false, false));
+        assert_eq!(parse(None, None, &["--preserve-symlinks"]), (true, false));
+        assert_eq!(parse(None, None, &["--preserve_symlinks_main"]), (false, true));
+        // Node.js ignores a value after either form.
+        assert_eq!(parse(None, None, &["--preserve-symlinks=false"]), (true, false));
+        assert_eq!(parse(None, Some("--preserve-symlinks-main=0"), &[]), (false, true));
+        assert_eq!(
+            parse(None, None, &["--preserve-symlinks", "--no-preserve-symlinks=true"]),
+            (false, false)
+        );
+        assert_eq!(parse(Some("1"), None, &[]), (true, false));
+        assert_eq!(parse(Some("0"), None, &[]), (false, false));
+        assert_eq!(parse(None, Some("--import x --preserve-symlinks"), &[]), (true, false));
+        // The command line comes after `NODE_OPTIONS`, and the last mention wins.
+        assert_eq!(
+            parse(None, Some("--preserve-symlinks"), &["--no-preserve-symlinks"]),
+            (false, false)
+        );
+        // A quoted value is one argument, not a flag.
+        assert_eq!(parse(None, Some(r#"--title="a --preserve-symlinks""#), &[]), (false, false));
+        assert_eq!(
+            split_node_options(r#" --a  "b c" --d="e \" f" "#),
+            ["--a", "b c", r#"--d=e " f"#]
+        );
+    }
 
     // Issue #844: a tsconfig that cannot be used is named in a readable warning,
     // not in oxc_resolver's `Debug` output.
