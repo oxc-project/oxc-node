@@ -1715,7 +1715,7 @@ fn oxc_transform<S: TryAsStr>(
     // knows which it is, so let it say.
     let source_type = source_type_from_path(src_path).unwrap_or_default().with_module(is_es_module);
     let source = code.to_source()?;
-    let source_str = &*source;
+    let source_str = strip_bom(&source);
     let allow_module_retry = !is_es_module
         && matches!(module_target, Some(Module::Preserve))
         && source_type.is_unambiguous();
@@ -2486,6 +2486,7 @@ fn load_commonjs_esm(
             source
         }
     };
+    let source = strip_bom(source);
     let allocator = Allocator::default();
     // `only_module_parse` covers the shapes oxc cannot resolve on its own, such as a
     // top-level `for await`; `parsed_as_esm` covers the rest, including top-level await.
@@ -2545,6 +2546,7 @@ fn reject_cts_module_syntax(
             source
         }
     };
+    let source = strip_bom(source);
     // Only the transform knows which `import`/`export` declarations are type-only, so a
     // file with any declaration runs through it — the same options the `require()` path
     // uses — and only its verdict is kept.
@@ -2814,6 +2816,15 @@ trait TryAsStr {
     /// The source as text to transform, decoded the way Node.js decodes a module:
     /// UTF-8 with every invalid byte sequence replaced by U+FFFD (issue #843).
     fn to_source(&self) -> Result<Cow<'_, str>>;
+}
+
+/// The source without a leading byte order mark. A hashbang is only one at the
+/// very start of the source, and the parser takes a BOM for whitespace, so a
+/// `#!` after it fails to parse. Node.js drops the mark before compiling, in its
+/// CommonJS loader (`stripBOM`) and its ES module loader (`TextDecoder`), and
+/// so do oxc's own linter and formatter (issue #846).
+fn strip_bom(source: &str) -> &str {
+    source.strip_prefix('\u{FEFF}').unwrap_or(source)
 }
 
 /// Decode source bytes as Node.js does, borrowing them when they are valid UTF-8.
@@ -3489,6 +3500,21 @@ mod tests {
             describe_tsconfig_error(&ResolveError::TsconfigNotFound(PathBuf::from("base.json"))),
             "the tsconfig base.json, which a tsconfig extends or references, does not exist"
         );
+    }
+
+    // Issue #846: a byte order mark is dropped before parsing, so a hashbang
+    // after it is still one.
+    #[test]
+    fn a_bom_before_a_hashbang_parses() {
+        let source = "\u{FEFF}#!/usr/bin/env node\nconsole.log(1);\n";
+        let allocator = Allocator::default();
+        let parse = |source| Parser::new(&allocator, source, SourceType::ts()).parse();
+        assert!(!parse(source).diagnostics.is_empty(), "the parser itself rejects it");
+        let parsed = parse(strip_bom(source));
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(parsed.program.hashbang.map(|h| h.value.as_str()), Some("/usr/bin/env node"));
+        assert_eq!(strip_bom("\u{FEFF}\u{FEFF}x"), "\u{FEFF}x", "only one mark is dropped");
+        assert_eq!(strip_bom("x\u{FEFF}"), "x\u{FEFF}");
     }
 
     // Issue #843: source is decoded as Node.js decodes it, invalid bytes replaced.
