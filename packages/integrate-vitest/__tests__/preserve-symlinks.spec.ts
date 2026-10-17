@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, describe, expect, test } from "vitest";
 
 /**
@@ -11,7 +11,13 @@ import { afterAll, describe, expect, test } from "vitest";
  * returned the real path. And `OXC_LOG` wrote its log to stdout, mixed into the
  * program's own output (issue #845).
  */
-const CORE = dirname(fileURLToPath(new URL("../../core/register.mjs", import.meta.url)));
+// Registered by its real path: under `--preserve-symlinks` a linked
+// `node_modules/@oxc-node/core` keeps the fixture's path, from which the
+// binding package (the WASI one in CI) cannot be found.
+const REGISTER = [
+  "--import",
+  pathToFileURL(fileURLToPath(new URL("../../core/register.mjs", import.meta.url))).href,
+];
 
 // `junction` is the only link type Windows allows without elevated privileges.
 const DIR_LINK = process.platform === "win32" ? "junction" : "dir";
@@ -47,8 +53,7 @@ function fixture(): string {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, contents);
   }
-  mkdirSync(join(root, "node_modules", "@oxc-node"), { recursive: true });
-  symlinkSync(CORE, join(root, "node_modules", "@oxc-node", "core"), DIR_LINK);
+  mkdirSync(join(root, "node_modules"), { recursive: true });
   symlinkSync(join(root, "vendor", "sym"), join(root, "node_modules", "sym"), DIR_LINK);
   if (process.platform !== "win32") {
     symlinkSync(join(root, "real", "entry.mjs"), join(root, "link.mjs"));
@@ -76,8 +81,6 @@ function run(root: string, args: string[], env: Record<string, string | undefine
   expect(result.status, result.stderr).toBe(0);
   return result;
 }
-
-const REGISTER = ["--import", "@oxc-node/core/register"];
 
 describe("symlinks resolve as Node.js resolves them", () => {
   const cases: [string, string[], Record<string, string>][] = [

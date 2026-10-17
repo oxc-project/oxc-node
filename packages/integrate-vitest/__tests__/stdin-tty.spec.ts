@@ -30,6 +30,8 @@ test("CLI preserves TTY properties when stdin is a TTY", () => {
     env: {
       ...process.env,
       NODE_OPTIONS: undefined,
+      // CI sets `OXC_LOG` globally, and its log goes to stderr.
+      OXC_LOG: undefined,
     },
   });
 
@@ -62,6 +64,8 @@ test("CLI properly handles stdin piping", async () => {
     env: {
       ...process.env,
       NODE_OPTIONS: undefined,
+      // CI sets `OXC_LOG` globally, and its log goes to stderr.
+      OXC_LOG: undefined,
     },
   });
 
@@ -116,6 +120,8 @@ test("CLI with node directly preserves TTY (baseline comparison)", () => {
     env: {
       ...process.env,
       NODE_OPTIONS: undefined,
+      // CI sets `OXC_LOG` globally, and its log goes to stderr.
+      OXC_LOG: undefined,
     },
   });
 
