@@ -54,13 +54,17 @@ const ENV = {
   OXC_TSCONFIG_PATH: undefined,
 };
 
-function run(root: string, entry: string): string {
-  const result = spawnSync(process.execPath, ["--import", "@oxc-node/core/register", entry], {
-    cwd: root,
-    encoding: "utf8",
-    env: ENV,
-    timeout: 30_000,
-  });
+function run(root: string, entry: string, flags: string[] = []): string {
+  const result = spawnSync(
+    process.execPath,
+    [...flags, "--import", "@oxc-node/core/register", entry],
+    {
+      cwd: root,
+      encoding: "utf8",
+      env: ENV,
+      timeout: 30_000,
+    },
+  );
   const output = `${result.stdout}${result.stderr}`;
   expect(result.error, result.error?.message).toBeFalsy();
   expect(output).not.toContain("WRONG_FILE");
@@ -253,5 +257,63 @@ console.log(out.url, out.format);`,
     expect(format).toBe("module");
     expect(url.endsWith("/hash%23dir/main%2541%20%C3%B5.ts?v=1#frag"), url).toBe(true);
     expect(realpathSync.native(fileURLToPath(url))).toBe(realpathSync.native(file));
+  });
+});
+
+describe("a # in an ES module specifier starts a fragment (issue #856)", () => {
+  // `a#b.ts` is a decoy: Node.js resolves `./a#b.ts` as `./a` with the fragment
+  // `#b.ts`, and oxc-node, which resolves extensionless specifiers, runs `a.ts`.
+  test("a relative import does not load the file named with the #", () => {
+    const root = fixture({ "a.ts": OK, "a#b.ts": WRONG, "main.ts": "import './a#b.ts';\n" });
+    expect(run(root, "./main.ts")).toBe(`OK ${urlOf(root, "a.ts")}#b.ts\n`);
+  });
+
+  // `--conditions` adds to every request's conditions, so `require` among them
+  // says nothing about the request being a `require()`.
+  test("an import under --conditions=require still reads # as a fragment", () => {
+    const root = fixture({ "a.ts": OK, "a#b.ts": WRONG, "main.ts": "import './a#b.ts';\n" });
+    expect(run(root, "./main.ts", ["--conditions=require"])).toBe(
+      `OK ${urlOf(root, "a.ts")}#b.ts\n`,
+    );
+  });
+
+  test("a file URL does not load the file named with the #", () => {
+    const root = fixture({
+      "a.ts": OK,
+      "a#b.ts": WRONG,
+      "main.ts": "await import(new URL('./a#b.ts', import.meta.url).href);\n",
+    });
+    expect(run(root, "./main.ts")).toBe(`OK ${urlOf(root, "a.ts")}#b.ts\n`);
+  });
+
+  test("the query and fragment are kept on the module URL, as Node.js keeps them", () => {
+    const root = fixture({
+      "dep.ts": OK,
+      "main.ts": [
+        "await import('./dep.ts#x');",
+        "await import('./dep.ts?v=1#y');",
+        "await import('./dep.ts?v=2');",
+      ].join("\n"),
+    });
+    const dep = urlOf(root, "dep.ts");
+    expect(run(root, "./main.ts")).toBe(`OK ${dep}#x\nOK ${dep}?v=1#y\nOK ${dep}?v=2\n`);
+  });
+
+  test("an encoded # still names the file", () => {
+    const root = fixture({ "a.ts": WRONG, "a#b.ts": OK, "main.ts": "import './a%23b.ts';\n" });
+    expect(run(root, "./main.ts")).toBe(`OK ${urlOf(root, "a#b.ts")}\n`);
+  });
+
+  // CommonJS resolution reads a specifier as a path, `#` and `%` included.
+  test("require() keeps # and % as file-name characters", () => {
+    const root = fixture({
+      "cjs/package.json": JSON.stringify({ type: "commonjs" }),
+      "cjs/a.js": WRONG,
+      "cjs/a#b.js": 'console.log("OK hash");\n',
+      "cjs/a%23b.js": 'console.log("OK percent");\n',
+      "cjs/main.cts": "require('./a#b.js');\nrequire('./a%23b.js');\n",
+      "main.ts": "import './cjs/main.cts';\n",
+    });
+    expect(run(root, "./main.ts")).toBe("OK hash\nOK percent\n");
   });
 });

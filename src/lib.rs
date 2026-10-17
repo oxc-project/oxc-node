@@ -1145,15 +1145,16 @@ fn has_malformed_escape(pathname: &str) -> bool {
 
 /// The resolver request — the directory to resolve from and the specifier —
 /// for the decoded pathname `path` of a URL reference, taken relative to
-/// `base`, and the raw `?query` / `#fragment` that followed it. Returns
-/// `None` when the resolver cannot be asked for the file exactly and Node's
-/// own resolution has to answer.
+/// `base`. Returns `None` when the resolver cannot be asked for the file
+/// exactly and Node's own resolution has to answer.
 ///
 /// The resolver parses its specifier for a query and fragment. A decoded `#`
 /// would be parsed as a fragment and a same-named prefix file would win (`a`
 /// over `a#b.ts`), so it is escaped with the resolver's enhanced-resolve
-/// escape (`\0#`) and stays a file-name character. The raw suffix is
-/// re-attached verbatim, where it stays module identity.
+/// escape (`\0#`) and stays a file-name character. A URL's own `?query` /
+/// `#fragment` never reaches the resolver: with a fragment and no query it
+/// tries the two as one path first, and would load `a#b.ts` for `./a#b.ts`
+/// (issue #856). The caller appends it to the resolved URL instead.
 ///
 /// Two characters cannot go through the specifier as they are: a `?` (only
 /// legal in POSIX file names), for which the resolver has no escape, and a
@@ -1162,21 +1163,15 @@ fn has_malformed_escape(pathname: &str) -> bool {
 /// `Ãµ`). The directory the resolver starts from is a path and is never
 /// parsed, so such a path is resolved as its file name from its directory;
 /// only a file name that holds one of those itself is left to Node.
-fn resolver_request<'a>(
-    base: &'a Path,
-    path: &str,
-    suffix: &str,
-) -> Option<(Cow<'a, Path>, Cow<'static, str>)> {
+fn resolver_request<'a>(base: &'a Path, path: &str) -> Option<(Cow<'a, Path>, Cow<'static, str>)> {
     fn exact(path: &str) -> bool {
         !path.contains('?') && (path.is_ascii() || !path.contains('#'))
     }
-    fn escaped(path: &str, suffix: &str) -> String {
-        let mut specifier = path.replace('#', "\u{0}#");
-        specifier.push_str(suffix);
-        specifier
+    fn escaped(path: &str) -> String {
+        path.replace('#', "\u{0}#")
     }
     if exact(path) {
-        return Some((Cow::Borrowed(base), Cow::Owned(escaped(path, suffix))));
+        return Some((Cow::Borrowed(base), Cow::Owned(escaped(path))));
     }
     // Normalized lexically, as the URL parser resolves `.` and `..`.
     let mut full = PathBuf::new();
@@ -1193,7 +1188,7 @@ fn resolver_request<'a>(
     if !exact(name) {
         return None;
     }
-    let specifier = escaped(&format!("./{name}"), suffix);
+    let specifier = escaped(&format!("./{name}"));
     Some((Cow::Owned(full.parent()?.to_path_buf()), Cow::Owned(specifier)))
 }
 
@@ -1620,7 +1615,7 @@ fn is_commonjs_file(path: &Path) -> bool {
             ) else {
                 return false;
             };
-            resolver_request(directory, &format!("./{name}"), "")
+            resolver_request(directory, &format!("./{name}"))
                 .and_then(|(directory, specifier)| resolver.resolve(&directory, &specifier).ok())
                 .and_then(|resolution| resolution.package_json().and_then(|json| json.r#type()))
                 .is_some_and(|ty| matches!(ty, PackageType::CommonJs))
@@ -2111,13 +2106,22 @@ pub fn create_resolve<'env>(
 
     // What the resolver is asked for — the directory to resolve from and the
     // specifier — or `None` when it cannot be asked exactly and Node's own
-    // resolution has to answer. A file URL — and, in ESM, a relative or
-    // absolute-path specifier — is a URL reference: its pathname is
-    // percent-encoded (`./dep%23x.ts` names `dep#x.ts`) and a raw `?` or `#`
-    // starts its query or fragment (issue #837). The resolver reads
-    // specifiers as paths, so the pathname is decoded here and its characters
-    // escaped. An encoded separator or a malformed escape is never decoded:
-    // Node rejects it.
+    // resolution has to answer, and the `?query` / `#fragment` the resolved URL
+    // carries. A file URL — and, in ESM, a relative or absolute-path specifier —
+    // is a URL reference: its pathname is percent-encoded (`./dep%23x.ts` names
+    // `dep#x.ts`) and a raw `?` or `#` starts its query or fragment (issues
+    // #837, #856). The resolver reads specifiers as paths, so the pathname is
+    // decoded here and its characters escaped, and the query and fragment are
+    // kept back from it and put on the URL it resolves to, as Node.js does. An
+    // encoded separator or a malformed escape is never decoded: Node rejects it.
+    // `require()` never gets here: `register.mjs` leaves it to Node.js' own
+    // CommonJS resolution, which reads its specifier as a path.
+    let is_path_reference = specifier.starts_with("./")
+        || specifier.starts_with("../")
+        // `//host/…` is a network-path reference whose first segment is the
+        // file URL's host, not a directory: Node's URL resolver answers it.
+        || specifier.starts_with('/') && !matches!(specifier.as_bytes().get(1), Some(b'/' | b'\\'));
+    let mut suffix = "";
     let request = if is_absolute_path {
         let pathname = url_path(file_specifier);
         if has_encoded_separator(pathname) || has_malformed_escape(pathname) {
@@ -2125,34 +2129,31 @@ pub fn create_resolve<'env>(
         } else {
             let specifier_path = file_url_to_path(file_specifier)
                 .ok_or_else(|| Error::new(Status::GenericFailure, "Specifier is not a file URL"))?;
-            resolver_request(
-                Path::new("/"),
-                &specifier_path.to_string_lossy(),
-                &file_specifier[pathname.len()..],
-            )
+            suffix = &file_specifier[pathname.len()..];
+            resolver_request(Path::new("/"), &specifier_path.to_string_lossy())
         }
-    } else if (specifier.starts_with("./")
-        || specifier.starts_with("../")
-        // `//host/…` is a network-path reference whose first segment is the
-        // file URL's host, not a directory: Node's URL resolver answers it.
-        || specifier.starts_with('/') && !matches!(specifier.as_bytes().get(1), Some(b'/' | b'\\')))
-        && url_path(&specifier).contains(['%', '\\'])
-    {
+    } else if is_path_reference && specifier.contains(['%', '\\', '?', '#']) {
         let pathname = url_path(&specifier);
         if has_encoded_separator(pathname) || has_malformed_escape(pathname) {
             None
         } else {
+            suffix = &specifier[pathname.len()..];
             // A raw `\` is a `/` to the URL parser (`./dir\a.ts` names
             // `dir/a.ts`), while the resolver would read it as a POSIX
             // file-name character. Escapes that do not decode to UTF-8
             // (`%FF`) are malformed to Node too.
             let pathname_slashes = pathname.replace('\\', "/");
-            decode_url_path(&pathname_slashes).and_then(|decoded| {
-                resolver_request(directory, &decoded, &specifier[pathname.len()..])
-            })
+            decode_url_path(&pathname_slashes)
+                .and_then(|decoded| resolver_request(directory, &decoded))
         }
     } else {
         Some((Cow::Borrowed(directory), Cow::Borrowed(specifier.as_str())))
+    };
+    // The resolved file's URL, with the query and fragment kept back above.
+    let url_of = |resolution: &Resolution| {
+        let mut url = oxc_resolved_path_to_url(resolution);
+        url.push_str(suffix);
+        url
     };
 
     let resolve =
@@ -2230,7 +2231,7 @@ pub fn create_resolve<'env>(
     {
         let format = json_format(&context);
         tracing::debug!("resolved JSON {} as format: {}", specifier, format);
-        let url = oxc_resolved_path_to_url(resolved);
+        let url = url_of(resolved);
         return add_short_circuit(url, Some(format), context, next_resolve);
     }
 
@@ -2251,7 +2252,7 @@ pub fn create_resolve<'env>(
     if let Ok(resolution) = resolution {
         tracing::debug!(resolution = ?resolution, "resolved");
         let p = resolution.path();
-        let url = oxc_resolved_path_to_url(&resolution);
+        let url = url_of(&resolution);
         // `node_modules` files keep the `null` format so Node.js delegates `load`
         // to its own implementation — the load hook cannot report "skip"
         // otherwise (see #189). The exception: files this process is asked to
@@ -3719,26 +3720,23 @@ mod tests {
     #[test]
     fn resolver_request_keeps_hash_and_question_mark_file_name_characters() {
         let base = Path::new("/base");
-        let request = |path: &str, suffix: &str| {
-            resolver_request(base, path, suffix)
+        let request = |path: &str| {
+            resolver_request(base, path)
                 .map(|(directory, specifier)| (directory.into_owned(), specifier.into_owned()))
         };
         // Plain and ASCII paths go through the specifier, `#` escaped.
-        assert_eq!(request("./a.ts", ""), Some((base.into(), "./a.ts".into())));
-        assert_eq!(request("/x/a#b.ts", "?v=1"), Some((base.into(), "/x/a\u{0}#b.ts?v=1".into())));
-        assert_eq!(request("./é.ts", "#f"), Some((base.into(), "./é.ts#f".into())));
+        assert_eq!(request("./a.ts"), Some((base.into(), "./a.ts".into())));
+        assert_eq!(request("/x/a#b.ts"), Some((base.into(), "/x/a\u{0}#b.ts".into())));
+        assert_eq!(request("./é.ts"), Some((base.into(), "./é.ts".into())));
         // A `?` or a `#` beside non-ASCII text is kept in the directory.
+        assert_eq!(request("/x/d?x/m.tsx"), Some((PathBuf::from("/x/d?x"), "./m.tsx".into())));
         assert_eq!(
-            request("/x/d?x/m.tsx", "?v=1"),
-            Some((PathBuf::from("/x/d?x"), "./m.tsx?v=1".into()))
-        );
-        assert_eq!(
-            request("./p#õ/../q#õ/a#b.ts", ""),
+            request("./p#õ/../q#õ/a#b.ts"),
             Some((PathBuf::from("/base/q#õ"), "./a\u{0}#b.ts".into()))
         );
         // Unless the file name itself holds one.
-        assert_eq!(request("/x/w?.tsx", ""), None);
-        assert_eq!(request("/x/é#x.ts", ""), None);
+        assert_eq!(request("/x/w?.tsx"), None);
+        assert_eq!(request("/x/é#x.ts"), None);
     }
 
     #[cfg(not(windows))]
