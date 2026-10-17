@@ -1144,10 +1144,9 @@ fn has_malformed_escape(pathname: &str) -> bool {
 }
 
 /// The resolver request — the directory to resolve from and the specifier —
-/// for the path `path`, taken relative to `base`: the decoded pathname of a URL
-/// reference, or a `require()` specifier, which Node.js reads as a path. Returns
-/// `None` when the resolver cannot be asked for the file exactly and Node's
-/// own resolution has to answer.
+/// for the decoded pathname `path` of a URL reference, taken relative to
+/// `base`. Returns `None` when the resolver cannot be asked for the file
+/// exactly and Node's own resolution has to answer.
 ///
 /// The resolver parses its specifier for a query and fragment. A decoded `#`
 /// would be parsed as a fragment and a same-named prefix file would win (`a`
@@ -2115,9 +2114,8 @@ pub fn create_resolve<'env>(
     // decoded here and its characters escaped, and the query and fragment are
     // kept back from it and put on the URL it resolves to, as Node.js does. An
     // encoded separator or a malformed escape is never decoded: Node rejects it.
-    // A `require()` specifier is a path, `#`, `?` and `%` included, as Node.js'
-    // CommonJS resolution reads it.
-    let is_require = context.conditions.iter().any(|condition| condition == "require");
+    // `require()` never gets here: `register.mjs` leaves it to Node.js' own
+    // CommonJS resolution, which reads its specifier as a path.
     let is_path_reference = specifier.starts_with("./")
         || specifier.starts_with("../")
         // `//host/…` is a network-path reference whose first segment is the
@@ -2133,12 +2131,6 @@ pub fn create_resolve<'env>(
                 .ok_or_else(|| Error::new(Status::GenericFailure, "Specifier is not a file URL"))?;
             suffix = &file_specifier[pathname.len()..];
             resolver_request(Path::new("/"), &specifier_path.to_string_lossy())
-        }
-    } else if is_path_reference && is_require {
-        if specifier.contains(['#', '?']) {
-            resolver_request(directory, &specifier)
-        } else {
-            Some((Cow::Borrowed(directory), Cow::Borrowed(specifier.as_str())))
         }
     } else if is_path_reference && specifier.contains(['%', '\\', '?', '#']) {
         let pathname = url_path(&specifier);

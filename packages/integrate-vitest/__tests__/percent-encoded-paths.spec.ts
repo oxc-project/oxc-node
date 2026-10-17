@@ -54,13 +54,17 @@ const ENV = {
   OXC_TSCONFIG_PATH: undefined,
 };
 
-function run(root: string, entry: string): string {
-  const result = spawnSync(process.execPath, ["--import", "@oxc-node/core/register", entry], {
-    cwd: root,
-    encoding: "utf8",
-    env: ENV,
-    timeout: 30_000,
-  });
+function run(root: string, entry: string, flags: string[] = []): string {
+  const result = spawnSync(
+    process.execPath,
+    [...flags, "--import", "@oxc-node/core/register", entry],
+    {
+      cwd: root,
+      encoding: "utf8",
+      env: ENV,
+      timeout: 30_000,
+    },
+  );
   const output = `${result.stdout}${result.stderr}`;
   expect(result.error, result.error?.message).toBeFalsy();
   expect(output).not.toContain("WRONG_FILE");
@@ -262,6 +266,15 @@ describe("a # in an ES module specifier starts a fragment (issue #856)", () => {
   test("a relative import does not load the file named with the #", () => {
     const root = fixture({ "a.ts": OK, "a#b.ts": WRONG, "main.ts": "import './a#b.ts';\n" });
     expect(run(root, "./main.ts")).toBe(`OK ${urlOf(root, "a.ts")}#b.ts\n`);
+  });
+
+  // `--conditions` adds to every request's conditions, so `require` among them
+  // says nothing about the request being a `require()`.
+  test("an import under --conditions=require still reads # as a fragment", () => {
+    const root = fixture({ "a.ts": OK, "a#b.ts": WRONG, "main.ts": "import './a#b.ts';\n" });
+    expect(run(root, "./main.ts", ["--conditions=require"])).toBe(
+      `OK ${urlOf(root, "a.ts")}#b.ts\n`,
+    );
   });
 
   test("a file URL does not load the file named with the #", () => {
