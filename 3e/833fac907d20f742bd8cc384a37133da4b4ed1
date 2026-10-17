@@ -1,0 +1,21 @@
+src/lib.rs
+  s_5b25d6ae40e975::t_d85a6d57e019c6 310-318,543,1065-1069,1134-1139,1176-1178,2029,2145-2150,3312,3314-3318,3325,3413,3729-3752
+src/windows_file_url.rs
+  s_5b25d6ae40e975::t_5777797a14c246 56,72,99,198,505,521,536,545,561
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3e833fac907d20f742bd8cc384a37133da4b4ed1",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
