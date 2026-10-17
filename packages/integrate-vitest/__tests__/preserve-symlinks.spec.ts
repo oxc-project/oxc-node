@@ -89,6 +89,9 @@ describe("symlinks resolve as Node.js resolves them", () => {
     ["--preserve_symlinks", ["--preserve_symlinks"], {}],
     ["a later --no-preserve-symlinks", ["--preserve-symlinks", "--no-preserve-symlinks"], {}],
     ["--preserve-symlinks-main", ["--preserve-symlinks-main"], {}],
+    // Node.js ignores a value after the flag: this, too, preserves.
+    ["--preserve-symlinks=false", ["--preserve-symlinks=false"], {}],
+    ["--preserve-symlinks-main=0", ["--preserve-symlinks-main=0"], {}],
     ["NODE_OPTIONS", [], { NODE_OPTIONS: "--preserve-symlinks" }],
     ["NODE_PRESERVE_SYMLINKS=1", [], { NODE_PRESERVE_SYMLINKS: "1" }],
   ];
@@ -115,6 +118,29 @@ describe("symlinks resolve as Node.js resolves them", () => {
     );
     expect(run(root, [...REGISTER, "./main.ts"]).stdout).toBe("package:real\n");
   });
+});
+
+// Each `Worker` reads its own `execArgv`, so one started with the flag keeps
+// the link even when the main thread, which has no flag, resolved first.
+test("a Worker's own --preserve-symlinks applies to that Worker", () => {
+  const root = fixture();
+  writeFileSync(
+    join(root, "workers.mjs"),
+    `import { Worker } from "node:worker_threads";
+const register = process.argv[2] ? ["--import", process.argv[2]] : [];
+const run = (execArgv) =>
+  new Promise((done) => {
+    new Worker(new URL("./main.mjs", import.meta.url), { execArgv: [...register, ...execArgv] }).on("exit", done);
+  });
+await run(["--preserve-symlinks"]);
+await run([]);
+`,
+  );
+  const node = run(root, ["./workers.mjs"]).stdout;
+  expect(node, "plain Node.js keeps the link only in the first Worker").toBe(
+    "package:linked\npackage:real\n",
+  );
+  expect(run(root, [...REGISTER, "./workers.mjs", REGISTER[1]]).stdout).toBe(node);
 });
 
 test("OXC_LOG writes to stderr and leaves stdout to the program", () => {

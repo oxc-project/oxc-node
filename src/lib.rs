@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    cell::OnceCell,
     collections::{HashMap, HashSet},
     env, fs,
     path::{Component, Path, PathBuf},
@@ -765,7 +766,8 @@ impl PreserveSymlinks {
     /// The flags as Node.js reads them: `NODE_PRESERVE_SYMLINKS=1` first, then
     /// `NODE_OPTIONS`, then the command line (`process.execArgv`), the last
     /// mention of a flag winning. Option names take `_` for `-`, and a boolean
-    /// option takes a `--no-` prefix.
+    /// option takes a `--no-` prefix. Node.js also accepts `=<anything>` after
+    /// either form and ignores the value: `--preserve-symlinks=false` preserves.
     fn parse(env_flag: Option<&str>, node_options: Option<&str>, exec_argv: &[String]) -> Self {
         let mut flags = Self { preserve_symlinks: env_flag == Some("1"), ..Self::default() };
         let node_options = node_options.map(split_node_options).unwrap_or_default();
@@ -775,7 +777,7 @@ impl PreserveSymlinks {
             let Some(name) = arg.strip_prefix("--") else {
                 continue;
             };
-            let name = name.replace('_', "-");
+            let name = name.split_once('=').map_or(name, |(name, _)| name).replace('_', "-");
             let (name, value) = match name.strip_prefix("no-") {
                 Some(name) => (name, false),
                 None => (name.as_str(), true),
@@ -827,26 +829,32 @@ fn split_node_options(options: &str) -> Vec<String> {
     args
 }
 
-/// The process' [`PreserveSymlinks`], read once from `process` itself: the
-/// flags are fixed at startup, and only `process.execArgv` carries the command
-/// line on every thread and on WASI alike.
+/// This thread's [`PreserveSymlinks`], read once from its `process`: the flags
+/// are fixed when a Node.js environment starts, and only `process.execArgv`
+/// carries the command line on every thread and on WASI alike. Each `Worker`
+/// has its own environment, on its own thread, and may be started with its own
+/// `execArgv`, so the answer is kept per thread rather than for the process.
 fn preserve_symlinks(env: &Env) -> PreserveSymlinks {
-    static FLAGS: OnceLock<PreserveSymlinks> = OnceLock::new();
-    *FLAGS.get_or_init(|| {
-        let read = || -> Result<PreserveSymlinks> {
-            let process: Object = env.get_global()?.get_named_property("process")?;
-            let exec_argv: Vec<String> = process.get_named_property("execArgv")?;
-            let process_env: Object = process.get_named_property("env")?;
-            let var = |name: &str| -> Result<Option<String>> {
-                process_env.get_named_property::<Option<String>>(name)
+    thread_local! {
+        static FLAGS: OnceCell<PreserveSymlinks> = const { OnceCell::new() };
+    }
+    FLAGS.with(|flags| {
+        *flags.get_or_init(|| {
+            let read = || -> Result<PreserveSymlinks> {
+                let process: Object = env.get_global()?.get_named_property("process")?;
+                let exec_argv: Vec<String> = process.get_named_property("execArgv")?;
+                let process_env: Object = process.get_named_property("env")?;
+                let var = |name: &str| -> Result<Option<String>> {
+                    process_env.get_named_property::<Option<String>>(name)
+                };
+                Ok(PreserveSymlinks::parse(
+                    var("NODE_PRESERVE_SYMLINKS")?.as_deref(),
+                    var("NODE_OPTIONS")?.as_deref(),
+                    &exec_argv,
+                ))
             };
-            Ok(PreserveSymlinks::parse(
-                var("NODE_PRESERVE_SYMLINKS")?.as_deref(),
-                var("NODE_OPTIONS")?.as_deref(),
-                &exec_argv,
-            ))
-        };
-        read().unwrap_or_default()
+            read().unwrap_or_default()
+        })
     })
 }
 
@@ -3420,6 +3428,13 @@ mod tests {
         assert_eq!(parse(None, None, &[]), (false, false));
         assert_eq!(parse(None, None, &["--preserve-symlinks"]), (true, false));
         assert_eq!(parse(None, None, &["--preserve_symlinks_main"]), (false, true));
+        // Node.js ignores a value after either form.
+        assert_eq!(parse(None, None, &["--preserve-symlinks=false"]), (true, false));
+        assert_eq!(parse(None, Some("--preserve-symlinks-main=0"), &[]), (false, true));
+        assert_eq!(
+            parse(None, None, &["--preserve-symlinks", "--no-preserve-symlinks=true"]),
+            (false, false)
+        );
         assert_eq!(parse(Some("1"), None, &[]), (true, false));
         assert_eq!(parse(Some("0"), None, &[]), (false, false));
         assert_eq!(parse(None, Some("--import x --preserve-symlinks"), &[]), (true, false));
