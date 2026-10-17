@@ -1,0 +1,21 @@
+packages/integrate-vitest/__tests__/preserve-symlinks.spec.ts
+  s_5b25d6ae40e975::t_e7fd05ba0028a9 1-122
+src/lib.rs
+  s_5b25d6ae40e975::t_277c6d5c96d2d8 757-852,861-863,881,884-886,890-891,897,1256-1258,2085-2093,2203-2208,3412-3438
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2a7be525ed423b80b55f510ae0ca450f371d2b8d",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
