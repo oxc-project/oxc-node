@@ -90,7 +90,9 @@ export function makeMatcher(opts: {
     let baseLen = 0;
     while (baseLen < parts.length - 1 && !GLOB_CHARS.test(parts[baseLen])) baseLen++;
     const rest = parts.slice(baseLen);
-    const base = native.resolve(opts.cwd, parts.slice(0, baseLen).join("/") || ".");
+    // `/*.json` and `C:/*.json` start at the root, not at cwd.
+    const fixed = baseLen === 0 ? "." : parts.slice(0, baseLen).join("/") || "/";
+    const base = native.resolve(opts.cwd, /^[A-Za-z]:$/.test(fixed) ? `${fixed}/` : fixed);
     named.push({ base: norm(base), parts: rest.map(norm) });
     roots.push({ base, depth: rest.includes("**") ? Infinity : rest.length });
   }
@@ -137,8 +139,8 @@ export function makeMatcher(opts: {
         (name === "node_modules" || name.startsWith(".")) &&
         !named.some(
           (include) =>
-            n.startsWith(`${include.base}/`) &&
-            fits(n.slice(include.base.length + 1).split("/"), include.parts),
+            n.startsWith(include.base.endsWith("/") ? include.base : `${include.base}/`) &&
+            fits(n.slice(include.base.replace(/\/$/, "").length + 1).split("/"), include.parts),
         );
       // `**/dist/**` matches what is inside dist, not dist itself.
       return skipped || excluded(n) || excluded(`${n}/__probe__`);

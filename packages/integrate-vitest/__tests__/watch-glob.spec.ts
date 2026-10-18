@@ -174,6 +174,25 @@ describe("makeMatcher", () => {
     }
   });
 
+  test("an absolute glob with a glob first starts at the root", () => {
+    const m = matcher(["/*.json", "/**/.storybook/*.ts"]);
+    expect(m.roots()).toEqual([
+      { base: "/", depth: 1 },
+      { base: "/", depth: Infinity },
+    ]);
+    expect(m.classify("/a.json", "walk")).toBe("watch");
+    expect(m.pruneDir("/app/.storybook")).toBe(false);
+    expect(m.pruneDir("/app/.git")).toBe(true);
+    const win = makeMatcher({
+      cwd: "C:\\proj",
+      include: ["D:/*.json"],
+      exclude: [],
+      platform: "win32",
+      isDir: () => false,
+    });
+    expect(win.roots()).toEqual([{ base: "D:\\", depth: 1 }]);
+  });
+
   test("@ + ! ( ) are glob syntax only as an extglob", () => {
     const scoped = new Set(["/proj/node_modules/@org/lib", "/proj/src/routes/(app)"]);
     const m = makeMatcher({
