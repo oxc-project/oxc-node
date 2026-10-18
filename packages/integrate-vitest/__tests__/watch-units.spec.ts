@@ -609,4 +609,289 @@ describe("DirWatcher", () => {
       w.close();
     }
   });
+
+  describe("dropRun", () => {
+    test("a file changed between the drop and the new run's report is a change", async () => {
+      const root = temp();
+      const [dep, same] = [join(root, "dep.ts"), join(root, "same.ts")];
+      writeFileSync(dep, "1");
+      writeFileSync(same, "1");
+      const { w, changes } = start({ platform: "linux", watch: fakeWatch().watch });
+      try {
+        w.add(dep, true);
+        w.add(same, true);
+        w.dropRun();
+        // The new run read dep.ts, then it changed, then the run reported it.
+        writeFileSync(dep, "22");
+        w.add(dep, true);
+        w.add(same, true);
+        await new Promise((r) => setTimeout(r, 0));
+        expect(changes).toEqual([dep]);
+        // Only once: a later run starts from what it saw.
+        w.dropRun();
+        w.add(dep, true);
+        await new Promise((r) => setTimeout(r, 0));
+        expect(changes).toEqual([dep]);
+      } finally {
+        w.close();
+      }
+    });
+
+    test("drops a file only the imports wanted, and the watch on its folder a run later", async () => {
+      const root = temp();
+      const [gen, src] = [join(root, "gen"), join(root, "src")];
+      mkdirSync(gen);
+      mkdirSync(src);
+      const [dep, main] = [join(gen, "dep.ts"), join(src, "main.ts")];
+      writeFileSync(dep, "1");
+      writeFileSync(main, "1");
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "linux", watch: fake.watch });
+      try {
+        w.add(main);
+        w.add(dep, true);
+        await until(() => fake.open(gen).length === 1 && fake.open(src).length === 1, "watches");
+        const [old] = fake.open(gen);
+        w.dropRun();
+        writeFileSync(dep, "22");
+        old.emit("dep.ts");
+        await new Promise((r) => setTimeout(r, 100));
+        // Kept for the next run, which likely imports it again.
+        expect(old.closed).toBe(false);
+        w.dropRun();
+        await until(() => old.closed, "the folder's watch to close");
+        expect(fake.open(src)).toHaveLength(1);
+        writeFileSync(main, "22");
+        fake.open(src)[0].emit("main.ts");
+        expect(changes).toEqual([main]);
+      } finally {
+        w.close();
+      }
+    });
+
+    test.each([
+      ["given only", [false]],
+      ["given, then imported", [false, true]],
+      ["imported, then given", [true, false]],
+    ] as const)("keeps a file %s", async (_, runs) => {
+      const root = temp();
+      const file = join(root, "a.ts");
+      writeFileSync(file, "1");
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "linux", watch: fake.watch });
+      try {
+        for (const run of runs) w.add(file, run);
+        await until(() => fake.open(root).length === 1, "the watch");
+        w.dropRun();
+        await new Promise((r) => setTimeout(r, 100));
+        writeFileSync(file, "22");
+        fake.open(root)[0].emit("a.ts");
+        expect(changes).toEqual([file]);
+      } finally {
+        w.close();
+      }
+    });
+
+    test("keeps a walked file the imports also wanted", async () => {
+      const root = temp();
+      const conf = join(root, "conf");
+      mkdirSync(conf);
+      const file = join(conf, "a.json");
+      writeFileSync(file, "1");
+      const fake = fakeWatch();
+      const { w, changes, debug } = start({ platform: "linux", watch: fake.watch });
+      try {
+        w.add(file, true);
+        w.addRoot(conf, Infinity);
+        await until(() => fake.open(conf).length === 1, "the watch");
+        w.dropRun();
+        await new Promise((r) => setTimeout(r, 100));
+        writeFileSync(file, "22");
+        fake.open(conf)[0].emit("a.json");
+        expect(changes).toEqual([file]);
+        // Kept, not dropped and found again by the walk.
+        expect(debug.filter((l) => l === `watch ${file}`)).toHaveLength(1);
+      } finally {
+        w.close();
+      }
+    });
+
+    test.skipIf(process.platform === "win32")(
+      "keeps the target of a walked link, also when the imports wanted it",
+      async () => {
+        const root = temp();
+        const [config, shared] = [join(root, "config"), join(root, "shared")];
+        mkdirSync(config);
+        mkdirSync(shared);
+        const target = join(shared, "a.json");
+        writeFileSync(target, "1");
+        const link = join(config, "current.json");
+        symlinkSync("../shared/a.json", link);
+        const fake = fakeWatch();
+        const { w, changes } = start({ platform: "linux", watch: fake.watch });
+        try {
+          w.addRoot(config, Infinity);
+          w.add(target, true);
+          await until(() => fake.open(shared).length === 1, "the target's watch");
+          w.dropRun();
+          await new Promise((r) => setTimeout(r, 100));
+          writeFileSync(target, "22");
+          fake.open(shared)[0].emit("a.json");
+          // Under the link again, as before the imports wanted it.
+          expect(changes).toEqual([link]);
+        } finally {
+          w.close();
+        }
+      },
+    );
+
+    test.skipIf(process.platform === "win32")(
+      "a given link drops its old target when it points elsewhere",
+      async () => {
+        const root = temp();
+        const [config, shared] = [join(root, "config"), join(root, "shared")];
+        mkdirSync(config);
+        mkdirSync(shared);
+        const [a, b] = [join(shared, "a.json"), join(shared, "b.json")];
+        writeFileSync(a, "1");
+        writeFileSync(b, "1");
+        const link = join(config, "current.json");
+        symlinkSync("../shared/a.json", link);
+        const fake = fakeWatch();
+        const { w, changes, debug } = start({ platform: "linux", watch: fake.watch });
+        try {
+          w.add(link);
+          expect(debug).toContain(`watch ${a}`);
+          await until(() => fake.open(shared).length === 1, "the target's watch");
+          rmSync(link);
+          symlinkSync("../shared/b.json", link);
+          fake.open(config)[0].emit("current.json");
+          expect(changes).toEqual([link]);
+          writeFileSync(a, "22");
+          fake.open(shared)[0].emit("a.json");
+          expect(changes).toEqual([link]);
+          writeFileSync(b, "22");
+          fake.open(shared)[0].emit("b.json");
+          expect(changes).toEqual([link, link]);
+        } finally {
+          w.close();
+        }
+      },
+    );
+
+    test("Linux: deleting the folder of a file the next run imports again is a change", async () => {
+      const root = temp();
+      const [cfg, src] = [join(root, "cfg"), join(root, "src")];
+      mkdirSync(cfg);
+      mkdirSync(src);
+      const [opt, main] = [join(cfg, "opt.ts"), join(src, "main.ts")];
+      writeFileSync(opt, "1");
+      writeFileSync(main, "1");
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "linux", watch: fake.watch });
+      try {
+        w.add(main);
+        w.add(opt, true);
+        await until(() => fake.open(cfg).length === 1, "the folder's watch");
+        w.dropRun();
+        // The next run starts, then reports the file.
+        await new Promise((r) => setTimeout(r, 60));
+        w.add(opt, true);
+        rmSync(cfg, { recursive: true });
+        for (const h of fake.open(cfg)) h.emit("opt.ts");
+        await new Promise((r) => setTimeout(r, 100));
+        expect(changes).toEqual([opt]);
+      } finally {
+        w.close();
+      }
+    });
+
+    test.skipIf(process.platform === "win32")(
+      "macOS: an edit to a link's target, then a rerun, is one change",
+      async () => {
+        const root = temp();
+        const [config, shared, lib] = ["config", "shared", "lib"].map((d) => join(root, d));
+        for (const d of [config, shared, lib]) mkdirSync(d);
+        const target = join(shared, "a.json");
+        writeFileSync(target, "1");
+        const link = join(config, "current.json");
+        symlinkSync("../shared/a.json", link);
+        const dep = join(lib, "dep.ts");
+        writeFileSync(dep, "1");
+        const fake = fakeWatch();
+        const { w, changes } = start({ platform: "darwin", watch: fake.watch });
+        try {
+          w.add(link);
+          w.add(dep, true);
+          await until(
+            () => fake.open(shared).length === 1 && fake.open(lib).length === 1,
+            "watches",
+          );
+          await new Promise((r) => setTimeout(r, 400));
+          writeFileSync(target, "22");
+          fake.open(shared)[0].emit("a.json");
+          expect(changes).toEqual([link]);
+          w.dropRun();
+          await new Promise((r) => setTimeout(r, 60));
+          w.add(dep, true);
+          // Past the look at every file that follows a restart of the FSEvents stream.
+          await new Promise((r) => setTimeout(r, 400));
+          expect(changes).toEqual([link]);
+        } finally {
+          w.close();
+        }
+      },
+    );
+
+    test.skipIf(process.platform === "win32")(
+      "macOS: an edit to a link's target is not seen again when a new watch opens",
+      async () => {
+        const root = temp();
+        const [config, shared, later] = ["config", "shared", "later"].map((d) => join(root, d));
+        for (const d of [config, shared, later]) mkdirSync(d);
+        const target = join(shared, "a.json");
+        writeFileSync(target, "1");
+        const link = join(config, "current.json");
+        symlinkSync("../shared/a.json", link);
+        const fake = fakeWatch();
+        const { w, changes } = start({ platform: "darwin", watch: fake.watch });
+        try {
+          w.add(link);
+          await until(() => fake.open(shared).length === 1, "the target's watch");
+          await new Promise((r) => setTimeout(r, 400));
+          writeFileSync(target, "22");
+          fake.open(shared)[0].emit("a.json");
+          expect(changes).toEqual([link]);
+          w.add(join(later, "b.ts"));
+          await until(() => fake.open(later).length === 1, "the new watch");
+          await new Promise((r) => setTimeout(r, 400));
+          expect(changes).toEqual([link]);
+        } finally {
+          w.close();
+        }
+      },
+    );
+
+    test("--poll: a dropped file is no longer polled", async () => {
+      const root = temp();
+      const [dep, main] = [join(root, "dep.ts"), join(root, "main.ts")];
+      writeFileSync(dep, "1");
+      writeFileSync(main, "1");
+      const { w, changes } = start({ poll: 20 });
+      try {
+        w.add(main);
+        w.add(dep, true);
+        writeFileSync(dep, "22");
+        await until(() => changes.includes(dep), "a change while it is polled");
+        w.dropRun();
+        writeFileSync(dep, "333");
+        await new Promise((r) => setTimeout(r, 300));
+        writeFileSync(main, "22");
+        await until(() => changes.includes(main), "a change in the kept file");
+        expect(changes).toEqual([dep, main]);
+      } finally {
+        w.close();
+      }
+    });
+  });
 });

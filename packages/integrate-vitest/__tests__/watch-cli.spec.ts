@@ -15,6 +15,7 @@ import {
   reason,
   removeProjects,
   startOxnode,
+  type Oxnode,
   stopAll,
   write,
 } from "./helpers/watch.js";
@@ -310,6 +311,7 @@ console.log("RUN", v, s, process.pid);\n${KEEP}`,
     await o.watched(join(root, "sentinel.ts"));
     // First show that the folder watch is live, so no write below is lost.
     await o.editUntil(join(root, "dep.ts"), () => value("live"), runLine("live s1"));
+    await reported(o, join(root, "dep.ts"));
     const from = o.mark();
     const before = o.runs().length;
     // Back to back: a timer between writes can stall past the debounce on a busy CI machine.
@@ -327,6 +329,46 @@ console.log("RUN", v, s, process.pid);\n${KEEP}`,
     const upTo = text.slice(0, text.search(runLine("b5 s2")));
     expect(count(upTo, /\[oxnode\] change in /)).toBe(2);
     expect(firstReason(text)).toMatch(reason("dep.ts"));
+  });
+
+  test("a file the app no longer imports does not restart", async () => {
+    const root = project({
+      "package.json": ESM,
+      "main.ts": `import { v } from "./dep.js";\nimport { s } from "./sentinel.js";
+console.log("RUN", v, s, process.pid);\n${KEEP}`,
+      "dep.ts": value("v1"),
+      "sentinel.ts": sentinel("s1"),
+    });
+    const o = startOxnode(["watch", "main.ts"], root);
+    await o.waitFor(runLine("v1 s1"));
+    await o.watched(join(root, "dep.ts"));
+    await o.editUntil(
+      join(root, "main.ts"),
+      () =>
+        `import { s } from "./sentinel.js";\nconsole.log("RUN", "none", s, process.pid);\n${KEEP}`,
+      runLine("none s1"),
+    );
+    const from = o.mark();
+    const before = o.runs().length;
+    write(join(root, "dep.ts"), value("v2"));
+    await o.editUntil(join(root, "sentinel.ts"), () => sentinel("s2"), runLine("none s2"));
+    expect(o.runs()[before]).toMatch(/^none s2 /);
+    expect(firstReason(o.stdout().slice(from))).toMatch(reason("sentinel.ts"));
+  });
+
+  test("an --include file the app no longer imports still restarts", async () => {
+    const root = project({ "package.json": ESM, "main.ts": MAIN, "dep.ts": value("v1") });
+    const o = startOxnode(["watch", "--include", "dep.ts", "main.ts"], root);
+    await o.waitFor(runLine("v1"));
+    await o.watched(join(root, "dep.ts"));
+    await o.editUntil(
+      join(root, "main.ts"),
+      () => `console.log("RUN", "none", process.pid);\n${KEEP}`,
+      runLine("none"),
+    );
+    const from = o.mark();
+    await o.editUntil(join(root, "dep.ts"), (i) => value(`v${i + 2}`), reason("dep.ts"));
+    await o.waitFor(runLine("none"), 20_000, from);
   });
 
   test("an edit to the entry, with Node.js flags before it and script args after it", async () => {
@@ -405,6 +447,7 @@ ${KEEP}`,
     await o.watched(join(root, "opt.ts"));
     // First show that the folder watch is live: a delete cannot be written again.
     await o.editUntil(join(root, "opt.ts"), () => value("live"), runLine("live"));
+    await reported(o, join(root, "opt.ts"));
     const from = o.mark();
     rmSync(join(root, "opt.ts"));
     await o.waitFor(runLine("gone"), 20_000, from);
@@ -425,6 +468,7 @@ ${KEEP}`,
     await o.waitFor(runLine("here"));
     await o.watched(join(root, "cfg/opt.ts"));
     await o.editUntil(join(root, "cfg/opt.ts"), () => value("live"), runLine("live"));
+    await reported(o, join(root, "cfg/opt.ts"));
     const from = o.mark();
     // macOS reports this as one event for the folder, and none for the file in it.
     rmSync(join(root, "cfg"), { recursive: true });
@@ -601,6 +645,15 @@ ${KEEP}`,
 
 function escapeRe(text: string) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Waits until the last run has reported `file` again: before each run oxnode drops what the run
+ * before imported, and each report logs `watch <file>` anew.
+ */
+function reported(o: Oxnode, file: string) {
+  const line = `^watch ${escapeRe(file)}$`;
+  return o.waitDebug(new RegExp(`(?:${line}[\\s\\S]*?){${o.runs().length}}`, "m"));
 }
 
 /** The first restart or rerun reason in `text`, with its line end. */

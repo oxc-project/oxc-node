@@ -107,7 +107,9 @@ on the next change.
 | a file in `node_modules`                            | only with `--include`      | Node's rules                      |
 | a file matching `--exclude`                         | no                         | (no such flag)                    |
 
-Globs are relative to the current folder.
+Globs are relative to the current folder. An imported file counts only while
+the app imports it: before each rerun, oxnode forgets what the last run
+imported, as Node does.
 
 ### Options
 
@@ -192,8 +194,6 @@ watcher ignores `SIGHUP`.
   `--no-rerun-on-enter` for that.
 - **Windows** has no graceful stop before a rerun: oxnode ends the app and its
   children at once, and `--kill-signal` is ignored.
-- **The watch list only grows.** A file the app no longer imports can still
-  cause a rerun.
 - **A script named `watch`.** `oxnode watch` is now the watch command, so run a
   file named exactly `watch` as `oxnode ./watch`.
 

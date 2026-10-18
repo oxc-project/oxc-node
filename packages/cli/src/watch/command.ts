@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -74,6 +74,8 @@ export function runWatch(argv: string[]): Promise<number> {
   return new Promise((resolve) => {
     const ack = createSignalAck();
     let child: ChildProcess | undefined;
+    // The last child started, still set after it exits: its reports may come after its exit.
+    let latest: ChildProcess | undefined;
     const signals = gateSignals(
       new SignalGate({
         nodeWatch: false,
@@ -112,6 +114,8 @@ export function runWatch(argv: string[]): Promise<number> {
     // fires for both, so a change to the real path is shown, and counted, as the other.
     const fold = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
     const reported = new Map<string, string>();
+    // What the current run's imports added, dropped before the next run, as Node.js does.
+    const runAliases = new Set<string>();
 
     const watcher = new DirWatcher({
       poll: args.poll,
@@ -124,11 +128,12 @@ export function runWatch(argv: string[]): Promise<number> {
     });
 
     const seen = new Set<string>();
+    const runSeen = new Set<string>();
     const want = (p: string, source: Source) => {
-      if (seen.has(p)) return;
-      seen.add(p);
+      if (seen.has(p) || runSeen.has(p)) return;
+      (source === "graph" ? runSeen : seen).add(p);
       const verdict = matcher.classify(p, source);
-      if (verdict === "watch") watcher.add(p);
+      if (verdict === "watch") watcher.add(p, source === "graph");
       else debug(`skip ${p} (${verdict === "exclude" ? "exclude" : "default"})`);
       if (verdict === "exclude") return;
       // Node.js reports real paths, but not under --preserve-symlinks, where a linked
@@ -136,10 +141,21 @@ export function runWatch(argv: string[]): Promise<number> {
       try {
         const real = realpathSync.native(p);
         if (real !== p) {
-          if (!reported.has(fold(real))) reported.set(fold(real), p);
+          if (!reported.has(fold(real))) {
+            reported.set(fold(real), p);
+            if (source === "graph") runAliases.add(fold(real));
+          }
+          // A given link: the watcher follows it, and drops its old target when it moves.
+          if (source === "literal" && lstatSync(p).isSymbolicLink()) return;
           want(real, source);
         }
       } catch {}
+    };
+    const newRun = () => {
+      runSeen.clear();
+      for (const k of runAliases) reported.delete(k);
+      runAliases.clear();
+      watcher.dropRun();
     };
 
     const spawnChild = () => {
@@ -150,16 +166,19 @@ export function runWatch(argv: string[]): Promise<number> {
         queueMicrotask(() => dispatch({ t: "spawnError", err: nested }));
         return;
       }
+      newRun();
       const c = spawn(process.execPath, nodeArgs, {
         env,
         stdio: ["inherit", "inherit", "inherit", "ipc"],
         windowsHide: false,
       });
       child = c;
+      latest = c;
       c.on("message", (msg) => {
         const paths = parseWatchMessage(msg);
         if (paths) {
-          for (const p of paths) want(p, "graph");
+          // A late report from the run before must not add back what the new run dropped.
+          if (c === latest) for (const p of paths) want(p, "graph");
         } else if (process.send && process.connected) {
           // Like Node.js' watcher, pass the app's own messages on.
           process.send(msg as never, () => {});

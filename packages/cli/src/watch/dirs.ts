@@ -82,6 +82,7 @@ interface Entry {
   path: string;
   shown: string;
   sig: Sig;
+  own?: "static" | "run";
   target?: string;
   links?: Set<string>;
 }
@@ -119,8 +120,9 @@ export class DirWatcher {
   #win: boolean;
   /**
    * `shown` is the name a change is reported under: a link, for a link's target.
+   * `own`: wanted itself, for the whole session or only by the current run's imports.
    * `target` is the key of the file a link points to; `links`, the keys of the links a target is
-   * watched for (none when it is wanted itself).
+   * watched for.
    */
   #files = new Map<string, Entry>();
   #byDir = new Map<string, Set<string>>();
@@ -129,6 +131,11 @@ export class DirWatcher {
   #handles = new Map<string, Handle>();
   // The first missing folder below each placeholder watch: an event for it means "look again".
   #awaited = new Set<string>();
+  // The folders of the files the last `dropRun` dropped, still watched for one run: the next run
+  // likely imports them again, and on macOS each close and open restarts the FSEvents stream.
+  #dropped: string[] = [];
+  // Their stats then, so a change made before the new run reports them again is not lost.
+  #droppedSigs = new Map<string, Sig>();
   #failed = new Set<string>();
   #warned = new Set<string>();
   #syncTimer: NodeJS.Timeout | undefined;
@@ -149,17 +156,57 @@ export class DirWatcher {
     return this.#win ? p.toLowerCase() : p;
   }
 
-  /** Watch one file, which may not exist yet. */
-  add(file: string, shown = file): void {
-    const k = this.#key(file);
-    const have = this.#files.get(k);
-    if (have && shown === file && have.links) {
+  /**
+   * Watch one file, which may not exist yet. `run`: only the current run's imports want it, so
+   * `dropRun` drops it. A link's target is watched for as long as the link points to it.
+   */
+  add(file: string, run = false): void {
+    const have = this.#files.get(this.#key(file));
+    if (have) {
       // Wanted itself now, not only as a link's target: kept whatever the links do.
-      have.links = undefined;
+      if (have.own !== "static") have.own = run ? "run" : "static";
       have.shown = file;
+      return;
     }
-    if (this.#closed || have) return;
-    this.#files.set(k, { path: file, shown, sig: sigOf(file) });
+    if (this.#closed) return;
+    const entry = this.#put(file, file, run ? "run" : "static");
+    if (isLink(file)) this.#follow(entry);
+  }
+
+  /** Drop what only the last run's imports wanted: the next run reports its own. */
+  dropRun(): void {
+    const dirs = new Set<string>();
+    const sigs = new Map<string, Sig>();
+    for (const [k, f] of this.#files) {
+      if (f.own !== "run") continue;
+      f.own = undefined;
+      const [link] = f.links ?? [];
+      if (link !== undefined) {
+        f.shown = this.#files.get(link)?.path ?? f.shown;
+        continue;
+      }
+      sigs.set(k, f.sig);
+      this.#remove(k);
+      dirs.add(path.dirname(f.path));
+    }
+    this.#droppedSigs = sigs;
+    // The folders dropped the time before may be unneeded now.
+    if (this.#dropped.length > 0 && this.#o.poll === false) this.#scheduleSync();
+    this.#dropped = [...dirs];
+  }
+
+  #put(file: string, shown: string, own: Entry["own"]): Entry {
+    const k = this.#key(file);
+    const entry: Entry = { path: file, shown, sig: sigOf(file), own };
+    this.#files.set(k, entry);
+    // Dropped at the restart and changed since: the new run may have read it before the change.
+    if (this.#droppedSigs.has(k)) {
+      const before = this.#droppedSigs.get(k)!;
+      this.#droppedSigs.delete(k);
+      if (changed(before, entry.sig, false)) {
+        queueMicrotask(() => this.#closed || this.#o.onChange(shown));
+      }
+    }
     const dk = this.#key(path.dirname(file));
     const set = this.#byDir.get(dk);
     if (set) set.add(k);
@@ -167,12 +214,13 @@ export class DirWatcher {
     this.#o.debug(`watch ${file}`);
     if (this.#o.poll === false) {
       this.#scheduleSync();
-      return;
+      return entry;
     }
     // The same check as for an event, so a link's target is followed here too.
     watchFile(file, { interval: this.#o.poll, bigint: true }, () => {
       if (this.#files.has(k)) this.#check(k);
     });
+    return entry;
   }
 
   /** Walk `base` to `depth` levels for files the matcher accepts, now and as they appear. */
@@ -239,7 +287,8 @@ export class DirWatcher {
   }
 
   #found(file: string, fire: boolean) {
-    if (this.#files.has(this.#key(file))) return;
+    const have = this.#files.get(this.#key(file));
+    if (have?.own === "static") return;
     try {
       if (!statSync(file).isFile()) return;
     } catch {
@@ -247,6 +296,8 @@ export class DirWatcher {
     }
     if (this.#o.matcher.classify(file, "walk") !== "watch") return;
     this.add(file);
+    // Known from the imports or as a link's target: the walk keeps it now, and it is no change.
+    if (have) return;
     this.#follow(this.#files.get(this.#key(file))!);
     if (fire) this.#o.onChange(file);
   }
@@ -261,26 +312,30 @@ export class DirWatcher {
     const next = real && this.#key(real) !== this.#key(entry.path) ? this.#key(real) : undefined;
     if (next === entry.target) return;
     const link = this.#key(entry.path);
-    const old = entry.target === undefined ? undefined : this.#files.get(entry.target);
-    if (old?.links) {
-      // Dropped once no link points to it; until then, reported under a link that still does.
-      old.links.delete(link);
-      const [rest] = old.links;
-      if (rest === undefined) this.#remove(entry.target!);
-      else old.shown = this.#files.get(rest)?.path ?? old.shown;
-    }
+    if (entry.target !== undefined) this.#release(entry.target, link);
     entry.target = next;
-    if (real && next) {
-      this.add(real, entry.path);
-      const target = this.#files.get(next);
-      if (target && target.shown !== target.path) (target.links ??= new Set()).add(link);
+    if (real && next && !this.#closed) {
+      const target = this.#files.get(next) ?? this.#put(real, entry.path, undefined);
+      (target.links ??= new Set()).add(link);
     }
+  }
+
+  // Dropped once neither it nor a link wants it; until then, reported under a link that still does.
+  #release(k: string, link: string) {
+    const target = this.#files.get(k);
+    if (!target?.links) return;
+    target.links.delete(link);
+    if (target.own) return;
+    const [rest] = target.links;
+    if (rest === undefined) this.#remove(k);
+    else target.shown = this.#files.get(rest)?.path ?? target.shown;
   }
 
   #remove(k: string) {
     const entry = this.#files.get(k);
     if (!entry) return;
     this.#files.delete(k);
+    if (entry.target !== undefined) this.#release(entry.target, k);
     this.#byDir.get(this.#key(path.dirname(entry.path)))?.delete(k);
     if (this.#o.poll !== false) unwatchFile(entry.path);
     else this.#scheduleSync();
@@ -329,6 +384,7 @@ export class DirWatcher {
       if (!this.#walkRoot(root)) place(root.base);
     }
     for (const f of this.#files.values()) place(path.dirname(f.path));
+    for (const d of this.#dropped) place(d);
     for (const [k, w] of this.#walked) needed.set(k, w.dir);
     this.#awaited = awaited;
 
@@ -482,9 +538,14 @@ export class DirWatcher {
     const next = sigOf(entry.path);
     if (!changed(entry.sig, next, event)) return;
     entry.sig = next;
+    // A link's stat follows it: so a look without an event does not see this change again.
+    for (const l of entry.links ?? []) {
+      const link = this.#files.get(l);
+      if (link) link.sig = sigOf(link.path);
+    }
     // A link pointed somewhere else, or removed. Only a link: Windows gives other paths a second
     // spelling (8.3 names), which is the same file.
-    if (entry.shown === entry.path && (entry.target !== undefined || isLink(entry.path))) {
+    if (entry.own && (entry.target !== undefined || isLink(entry.path))) {
       this.#follow(entry);
     }
     this.#o.onChange(entry.shown);
