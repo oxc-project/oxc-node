@@ -132,6 +132,10 @@ describe("makeMatcher", () => {
     expect(matcher(["**/{.storybook,stories}/*.ts"]).pruneDir("/proj/a/.storybook")).toBe(false);
     expect(matcher(["*/*/*.ts"]).pruneDir("/proj/node_modules")).toBe(true);
     expect(matcher(["!(dist)/**/*.ts"]).pruneDir("/proj/node_modules")).toBe(true);
+    // The opt-in holds only below the base of the pattern that names the folder.
+    const two = matcher(["vendor/**/node_modules/pkg/**", "src/**/*.ts"]);
+    expect(two.pruneDir("/proj/vendor/a/node_modules")).toBe(false);
+    expect(two.pruneDir("/proj/src/node_modules")).toBe(true);
   });
 
   test("pruneDir with **/dist/**", () => {

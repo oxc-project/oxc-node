@@ -68,8 +68,9 @@ export function makeMatcher(opts: {
   const excludes = opts.exclude.map((p) => (GLOB_CHARS.test(p) ? glob(p) : literal(absolute(p))));
   const includes: ((n: string) => boolean)[] = [];
   // The parts of each include glob below its base, to tell when one names a folder that walks
-  // skip by default: `packages/**/node_modules/pkg/**`, `**/.storybook/*.ts`.
-  const named: string[] = [];
+  // skip by default: `packages/**/node_modules/pkg/**`, `**/.storybook/*.ts`. Each holds only
+  // below its own base, so `src/**/*.ts` next to it still skips `src/node_modules`.
+  const named: { base: string; parts: string[] }[] = [];
   const roots: { base: string; depth: number }[] = [];
   const literals: string[] = [];
   for (const pattern of opts.include) {
@@ -89,11 +90,9 @@ export function makeMatcher(opts: {
     let baseLen = 0;
     while (baseLen < parts.length - 1 && !GLOB_CHARS.test(parts[baseLen])) baseLen++;
     const rest = parts.slice(baseLen);
-    named.push(...rest.map(norm));
-    roots.push({
-      base: native.resolve(opts.cwd, parts.slice(0, baseLen).join("/") || "."),
-      depth: rest.includes("**") ? Infinity : rest.length,
-    });
+    const base = native.resolve(opts.cwd, parts.slice(0, baseLen).join("/") || ".");
+    named.push({ base: norm(base), parts: rest.map(norm) });
+    roots.push({ base, depth: rest.includes("**") ? Infinity : rest.length });
   }
 
   const ignoreDirs = (opts.ignoreDirs ?? []).map(norm);
@@ -120,10 +119,14 @@ export function makeMatcher(opts: {
       // `{node_modules,src}`, `@(node_modules|src)` do; `*` never walks into every node_modules.
       const skipped =
         (name === "node_modules" || name.startsWith(".")) &&
-        !named.some((part) =>
-          GLOB_CHARS.test(part)
-            ? matchesGlob!(name, part) && !matchesGlob!("oxnode-any-name", part)
-            : part === name,
+        !named.some(
+          (include) =>
+            n.startsWith(`${include.base}/`) &&
+            include.parts.some((part) =>
+              GLOB_CHARS.test(part)
+                ? matchesGlob!(name, part) && !matchesGlob!("oxnode-any-name", part)
+                : part === name,
+            ),
         );
       // `**/dist/**` matches what is inside dist, not dist itself.
       return skipped || excluded(n) || excluded(`${n}/__probe__`);
