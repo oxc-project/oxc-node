@@ -6,7 +6,7 @@ import { isMainThread, MessageChannel, receiveMessageOnPort } from "node:worker_
 
 import { takeWatchDependencies } from "./index.js";
 
-export const WATCH_CHANNEL = "@oxc-node/core:watch-deps";
+const WATCH_CHANNEL = "@oxc-node/core:watch-deps";
 
 /**
  * Where this thread sends its reports, or `null` when nobody is watching. With
