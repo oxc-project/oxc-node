@@ -639,8 +639,10 @@ fn watch_candidates<'a>(missing: impl IntoIterator<Item = &'a PathBuf>) -> Vec<&
 /// oxc_resolver 11 reads text only for tsconfig files: `read_to_string` has
 /// one caller, the tsconfig loader, while `package.json` goes through `read`.
 /// So this sees the explicit config, every discovered one, each `extends`
-/// target (relative, package or `#imports`) and `references`, and only files
-/// that exist. A unit test pins that; recheck it on each resolver upgrade.
+/// target (relative, package or `#imports`) and `references`. Discovery reads
+/// only files that exist, so a failed read is a file some config names, and
+/// creating it must restart too. A unit test pins that; recheck it on each
+/// resolver upgrade.
 struct WatchFs(FileSystemOs);
 
 impl FileSystem for WatchFs {
@@ -659,13 +661,20 @@ impl FileSystem for WatchFs {
     }
 
     fn read_to_string(&self, path: &Path) -> io::Result<String> {
-        let text = FileSystem::read_to_string(&self.0, path)?;
+        let text = FileSystem::read_to_string(&self.0, path);
         // Belt and braces: should a later resolver read package.json as text,
         // the one in every ancestor directory must still not be reported.
         if path.file_name() != Some(OsStr::new("package.json")) {
             report_watch_path(path);
+            // A missing `extends: "./base.json"` is read as `base.json.json`.
+            if text.is_err()
+                && let Some(named) = path.to_str().and_then(|p| p.strip_suffix(".json"))
+                && named.ends_with(".json")
+            {
+                report_watch_path(Path::new(named));
+            }
         }
-        Ok(text)
+        text
     }
 
     fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
@@ -4050,6 +4059,29 @@ mod tests {
         });
         manual.resolve_tsconfig(root.join("tsconfig.json")).unwrap();
         assert!(take_watch_dependencies().is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn watch_report_records_a_missing_extends_target() {
+        let _lock = watch_lock();
+        let root = watch_fixture(
+            "watch-missing-extends",
+            &[
+                ("tsconfig.json", r#"{ "extends": "./cfg/base.json", "include": ["src"] }"#),
+                ("src/main.ts", ""),
+            ],
+        );
+        let resolver = Resolver::new(ResolveOptions {
+            tsconfig: Some(TsconfigDiscovery::Auto),
+            ..Default::default()
+        });
+        enable_watch_report();
+        assert!(resolver.find_tsconfig(root.join("src/main.ts")).is_err());
+        let reported = take_watch_dependencies();
+        for file in ["tsconfig.json", "cfg/base.json"] {
+            assert!(reported.contains(&url_of(&root.join(file))), "{file}: {reported:?}");
+        }
         let _ = fs::remove_dir_all(&root);
     }
 
