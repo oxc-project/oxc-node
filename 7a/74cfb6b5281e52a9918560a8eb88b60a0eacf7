@@ -1,0 +1,21 @@
+packages/cli/src/watch/command.ts
+  s_5b25d6ae40e975::t_c866bc138b1027 106-111,116-117,134-137
+packages/integrate-vitest/__tests__/watch-cli.spec.ts
+  s_5b25d6ae40e975::t_b1cb392e8e354c 265-280
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7a74cfb6b5281e52a9918560a8eb88b60a0eacf7",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
