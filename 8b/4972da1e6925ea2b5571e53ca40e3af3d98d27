@@ -1,0 +1,21 @@
+packages/cli/src/watch/dirs.ts
+  s_5b102768ecaa9e::t_9f15a4ef035975 74-75,78-79,81-82,107,159,266,286,291-303,316,318,326,377-389
+packages/integrate-vitest/__tests__/watch-units.spec.ts
+  s_5b102768ecaa9e::t_3f64cc001a438e 217-274,322
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8b4972da1e6925ea2b5571e53ca40e3af3d98d27",
+  "prompts": {},
+  "sessions": {
+    "s_5b102768ecaa9e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac32e4ff9fdde4cf8",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
