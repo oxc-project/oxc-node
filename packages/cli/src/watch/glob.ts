@@ -115,18 +115,30 @@ export function makeMatcher(opts: {
     pruneDir(absDir) {
       const n = norm(absDir);
       const name = path.posix.basename(n);
-      // A part names such a folder when it matches it but not just any name: `.storybook`,
-      // `{node_modules,src}`, `@(node_modules|src)` do; `*` never walks into every node_modules.
+      // Whether the folders from the base down to this one fit the include's parts in order, with
+      // this one named by a part. A part names it when it matches it but not just any name:
+      // `.storybook`, `{node_modules,src}`, `@(node_modules|src)` do; `*` and `**` never walk
+      // into every node_modules.
+      const fits = (dirs: string[], parts: string[], i = 0, j = 0): boolean => {
+        if (i === dirs.length) return true;
+        const part = parts[j];
+        // The last part is for files, unless it is `**`.
+        if (part === undefined || (j === parts.length - 1 && part !== "**")) return false;
+        const last = i === dirs.length - 1;
+        if (part === "**") {
+          return fits(dirs, parts, i, j + 1) || (!last && fits(dirs, parts, i + 1, j));
+        }
+        const ok = GLOB_CHARS.test(part)
+          ? matchesGlob!(dirs[i], part) && !(last && matchesGlob!("oxnode-any-name", part))
+          : part === dirs[i];
+        return ok && fits(dirs, parts, i + 1, j + 1);
+      };
       const skipped =
         (name === "node_modules" || name.startsWith(".")) &&
         !named.some(
           (include) =>
             n.startsWith(`${include.base}/`) &&
-            include.parts.some((part) =>
-              GLOB_CHARS.test(part)
-                ? matchesGlob!(name, part) && !matchesGlob!("oxnode-any-name", part)
-                : part === name,
-            ),
+            fits(n.slice(include.base.length + 1).split("/"), include.parts),
         );
       // `**/dist/**` matches what is inside dist, not dist itself.
       return skipped || excluded(n) || excluded(`${n}/__probe__`);

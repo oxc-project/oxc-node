@@ -136,6 +136,15 @@ describe("makeMatcher", () => {
     const two = matcher(["vendor/**/node_modules/pkg/**", "src/**/*.ts"]);
     expect(two.pruneDir("/proj/vendor/a/node_modules")).toBe(false);
     expect(two.pruneDir("/proj/src/node_modules")).toBe(true);
+    // Only where the folder can be on the pattern's path, not wherever its name appears.
+    const deep = matcher(["src/{web,api}/fixtures/node_modules/pkg/**"]);
+    expect(deep.pruneDir("/proj/src/node_modules")).toBe(true);
+    expect(deep.pruneDir("/proj/src/web/node_modules")).toBe(true);
+    expect(deep.pruneDir("/proj/src/web/fixtures/node_modules")).toBe(false);
+    expect(deep.pruneDir("/proj/src/web/fixtures/node_modules/pkg/node_modules")).toBe(true);
+    expect(
+      matcher(["src/*.ts", "src/x/node_modules/*.js"]).pruneDir("/proj/src/node_modules"),
+    ).toBe(true);
   });
 
   test("pruneDir with **/dist/**", () => {
