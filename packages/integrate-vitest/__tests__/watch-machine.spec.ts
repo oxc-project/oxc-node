@@ -20,8 +20,6 @@ const running = (): State => ({ k: "running" });
 const stopping = (after: "restart" | "exit", firstSigAt?: number): State => ({
   k: "stopping",
   after,
-  forced: false,
-  pending: false,
   ...(firstSigAt === undefined ? {} : { firstSig: "SIGINT" as const, firstSigAt }),
 });
 const count = (effects: Effect[], e: Effect["e"]) => effects.filter((x) => x.e === e).length;
@@ -63,7 +61,7 @@ describe("step", () => {
 
   test("running + trigger with killTimeout 0 kills the tree at once", () => {
     const r = run([{ t: "enter" }], running(), { ...cfg, killTimeout: 0 });
-    expect(r.state).toMatchObject({ k: "stopping", after: "restart", forced: true });
+    expect(r.state).toEqual({ k: "stopping", after: "restart" });
     expect(r.effects.slice(-1)).toEqual([{ e: "killTree" }]);
     expect(count(r.effects, "kill")).toBe(0);
   });
@@ -73,7 +71,7 @@ describe("step", () => {
       { e: "log", msg: "completed — waiting for changes (Enter to rerun)" },
     ]);
     expect(run([{ t: "childExit", code: 1, signal: null }], running())).toEqual({
-      state: { k: "idle", lastExit: "exited with code 1", debounce: undefined },
+      state: { k: "idle", debounce: undefined },
       effects: [{ e: "log", msg: "exited with code 1 — waiting for changes (Enter to rerun)" }],
     });
     expect(run([{ t: "childExit", code: null, signal: "SIGSEGV" }], running()).effects).toEqual([
@@ -154,25 +152,24 @@ describe("step", () => {
     expect(r.effects).toEqual([{ e: "clearTimer", id: "kill" }, { e: "spawn" }]);
   });
 
-  test("stopping(restart) + change marks a pending restart", () => {
-    expect(run([{ t: "change", path: "./a.ts", now: 0 }], stopping("restart")).state).toMatchObject(
-      {
-        pending: true,
-      },
-    );
+  test("stopping(restart) + change does nothing: the restart loads it anyway", () => {
+    expect(run([{ t: "change", path: "./a.ts", now: 0 }], stopping("restart"))).toEqual({
+      state: stopping("restart"),
+      effects: [],
+    });
   });
 
   test("Enter while stopping force kills", () => {
     for (const after of ["restart", "exit"] as const) {
       const r = run([{ t: "enter" }], stopping(after, after === "exit" ? 0 : undefined));
-      expect(r.state).toMatchObject({ k: "stopping", after, forced: true });
+      expect(r.state).toMatchObject({ k: "stopping", after });
       expect(r.effects).toEqual([{ e: "log", msg: "force killing" }, { e: "killTree" }]);
     }
   });
 
   test("the kill timeout force kills", () => {
     const r = run([{ t: "killTimeout" }], stopping("restart"));
-    expect(r.state).toMatchObject({ forced: true });
+    expect(r.state).toEqual(stopping("restart"));
     expect(r.effects).toEqual([
       { e: "log", msg: "still running after 5s, force killing" },
       { e: "killTree" },
@@ -192,8 +189,6 @@ describe("step", () => {
     expect(r.state).toEqual({
       k: "stopping",
       after: "exit",
-      forced: false,
-      pending: false,
       firstSig: "SIGINT",
       firstSigAt: 1000,
     });
@@ -220,7 +215,6 @@ describe("step", () => {
     );
     expect(count(r.effects, "forwardSignal")).toBe(1);
     expect(count(r.effects, "killTree")).toBe(0);
-    expect(r.state).toMatchObject({ forced: false });
   });
 
   test("a second press more than 500 ms later kills the tree", () => {
@@ -231,7 +225,7 @@ describe("step", () => {
       ],
       running(),
     );
-    expect(r.state).toMatchObject({ k: "stopping", after: "exit", forced: true });
+    expect(r.state).toMatchObject({ k: "stopping", after: "exit" });
     expect(r.effects.slice(-2)).toEqual([{ e: "log", msg: "force killing" }, { e: "killTree" }]);
   });
 

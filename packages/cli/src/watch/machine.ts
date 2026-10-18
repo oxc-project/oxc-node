@@ -9,13 +9,11 @@ interface Debounce {
 }
 
 export type State =
-  | { k: "idle"; lastExit?: string; debounce?: Debounce }
+  | { k: "idle"; debounce?: Debounce }
   | { k: "running"; debounce?: Debounce }
   | {
       k: "stopping";
       after: "restart" | "exit";
-      forced: boolean;
-      pending: boolean;
       firstSig?: NodeJS.Signals;
       firstSigAt?: number;
     }
@@ -84,10 +82,7 @@ function trigger(
       { e: "startTimer", id: "kill", ms: cfg.killTimeout },
     );
   }
-  return {
-    state: { k: "stopping", after: "restart", forced: cfg.killTimeout === 0, pending: false },
-    effects,
-  };
+  return { state: { k: "stopping", after: "restart" }, effects };
 }
 
 export function step(s: State, ev: Event, cfg: MachineConfig): { state: State; effects: Effect[] } {
@@ -147,21 +142,14 @@ export function step(s: State, ev: Event, cfg: MachineConfig): { state: State; e
           if (s.k !== "running") return same;
           const lastExit = exitReason(ev.code, ev.signal);
           return {
-            state: { k: "idle", lastExit, debounce: s.debounce },
+            state: { k: "idle", debounce: s.debounce },
             effects: [{ e: "log", msg: `${lastExit} — waiting for changes${hint}` }],
           };
         }
         case "signal":
           if (s.k === "idle") return { state: { k: "done" }, effects: [{ e: "exit", code: 0 }] };
           return {
-            state: {
-              k: "stopping",
-              after: "exit",
-              forced: false,
-              pending: false,
-              firstSig: ev.sig,
-              firstSigAt: ev.now,
-            },
+            state: { k: "stopping", after: "exit", firstSig: ev.sig, firstSigAt: ev.now },
             effects: [
               { e: "clearTimer", id: "debounce" },
               { e: "forwardSignal", sig: ev.sig },
@@ -176,15 +164,12 @@ export function step(s: State, ev: Event, cfg: MachineConfig): { state: State; e
       switch (ev.t) {
         case "change":
           // Merged: the next run loads the new files anyway.
-          return s.after === "restart" ? { state: { ...s, pending: true }, effects: [] } : same;
+          return same;
         case "enter":
-          return {
-            state: { ...s, forced: true },
-            effects: [{ e: "log", msg: "force killing" }, { e: "killTree" }],
-          };
+          return { state: s, effects: [{ e: "log", msg: "force killing" }, { e: "killTree" }] };
         case "killTimeout":
           return {
-            state: { ...s, forced: true },
+            state: s,
             effects: [
               { e: "log", msg: `still running after ${ms(cfg.killTimeout)}, force killing` },
               { e: "killTree" },
@@ -213,10 +198,7 @@ export function step(s: State, ev: Event, cfg: MachineConfig): { state: State; e
           }
           const since = ev.now - (s.firstSigAt ?? ev.now);
           if (ev.sig === "SIGINT" && since > SECOND_PRESS_MS) {
-            return {
-              state: { ...s, forced: true },
-              effects: [{ e: "log", msg: "force killing" }, { e: "killTree" }],
-            };
+            return { state: s, effects: [{ e: "log", msg: "force killing" }, { e: "killTree" }] };
           }
           // The same signal again within the window is npm forwarding what the group already got.
           if (ev.sig === s.firstSig && since <= SECOND_PRESS_MS) return same;
