@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
 import { constants } from "node:os";
 import { resolve } from "node:path";
+import { parseEnv } from "node:util";
 
 /**
  * Node.js options that take their value as the next token: those `node --help` shows as
@@ -104,14 +106,25 @@ function parseBool(name: string, value: string | undefined): boolean | { error: 
   return { error: `${name} takes true or false, got "${value}"` };
 }
 
+// Node.js takes `_` for `-` in option names: `--watch_path`.
+const startsWatcher = (nodeOptions: string | undefined) =>
+  nodeOptions?.split(/\s+/).some((t) => /^--watch([-_]path)?(=|$)/.test(t)) ?? false;
+const NESTED = "NODE_OPTIONS contains --watch, which would start a nested watcher";
+
+const readEnvFile = (file: string): string | undefined => {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+};
+
 export function parseWatchArgs(
   argv: string[],
   env: NodeJS.ProcessEnv,
+  read: (file: string) => string | undefined = readEnvFile,
 ): WatchArgs | { error: string } {
-  // Node.js takes `_` for `-` in option names: `--watch_path`.
-  if (env.NODE_OPTIONS?.split(/\s+/).some((t) => /^--watch([-_]path)?(=|$)/.test(t))) {
-    return { error: "NODE_OPTIONS contains --watch, which would start a nested watcher" };
-  }
+  if (startsWatcher(env.NODE_OPTIONS)) return { error: NESTED };
   const polling = env.CHOKIDAR_USEPOLLING === "1" || env.CHOKIDAR_USEPOLLING === "true";
   const out: WatchArgs = {
     include: [],
@@ -252,6 +265,16 @@ export function parseWatchArgs(
 
   if (!out.entry && !out.help) {
     return { error: "missing <entry>" };
+  }
+  // Node.js also takes NODE_OPTIONS from --env-file, unless it is set already; the last file wins.
+  if (env.NODE_OPTIONS === undefined) {
+    let fromFiles: string | undefined;
+    for (const file of out.envFiles) {
+      const text = read(file);
+      const value = text === undefined ? undefined : parseEnv(text).NODE_OPTIONS;
+      if (value !== undefined) fromFiles = value;
+    }
+    if (startsWatcher(fromFiles)) return { error: `${NESTED} (from --env-file)` };
   }
   return out;
 }

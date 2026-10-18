@@ -179,6 +179,28 @@ describe("parseWatchArgs", () => {
     expect(err([flag, "app.ts"])).toMatch(message);
   });
 
+  test("NODE_OPTIONS with --watch from an env file is an error", () => {
+    const files: Record<string, string> = {
+      ".env": "A=1\nNODE_OPTIONS=--watch\n",
+      ".env.ok": "NODE_OPTIONS=--max-old-space-size=100\n",
+    };
+    const withFiles = (argv: string[], env: NodeJS.ProcessEnv = {}) =>
+      parseWatchArgs(argv, env, (f) => files[f]);
+    expect(withFiles(["--env-file", ".env", "app.ts"])).toEqual({
+      error: expect.stringMatching(/nested watcher \(from --env-file\)/),
+    });
+    expect(withFiles(["--env-file-if-exists=.env", "app.ts"])).toHaveProperty("error");
+    // The last file wins, and NODE_OPTIONS already set wins over the files.
+    expect(withFiles(["--env-file=.env.ok", "--env-file=.env", "app.ts"])).toHaveProperty("error");
+    expect(withFiles(["--env-file=.env", "--env-file=.env.ok", "app.ts"])).not.toHaveProperty(
+      "error",
+    );
+    expect(withFiles(["--env-file=.env", "app.ts"], { NODE_OPTIONS: "" })).not.toHaveProperty(
+      "error",
+    );
+    expect(withFiles(["--env-file-if-exists=.missing", "app.ts"])).not.toHaveProperty("error");
+  });
+
   test("NODE_OPTIONS with --watch is an error", () => {
     expect(err(["app.ts"], { NODE_OPTIONS: "--max-old-space-size=100 --watch" })).toMatch(
       /nested watcher/,
