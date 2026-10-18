@@ -1,0 +1,29 @@
+README.md
+  s_d25296fd97a711::t_9c5d960c466bed 60-199
+packages/cli/README.md
+  s_66328e89f48aba::t_1571dd63ce632c 25-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "44220b85df9447eca1aa1bf8bbfacfffa28092a5",
+  "prompts": {},
+  "sessions": {
+    "s_66328e89f48aba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-acd31040ce2802f60",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    },
+    "s_d25296fd97a711": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a49dccbd86091c6e7",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
