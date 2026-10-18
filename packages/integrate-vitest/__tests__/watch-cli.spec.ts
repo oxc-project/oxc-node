@@ -192,6 +192,24 @@ ${KEEP}`,
     await o.editUntil(join(root, "data/b.json"), () => "1", runLine("a.json=2,b.json=1"));
   });
 
+  // Windows needs elevated rights for a file symlink.
+  test.skipIf(!POSIX)("--include: a linked file restarts when its target changes", async () => {
+    const root = project({
+      "package.json": ESM,
+      "main.ts": `import { readFileSync } from "node:fs";
+console.log("RUN", readFileSync("config/current.json", "utf8").trim(), process.pid);
+${KEEP}`,
+      "shared/config.json": "1",
+    });
+    mkdirSync(join(root, "config"));
+    symlinkSync("../shared/config.json", join(root, "config/current.json"));
+    const o = startOxnode(["watch", "--include", "config/*.json", "main.ts"], root);
+    await o.waitFor(runLine("1"));
+    await o.watched(join(root, "shared/config.json"));
+    await o.editUntil(join(root, "shared/config.json"), () => "2", runLine("2"));
+    expect(o.stdout()).toMatch(reason("config/current.json"));
+  });
+
   test("--exclude: an edit to an excluded dependency does not restart", async () => {
     const root = project({
       "package.json": ESM,

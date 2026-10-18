@@ -1,6 +1,7 @@
 import {
   existsSync,
   readdirSync,
+  realpathSync,
   statSync,
   unwatchFile,
   watch,
@@ -93,7 +94,8 @@ function idOf(dir: string): string | undefined {
 export class DirWatcher {
   #o: DirWatcherOptions;
   #win: boolean;
-  #files = new Map<string, { path: string; sig: Sig }>();
+  /** `shown` is the name a change is reported under: the link, for a link's target. */
+  #files = new Map<string, { path: string; shown: string; sig: Sig }>();
   #byDir = new Map<string, Set<string>>();
   #roots: Root[] = [];
   #walked = new Map<string, WalkedDir>();
@@ -122,10 +124,10 @@ export class DirWatcher {
   }
 
   /** Watch one file, which may not exist yet. */
-  add(file: string): void {
+  add(file: string, shown = file): void {
     const k = this.#key(file);
     if (this.#closed || this.#files.has(k)) return;
-    this.#files.set(k, { path: file, sig: sigOf(file) });
+    this.#files.set(k, { path: file, shown, sig: sigOf(file) });
     const dk = this.#key(path.dirname(file));
     const set = this.#byDir.get(dk);
     if (set) set.add(k);
@@ -140,7 +142,7 @@ export class DirWatcher {
       const next = sigOfStats(curr);
       if (!changed(entry.sig, next)) return;
       entry.sig = next;
-      this.#o.onChange(file);
+      this.#o.onChange(shown);
     });
   }
 
@@ -215,6 +217,11 @@ export class DirWatcher {
     }
     if (this.#o.matcher.classify(file, "walk") !== "watch") return;
     this.add(file);
+    // An edit to a link's target elsewhere fires no event in the link's folder.
+    try {
+      const real = realpathSync.native(file);
+      if (real !== file) this.add(real, file);
+    } catch {}
     if (fire) this.#o.onChange(file);
   }
 
@@ -409,6 +416,6 @@ export class DirWatcher {
     const next = sigOf(entry.path);
     if (!changed(entry.sig, next)) return;
     entry.sig = next;
-    this.#o.onChange(entry.path);
+    this.#o.onChange(entry.shown);
   }
 }
