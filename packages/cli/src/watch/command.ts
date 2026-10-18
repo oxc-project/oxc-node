@@ -103,11 +103,18 @@ export function runWatch(argv: string[]): Promise<number> {
       return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? `.${path.sep}${rel}` : p;
     };
 
+    // A file can be wanted under two spellings, the path Node.js reported and its real
+    // path: a symlink, or on Windows an 8.3 name such as `RUNNER~1`. One save then
+    // fires for both, so a change to the real path is shown, and counted, as the other.
+    const fold = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
+    const reported = new Map<string, string>();
+
     const watcher = new DirWatcher({
       poll: args.poll,
       platform: process.platform,
       matcher,
-      onChange: (p) => dispatch({ t: "change", path: display(p), now: Date.now() }),
+      onChange: (p) =>
+        dispatch({ t: "change", path: display(reported.get(fold(p)) ?? p), now: Date.now() }),
       debug,
       warn: log,
     });
@@ -124,7 +131,10 @@ export function runWatch(argv: string[]): Promise<number> {
       // workspace package shows up under node_modules and its real path must still count.
       try {
         const real = realpathSync.native(p);
-        if (real !== p) want(real, source);
+        if (real !== p) {
+          if (!reported.has(fold(real))) reported.set(fold(real), p);
+          want(real, source);
+        }
       } catch {}
     };
 

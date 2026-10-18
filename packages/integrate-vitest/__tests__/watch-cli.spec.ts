@@ -262,6 +262,22 @@ console.log("RUN", p, s, process.pid);\n${KEEP}`,
     await o.editUntil(real, () => 'export const p = "p2";\n', runLine("p2"));
   });
 
+  // Both spellings of the file are watched, and one save fires for each. Windows CI
+  // hits the same through its 8.3 temp path (`RUNNER~1`).
+  test("--preserve-symlinks: a file reached through a link is one change", async () => {
+    const root = project({
+      "package.json": ESM,
+      "real/dep.ts": value("v1"),
+      "main.ts": `import { v } from "./linked/dep.js";\nconsole.log("RUN", v, process.pid);\n${KEEP}`,
+    });
+    symlinkSync(join(root, "real"), join(root, "linked"), POSIX ? "dir" : "junction");
+    const o = startOxnode(["watch", "--preserve-symlinks", "main.ts"], root);
+    await o.waitFor(runLine("v1"));
+    await o.watched(join(root, "real/dep.ts"));
+    await o.editUntil(join(root, "real/dep.ts"), () => value("v2"), runLine("v2"));
+    expect(o.stdout()).toMatch(reason("linked/dep.ts"));
+  });
+
   test("five writes within 20 ms restart once", async () => {
     const root = project({
       "package.json": ESM,
