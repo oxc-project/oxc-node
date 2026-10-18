@@ -1,7 +1,19 @@
+import { EventEmitter } from "node:events";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  type FSWatcher,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { resolve } from "node:path";
-import { describe, expect, test } from "vitest";
+import { afterAll, describe, expect, test } from "vitest";
 
+import { DirWatcher, type DirWatcherOptions } from "../../cli/src/watch/dirs.js";
 import { descendants, parseProcStat, parsePs } from "../../cli/src/watch/kill-tree.js";
 import { parseWatchMessage } from "../../cli/src/watch/messages.js";
 
@@ -97,5 +109,160 @@ describe("kill tree parsers", () => {
     expect(descendants(table, 99)).toEqual([]);
     // A loop in a bad snapshot ends.
     expect(descendants([...table, { pid: 10, ppid: 13 }], 10)).toEqual([11, 12, 13]);
+  });
+});
+
+describe("DirWatcher", () => {
+  const temps: string[] = [];
+  afterAll(() => {
+    for (const d of temps.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  const temp = () => {
+    const d = realpathSync(mkdtempSync(join(tmpdir(), "oxc-node-dirwatcher-")));
+    temps.push(d);
+    return d;
+  };
+  const until = async (cond: () => boolean, what: string, ms = 5000) => {
+    const end = Date.now() + ms;
+    while (!cond()) {
+      if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  };
+  const start = (extra: Partial<DirWatcherOptions> = {}) => {
+    const changes: string[] = [];
+    const debug: string[] = [];
+    const w = new DirWatcher({
+      poll: false,
+      platform: process.platform,
+      matcher: { classify: () => "watch", pruneDir: () => false },
+      onChange: (p) => changes.push(p),
+      debug: (l) => debug.push(l),
+      warn: () => {},
+      ...extra,
+    });
+    return { w, changes, debug };
+  };
+
+  /** Stands in for `fs.watch`: events come only from the test, as from inotify. */
+  const fakeWatch = () => {
+    const opened: { dir: string; emit: (name: string) => void; closed: boolean }[] = [];
+    const watch = ((dir: string, listener: (type: string, name: string | null) => void) => {
+      const h = Object.assign(new EventEmitter(), {
+        close: () => {
+          entry.closed = true;
+        },
+      });
+      const entry = { dir, emit: (name: string) => listener("rename", name), closed: false };
+      opened.push(entry);
+      return h as unknown as FSWatcher;
+    }) as unknown as DirWatcherOptions["watch"];
+    const open = (dir: string) => opened.filter((h) => h.dir === dir && !h.closed);
+    return { watch, opened, open };
+  };
+
+  test("removing a folder is a change for the files in it", async () => {
+    const root = temp();
+    const files = [0, 1, 2].map((i) => join(root, `cfg${i}`, "a.ts"));
+    for (const f of files) {
+      mkdirSync(join(f, ".."));
+      writeFileSync(f, "1");
+    }
+    const { w, changes, debug } = start();
+    try {
+      for (const f of files) w.add(f);
+      await until(() => files.every((f) => debug.includes(`ready ${join(f, "..")}`)), "ready");
+      // Let FSEvents settle: then macOS reports the removal only for the folder itself.
+      await new Promise((r) => setTimeout(r, 500));
+      for (const f of files) {
+        rmSync(join(f, ".."), { recursive: true });
+        await until(() => changes.includes(f), `a change for ${f}`);
+      }
+    } finally {
+      w.close();
+    }
+  });
+
+  test("Linux: a folder replaced in place gets a new watch", async () => {
+    const root = temp();
+    const gen = join(root, "gen");
+    const file = join(gen, "x.ts");
+    mkdirSync(gen);
+    writeFileSync(file, "1");
+    const fake = fakeWatch();
+    const { w, changes } = start({ platform: "linux", watch: fake.watch });
+    try {
+      w.add(file);
+      await until(() => fake.open(gen).length === 1, "the first watch");
+      const [first] = fake.open(gen);
+      rmSync(gen, { recursive: true });
+      mkdirSync(gen);
+      writeFileSync(file, "22");
+      // inotify watches the inode: the old watch only sees its own deletion, named after it.
+      first.emit("gen");
+      await until(() => changes.includes(file), "a change");
+      await until(() => fake.open(gen).length === 1, "a new watch");
+      expect(first.closed).toBe(true);
+      expect(fake.open(gen)[0]).not.toBe(first);
+      // The new watch is live.
+      writeFileSync(file, "333");
+      fake.open(gen)[0].emit("x.ts");
+      expect(changes.filter((c) => c === file)).toHaveLength(2);
+    } finally {
+      w.close();
+    }
+  });
+
+  test("Linux: a walked --include folder replaced in place is walked again", async () => {
+    const root = temp();
+    const conf = join(root, "conf");
+    mkdirSync(conf);
+    writeFileSync(join(conf, "a.json"), "1");
+    const fake = fakeWatch();
+    const { w, changes } = start({ platform: "linux", watch: fake.watch });
+    try {
+      w.addRoot(conf, Infinity);
+      await until(() => fake.open(conf).length === 1, "the first watch");
+      const [first] = fake.open(conf);
+      rmSync(conf, { recursive: true });
+      mkdirSync(conf);
+      writeFileSync(join(conf, "b.json"), "1");
+      first.emit("conf");
+      await until(() => changes.includes(join(conf, "b.json")), "the new file");
+      expect(changes).toContain(join(conf, "a.json"));
+    } finally {
+      w.close();
+    }
+  });
+
+  test("a folder swapped by rename gets a new watch, found by its inode", async () => {
+    const root = temp();
+    const gen = join(root, "gen");
+    const file = join(gen, "x.ts");
+    mkdirSync(gen);
+    writeFileSync(file, "1");
+    const fake = fakeWatch();
+    // Not Linux: only a new inode makes the watch stale.
+    const { w, changes } = start({ platform: "darwin", watch: fake.watch });
+    try {
+      w.add(file);
+      await until(() => fake.open(gen).length === 1, "the first watch");
+      const [first] = fake.open(gen);
+      // An event named after the folder, with the folder unchanged, keeps the watch.
+      first.emit("gen");
+      await new Promise((r) => setTimeout(r, 100));
+      expect(fake.open(gen)).toEqual([first]);
+
+      mkdirSync(join(root, "gen.tmp"));
+      writeFileSync(join(root, "gen.tmp", "x.ts"), "22");
+      rmSync(gen, { recursive: true });
+      renameSync(join(root, "gen.tmp"), gen);
+      first.emit("gen");
+      await until(() => changes.includes(file), "a change");
+      expect(first.closed).toBe(true);
+      expect(fake.open(gen)).toHaveLength(1);
+    } finally {
+      w.close();
+    }
   });
 });

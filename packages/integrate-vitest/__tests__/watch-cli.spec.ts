@@ -377,6 +377,60 @@ ${KEEP}`,
     await o.editUntil(join(root, "opt.ts"), () => value("back"), runLine("back"));
   });
 
+  test("deleting the folder of a dependency reruns", async () => {
+    // The entry is in src, so nothing watches the folder that holds cfg.
+    const root = project({
+      "package.json": ESM,
+      "src/main.ts": `const v = await import("../cfg/opt.js").then((m) => m.v as string, () => "gone");
+console.log("RUN", v, process.pid);
+${KEEP}`,
+      "cfg/opt.ts": value("here"),
+    });
+    const o = startOxnode(["watch", "src/main.ts"], root);
+    await o.waitFor(runLine("here"));
+    await o.watched(join(root, "cfg/opt.ts"));
+    await o.editUntil(join(root, "cfg/opt.ts"), () => value("live"), runLine("live"));
+    const from = o.mark();
+    // macOS reports this as one event for the folder, and none for the file in it.
+    rmSync(join(root, "cfg"), { recursive: true });
+    await o.waitFor(runLine("gone"), 20_000, from);
+    expect(firstReason(o.stdout().slice(from))).toMatch(reason("cfg/opt.ts"));
+    await o.editUntil(join(root, "cfg/opt.ts"), () => value("back"), runLine("back"));
+  });
+
+  test("a dependency's folder replaced by rm -rf + mkdir, or by a rename, stays watched", async () => {
+    const root = project({
+      "package.json": ESM,
+      "src/main.ts": `const v = await import("../gen/x.js").then((m) => m.v as string, () => "gone");
+console.log("RUN", v, process.pid);
+${KEEP}`,
+      "gen/x.ts": value("v1"),
+    });
+    const gen = join(root, "gen");
+    const file = join(gen, "x.ts");
+    // On Linux inotify watches the folder's inode, so the old watch sees nothing after this.
+    const recreate = (f: string, contents: string) => {
+      rmSync(gen, { recursive: true, force: true });
+      mkdirSync(gen);
+      writeFileSync(f, contents);
+    };
+    const swap = (_: string, contents: string) => {
+      const temp = join(root, "gen.tmp");
+      rmSync(temp, { recursive: true, force: true });
+      mkdirSync(temp);
+      writeFileSync(join(temp, "x.ts"), contents);
+      rmSync(gen, { recursive: true, force: true });
+      renameSync(temp, gen);
+    };
+    const o = startOxnode(["watch", "src/main.ts"], root);
+    await o.waitFor(runLine("v1"));
+    await o.watched(file);
+    await o.editUntil(file, () => value("v2"), runLine("v2"), recreate);
+    await o.editUntil(file, () => value("v3"), runLine("v3"));
+    await o.editUntil(file, () => value("v4"), runLine("v4"), swap);
+    await o.editUntil(file, () => value("v5"), runLine("v5"));
+  });
+
   test("--poll", async () => {
     const root = project({ "package.json": ESM, "main.ts": MAIN, "dep.ts": value("v1") });
     const o = startOxnode(["watch", "--poll=100", "main.ts"], root);

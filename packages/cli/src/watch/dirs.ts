@@ -52,6 +52,8 @@ export interface DirWatcherOptions {
   onChange(path: string): void;
   debug(line: string): void;
   warn(msg: string): void;
+  /** `fs.watch`, replaced in tests. */
+  watch?: typeof watch;
 }
 
 interface Root {
@@ -66,6 +68,21 @@ interface WalkedDir {
   level: number;
 }
 
+interface Handle {
+  w: FSWatcher;
+  dir: string;
+  /** The folder's inode when the watch was opened: a new one means the folder was replaced. */
+  ino: bigint | undefined;
+}
+
+function inoOf(dir: string): bigint | undefined {
+  try {
+    return statSync(dir, { bigint: true }).ino;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * One non-recursive `fs.watch` per folder that holds a wanted file. A file whose folder does
  * not exist yet is watched at the nearest existing ancestor, one level deeper as folders appear.
@@ -78,7 +95,7 @@ export class DirWatcher {
   #byDir = new Map<string, Set<string>>();
   #roots: Root[] = [];
   #walked = new Map<string, WalkedDir>();
-  #handles = new Map<string, FSWatcher>();
+  #handles = new Map<string, Handle>();
   // The first missing folder below each placeholder watch: an event for it means "look again".
   #awaited = new Set<string>();
   #failed = new Set<string>();
@@ -136,7 +153,7 @@ export class DirWatcher {
     this.#closed = true;
     clearTimeout(this.#syncTimer);
     clearInterval(this.#pollTimer);
-    for (const w of this.#handles.values()) w.close();
+    for (const h of this.#handles.values()) h.w.close();
     this.#handles.clear();
     if (this.#o.poll !== false) {
       for (const f of this.#files.values()) unwatchFile(f.path);
@@ -240,33 +257,54 @@ export class DirWatcher {
     for (const [k, w] of this.#walked) needed.set(k, w.dir);
     this.#awaited = awaited;
 
-    for (const [k, w] of this.#handles) {
-      if (!needed.has(k)) {
-        w.close();
-        this.#handles.delete(k);
-      }
+    for (const [k, h] of this.#handles) {
+      // A folder replaced by another (a rename over it) keeps the old watch on Linux and Windows.
+      if (!needed.has(k) || inoOf(h.dir) !== h.ino) this.#drop(k, h);
     }
     const fresh: string[] = [];
     for (const [k, dir] of needed) {
       if (!this.#handles.has(k) && !this.#failed.has(k) && this.#open(k, dir)) fresh.push(dir);
     }
-    // A folder that was missing may already hold the files, and no watch saw them arrive.
+    // A folder that was missing or replaced may already hold the files, and no watch saw them arrive.
     if (this.#synced) {
-      for (const dir of fresh) this.#checkDir(dir);
+      for (const dir of fresh) {
+        this.#checkDir(dir);
+        const walked = this.#walked.get(this.#key(dir));
+        if (walked) this.#rescan(walked);
+      }
     }
     this.#synced = true;
   }
 
+  #drop(k: string, h: Handle) {
+    h.w.close();
+    this.#handles.delete(k);
+    // macOS may report a removed folder with one event for the folder and none for its files.
+    this.#checkDir(h.dir);
+  }
+
+  #rescan(walked: WalkedDir) {
+    let entries;
+    try {
+      entries = readdirSync(walked.dir);
+    } catch {
+      return;
+    }
+    for (const name of entries) this.#onWalkedEntry(walked, path.join(walked.dir, name));
+  }
+
   #open(k: string, dir: string): boolean {
     try {
-      const w = watch(dir, (_type, name) => this.#onEvent(dir, name));
+      const ino = inoOf(dir);
+      const w = (this.#o.watch ?? watch)(dir, (_type, name) => this.#onEvent(dir, w, name));
+      const h = { w, dir, ino };
       w.on("error", () => {
         // Usually the folder went away: watch its parent instead.
-        w.close();
-        this.#handles.delete(k);
+        if (this.#handles.get(k) === h) this.#drop(k, h);
+        else w.close();
         this.#scheduleSync();
       });
-      this.#handles.set(k, w);
+      this.#handles.set(k, h);
       this.#o.debug(`ready ${dir}`);
       return true;
     } catch (error) {
@@ -288,7 +326,7 @@ export class DirWatcher {
     }
   }
 
-  #onEvent(dir: string, name: string | null) {
+  #onEvent(dir: string, w: FSWatcher, name: string | null) {
     if (this.#closed) return;
     // The event type is ignored: macOS reports writes as `rename`.
     if (name === null) {
@@ -304,12 +342,17 @@ export class DirWatcher {
       const walked = this.#walked.get(this.#key(dir));
       if (walked) this.#onWalkedEntry(walked, full);
     }
-    if (
-      this.#awaited.has(k) ||
-      this.#handles.has(k) ||
-      this.#walked.has(k) ||
-      (name === path.basename(dir) && !existsSync(dir))
-    ) {
+    if (this.#awaited.has(k) || this.#handles.has(k) || this.#walked.has(k)) {
+      this.#scheduleSync();
+    }
+    // An event named after the folder, and not for a child of that name, is for the folder itself:
+    // it was removed, moved or replaced. The sync moves or reopens the watch.
+    if (name === path.basename(dir) && !this.#files.has(k) && !existsSync(full)) {
+      const dk = this.#key(dir);
+      const h = this.#handles.get(dk);
+      // inotify watches the inode, so the watch is dead even if a new folder (maybe with the
+      // same inode number) is already there.
+      if (h?.w === w && this.#o.platform === "linux") this.#drop(dk, h);
       this.#scheduleSync();
     }
   }
