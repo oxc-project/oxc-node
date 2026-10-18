@@ -1,4 +1,4 @@
-import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -13,7 +13,7 @@ import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, describe, expect, test } from "vitest";
 
-import { descendants, parsePs } from "../../cli/src/watch/kill-tree.js";
+import { descendants, processTable } from "../../cli/src/watch/kill-tree.js";
 
 /**
  * Plain runs: oxnode passes signals on to the app once and exits the way the app did.
@@ -158,8 +158,7 @@ async function isGone(pid: number) {
 }
 
 /** oxnode's process tree, taken before it is stopped. */
-const tree = (pid: number) =>
-  descendants(parsePs(execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" })), pid);
+const tree = (pid: number) => descendants(processTable(), pid);
 
 const count = (text: string, re: RegExp) => text.match(new RegExp(re, "g"))?.length ?? 0;
 

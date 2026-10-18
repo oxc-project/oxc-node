@@ -53,7 +53,8 @@ export function descendants(table: ProcRow[], pid: number): number[] {
   return out;
 }
 
-function snapshot(): ProcRow[] {
+/** Every process on the machine: `/proc` on Linux, where `ps` may be missing (slim containers), `ps` elsewhere. */
+export function processTable(): ProcRow[] {
   try {
     if (process.platform === "linux") {
       const rows: ProcRow[] = [];
@@ -85,7 +86,7 @@ export function killTree(child: ChildProcess): void {
     return;
   }
   // One snapshot before the first kill: orphans are re-parented and would be lost.
-  for (const p of [pid, ...descendants(snapshot(), pid)]) {
+  for (const p of [pid, ...descendants(processTable(), pid)]) {
     try {
       process.kill(p, "SIGKILL");
     } catch {}
