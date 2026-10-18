@@ -123,6 +123,12 @@ describe("parseWatchArgs", () => {
     expect(a.envFiles).toEqual([".env"]);
   });
 
+  test("--include !(x)/... is a glob, --include !x an exclude", () => {
+    const a = ok(["--include", "!(dist)/**/*.ts", "--include", "!gen/**", "app.ts"]);
+    expect(a.include).toEqual(["!(dist)/**/*.ts"]);
+    expect(a.exclude).toEqual(["gen/**"]);
+  });
+
   test("a Node.js flag's value after a space is not the entry", () => {
     const a = ok(["--openssl-config", "openssl.cnf", "--max-http-header-size", "9000", "app.ts"]);
     expect(a.entry).toBe("app.ts");

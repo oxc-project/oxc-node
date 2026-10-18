@@ -165,8 +165,10 @@ export function parseWatchArgs(
       case "--ignore": {
         const glob = value();
         if (!glob) return { error: `${name} needs a glob` };
-        if (name === "--include" && !glob.startsWith("!")) out.include.push(glob);
-        else out.exclude.push(name === "--include" ? glob.slice(1) : glob);
+        // `!x` excludes x, but `!(x)` is a glob.
+        const negated = glob.startsWith("!") && !glob.startsWith("!(");
+        if (nodeName === "--include" && !negated) out.include.push(glob);
+        else out.exclude.push(nodeName === "--include" ? glob.slice(1) : glob);
         continue;
       }
       case "--clear-screen": {
