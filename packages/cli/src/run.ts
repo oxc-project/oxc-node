@@ -97,6 +97,7 @@ export function createSignalAck(): SignalAck {
     if (closed) return;
     closed = true;
     process.off("exit", close);
+    process.off("SIGQUIT", onQuit);
     server.close();
     try {
       unlinkSync(path);
@@ -111,6 +112,13 @@ export function createSignalAck(): SignalAck {
   }
   server.unref();
   process.on("exit", close);
+  // Ctrl+\ ends oxnode with no 'exit' event: remove the socket, then die by SIGQUIT as before.
+  // Nothing can do this for SIGKILL.
+  function onQuit() {
+    close();
+    process.kill(process.pid, "SIGQUIT");
+  }
+  process.once("SIGQUIT", onQuit);
   return {
     path,
     env: { OXNODE_SIGNAL_ACK: path },

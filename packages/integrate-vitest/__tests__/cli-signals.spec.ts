@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -247,6 +248,23 @@ describe.skipIf(!posix)("signals", () => {
     expect(run.out()).toContain("COUNT 1");
     process.kill(-run.child.pid!, "SIGINT");
     expect(await run.exited).toEqual({ code: null, signal: "SIGINT" });
+  });
+
+  test("Ctrl+\\ leaves no ack socket behind", async () => {
+    // Its own TMPDIR, short enough for a socket path.
+    const tmp = mkdtempSync(join(tmpdir(), "oxq-"));
+    try {
+      const run = oxnode(["no-listener.ts"], { TMPDIR: tmp });
+      await run.waitFor(/READY/);
+      expect(readdirSync(tmp).filter((name) => name.endsWith(".sock"))).toHaveLength(1);
+      process.kill(-run.child.pid!, "SIGQUIT");
+      const { code, signal } = await run.exited;
+      // Raised again, or 128+3 when the app's exit is seen first.
+      expect(signal === "SIGQUIT" || code === 131, `${code} ${signal}`).toBe(true);
+      expect(readdirSync(tmp)).toEqual([]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   test("an app with no listener: oxnode ends by SIGINT", async () => {
