@@ -65,8 +65,8 @@ describe("parseWatchArgs", () => {
     expect(ok(["--watch-preserve-output", "app.ts"]).clearScreen).toBe(false);
     expect(ok(["--watch-kill-signal=SIGINT", "app.ts"]).killSignal).toBe("SIGINT");
     expect(ok(["--watch_preserve_output", "app.ts"]).clearScreen).toBe(false);
-    const u = ok(["--watch_kill_signal", "SIGUSR1", "app.ts"]);
-    expect(u.killSignal).toBe("SIGUSR1");
+    const u = ok(["--watch_kill_signal", "SIGINT", "app.ts"]);
+    expect(u.killSignal).toBe("SIGINT");
     expect(u.nodeArgs).toEqual(["app.ts"]);
   });
 
