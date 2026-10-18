@@ -15,6 +15,14 @@ import { isDirOnDisk as isDir, type Matcher } from "./glob.js";
 
 type Sig = { ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint } | null;
 
+function isRealDir(p: string): boolean {
+  try {
+    return lstatSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function isLink(p: string): boolean {
   try {
     return lstatSync(p).isSymbolicLink();
@@ -452,7 +460,8 @@ export class DirWatcher {
   }
 
   #onWalkedEntry(walked: WalkedDir, full: string) {
-    if (isDir(full)) {
+    // Not following links, as the first walk: a linked folder is not entered.
+    if (isRealDir(full)) {
       if (walked.level + 1 < walked.depth && !this.#o.matcher.pruneDir(full)) {
         this.#walk(full, walked.level + 1, walked.depth, true);
         this.#scheduleSync();

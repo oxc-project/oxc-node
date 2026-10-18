@@ -453,6 +453,27 @@ describe("DirWatcher", () => {
     }
   });
 
+  test("a linked folder made after the start is not entered, as at the start", async () => {
+    const root = temp();
+    const [conf, outside] = [join(root, "conf"), join(root, "outside")];
+    mkdirSync(conf);
+    mkdirSync(outside);
+    writeFileSync(join(outside, "x.json"), "1");
+    const fake = fakeWatch();
+    const { w, changes, debug } = start({ platform: "linux", watch: fake.watch });
+    try {
+      w.addRoot(conf, Infinity);
+      await until(() => fake.open(conf).length === 1, "the watch");
+      symlinkSync(outside, join(conf, "link"), process.platform === "win32" ? "junction" : "dir");
+      fake.open(conf)[0].emit("link");
+      await new Promise((r) => setTimeout(r, 100));
+      expect(changes).toEqual([]);
+      expect(debug.filter((l) => l.includes("x.json"))).toEqual([]);
+    } finally {
+      w.close();
+    }
+  });
+
   test("a whole-second timestamp counts as a change only after an event", async () => {
     const root = temp();
     const file = join(root, "a.ts");
