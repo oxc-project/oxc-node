@@ -390,6 +390,17 @@ describe("DirWatcher", () => {
         writeFileSync(join(shared, "b.json"), "22");
         fake.open(shared)[0].emit("b.json");
         expect(changes).toEqual([link, link]);
+        // The old target is no longer the link's.
+        writeFileSync(join(shared, "a.json"), "22");
+        fake.open(shared)[0].emit("a.json");
+        expect(changes).toEqual([link, link]);
+        // Removed: its last target goes too.
+        rmSync(link);
+        fake.open(config)[0].emit("current.json");
+        expect(changes).toEqual([link, link, link]);
+        writeFileSync(join(shared, "b.json"), "333");
+        fake.open(shared)[0]?.emit("b.json");
+        expect(changes).toEqual([link, link, link]);
       } finally {
         w.close();
       }

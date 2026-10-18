@@ -16,6 +16,14 @@ import { isDirOnDisk as isDir, type Matcher } from "./glob.js";
 
 type Sig = { ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint } | null;
 
+function isLink(p: string): boolean {
+  try {
+    return lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 function sigOf(p: string): Sig {
   try {
     const s = statSync(p, { bigint: true });
@@ -67,6 +75,13 @@ interface Root {
   missing: boolean;
 }
 
+interface Entry {
+  path: string;
+  shown: string;
+  sig: Sig;
+  target?: string;
+}
+
 interface WalkedDir {
   dir: string;
   depth: number;
@@ -98,8 +113,11 @@ function idOf(dir: string): string | undefined {
 export class DirWatcher {
   #o: DirWatcherOptions;
   #win: boolean;
-  /** `shown` is the name a change is reported under: the link, for a link's target. */
-  #files = new Map<string, { path: string; shown: string; sig: Sig }>();
+  /**
+   * `shown` is the name a change is reported under: the link, for a link's target.
+   * `target` is the key of the file a link points to.
+   */
+  #files = new Map<string, Entry>();
   #byDir = new Map<string, Set<string>>();
   #roots: Root[] = [];
   #walked = new Map<string, WalkedDir>();
@@ -221,12 +239,32 @@ export class DirWatcher {
     }
     if (this.#o.matcher.classify(file, "walk") !== "watch") return;
     this.add(file);
-    // An edit to a link's target elsewhere fires no event in the link's folder.
-    try {
-      const real = realpathSync.native(file);
-      if (real !== file) this.add(real, file);
-    } catch {}
+    this.#follow(this.#files.get(this.#key(file))!);
     if (fire) this.#o.onChange(file);
+  }
+
+  // An edit to a link's target elsewhere fires no event in the link's folder, so watch the target,
+  // in place of the one it pointed to before.
+  #follow(entry: Entry) {
+    let real: string | undefined;
+    try {
+      real = realpathSync.native(entry.path);
+    } catch {}
+    const next = real && this.#key(real) !== this.#key(entry.path) ? this.#key(real) : undefined;
+    if (next === entry.target) return;
+    const old = entry.target === undefined ? undefined : this.#files.get(entry.target);
+    if (old?.shown === entry.path) this.#remove(entry.target!);
+    entry.target = next;
+    if (real && next) this.add(real, entry.path);
+  }
+
+  #remove(k: string) {
+    const entry = this.#files.get(k);
+    if (!entry) return;
+    this.#files.delete(k);
+    this.#byDir.get(this.#key(path.dirname(entry.path)))?.delete(k);
+    if (this.#o.poll !== false) unwatchFile(entry.path);
+    else this.#scheduleSync();
   }
 
   #rewalk() {
@@ -421,15 +459,10 @@ export class DirWatcher {
     const next = sigOf(entry.path);
     if (!changed(entry.sig, next, event)) return;
     entry.sig = next;
-    // A link pointed somewhere else: watch the new target too. Only a link: Windows gives other
-    // paths a second spelling (8.3 names), which is the same file.
-    if (entry.shown === entry.path) {
-      try {
-        if (lstatSync(entry.path).isSymbolicLink()) {
-          const real = realpathSync.native(entry.path);
-          if (this.#key(real) !== k) this.add(real, entry.path);
-        }
-      } catch {}
+    // A link pointed somewhere else, or removed. Only a link: Windows gives other paths a second
+    // spelling (8.3 names), which is the same file.
+    if (entry.shown === entry.path && (entry.target !== undefined || isLink(entry.path))) {
+      this.#follow(entry);
     }
     this.#o.onChange(entry.shown);
   }
