@@ -39,6 +39,9 @@ export interface WatchArgs {
 }
 
 const DEFAULT_POLL_MS = 300;
+// Longer timers fire at once (TimeoutOverflowWarning). Include roots are re-walked every 10 × --poll.
+const MAX_TIMER_MS = 2 ** 31 - 1;
+const MAX_POLL_MS = Math.floor(MAX_TIMER_MS / 10);
 
 const NEEDS_ENTRY = `oxnode watch needs an entry file; for tests use \`oxnode --watch --test\``;
 const REJECTED: Record<string, string> = {
@@ -156,6 +159,9 @@ export function parseWatchArgs(
           return { error: `${name} needs a whole number of milliseconds, got "${ms ?? ""}"` };
         }
         out.killTimeout = Number(ms);
+        if (out.killTimeout > MAX_TIMER_MS) {
+          return { error: `${name} must be at most ${MAX_TIMER_MS} ms, got "${ms}"` };
+        }
         continue;
       }
       case "--poll": {
@@ -163,6 +169,10 @@ export function parseWatchArgs(
           return { error: `--poll takes a whole number of milliseconds, got "${inline}"` };
         }
         out.poll = inline === undefined ? DEFAULT_POLL_MS : Number(inline);
+        // 0 would stat every file in a tight loop.
+        if (out.poll < 1 || out.poll > MAX_POLL_MS) {
+          return { error: `--poll takes 1 to ${MAX_POLL_MS} ms, got "${inline}"` };
+        }
         continue;
       }
       case "--tsconfig": {

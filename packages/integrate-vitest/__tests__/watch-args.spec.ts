@@ -179,6 +179,18 @@ describe("parseWatchArgs", () => {
     expect(ok(["--kill-timeout", "0", "app.ts"]).killTimeout).toBe(0);
   });
 
+  test("values a timer cannot take", () => {
+    // setTimeout fires at once above 2^31 - 1 ms.
+    expect(ok(["--kill-timeout=2147483647", "app.ts"]).killTimeout).toBe(2147483647);
+    expect(err(["--kill-timeout=2147483648", "app.ts"])).toMatch(/at most 2147483647/);
+    expect(err(["--kill-timeout", "99999999999", "app.ts"])).toMatch(/at most 2147483647/);
+    // 0 would stat in a tight loop; the walk timer is 10 × the interval.
+    expect(err(["--poll=0", "app.ts"])).toMatch(/--poll takes 1 to 214748364 ms/);
+    expect(err(["--poll=214748365", "app.ts"])).toMatch(/--poll takes 1 to 214748364 ms/);
+    expect(ok(["--poll=1", "app.ts"]).poll).toBe(1);
+    expect(ok(["--poll=214748364", "app.ts"]).poll).toBe(214748364);
+  });
+
   test("CHOKIDAR_USEPOLLING turns polling on", () => {
     expect(ok(["app.ts"], { CHOKIDAR_USEPOLLING: "1" }).poll).toBe(300);
     expect(ok(["app.ts"], { CHOKIDAR_USEPOLLING: "true" }).poll).toBe(300);
