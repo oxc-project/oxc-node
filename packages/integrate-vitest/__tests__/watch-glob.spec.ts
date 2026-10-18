@@ -71,11 +71,17 @@ describe("makeMatcher", () => {
 
   test("a literal folder is folder/**, a literal file is a literal", () => {
     const m = matcher(["config", ".env", "later/new.json"]);
-    expect(m.roots()).toEqual([{ base: "/proj/config", depth: Infinity }]);
+    // Not a folder (yet): also walked if one shows up there.
+    expect(m.roots()).toEqual([
+      { base: "/proj/config", depth: Infinity },
+      { base: "/proj/.env", depth: Infinity },
+      { base: "/proj/later/new.json", depth: Infinity },
+    ]);
     expect(m.literals()).toEqual(["/proj/.env", "/proj/later/new.json"]);
     expect(m.classify("/proj/config/a/b.yaml", "walk")).toBe("watch");
     expect(m.classify("/proj/.env", "literal")).toBe("watch");
     expect(m.classify("/proj/.env.local", "walk")).toBe("default-ignore");
+    expect(m.classify("/proj/later/new.json/a.json", "walk")).toBe("watch");
   });
 
   test("base and depth", () => {

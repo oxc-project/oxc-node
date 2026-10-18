@@ -80,8 +80,10 @@ export function makeMatcher(opts: {
         includes.push(literal(norm(abs)));
         roots.push({ base: abs, depth: Infinity });
       } else {
-        includes.push((n) => n === norm(abs));
+        // A file, or nothing yet: it may also come (back) as a folder, walked once it does.
+        includes.push(literal(norm(abs)));
         literals.push(abs);
+        roots.push({ base: abs, depth: Infinity });
       }
       continue;
     }
