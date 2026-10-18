@@ -312,10 +312,8 @@ console.log("RUN", v, s, process.pid);\n${KEEP}`,
     await o.editUntil(join(root, "dep.ts"), () => value("live"), runLine("live s1"));
     const from = o.mark();
     const before = o.runs().length;
-    for (let i = 1; i <= 5; i++) {
-      writeFileSync(join(root, "dep.ts"), value(`b${i}`));
-      await new Promise((r) => setTimeout(r, 4));
-    }
+    // Back to back: a timer between writes can stall past the debounce on a busy CI machine.
+    for (let i = 1; i <= 5; i++) writeFileSync(join(root, "dep.ts"), value(`b${i}`));
     await o.waitFor(runLine("b5 s1"), 20_000, from);
     await o.editUntil(join(root, "sentinel.ts"), () => sentinel("s2"), runLine("b5 s2"));
     expect(
