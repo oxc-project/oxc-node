@@ -124,6 +124,25 @@ describe("makeMatcher", () => {
     expect(m.pruneDir("/proj/src")).toBe(false);
   });
 
+  test("glob characters in cwd are not glob syntax", () => {
+    for (const cwd of ["/x/proj [2024]", "/x/a{b,c}", "/x/p@(1)"]) {
+      const m = makeMatcher({
+        cwd,
+        include: ["config/*.json", "./src/**"],
+        exclude: ["**/*.test.ts", "../shared/*.ts"],
+        platform: "linux",
+        isDir: () => false,
+      });
+      expect(m.classify(`${cwd}/config/a.json`, "walk"), cwd).toBe("watch");
+      expect(m.classify(`${cwd}/src/a.ts`, "walk"), cwd).toBe("watch");
+      expect(m.classify(`${cwd}/src/a.test.ts`, "graph"), cwd).toBe("exclude");
+      expect(m.classify("/x/shared/a.ts", "graph"), cwd).toBe("exclude");
+      // `**` does not reach out of cwd.
+      expect(m.classify("/elsewhere/a.test.ts", "graph"), cwd).toBe("watch");
+      expect(m.roots()[0], cwd).toEqual({ base: `${cwd}/config`, depth: 1 });
+    }
+  });
+
   test("@ + ! ( ) are glob syntax only as an extglob", () => {
     const scoped = new Set(["/proj/node_modules/@org/lib", "/proj/src/routes/(app)"]);
     const m = makeMatcher({

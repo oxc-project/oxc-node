@@ -55,11 +55,17 @@ export function makeMatcher(opts: {
 
   // A literal matches itself and everything below it.
   const literal = (lit: string) => (n: string) => n === lit || n.startsWith(`${lit}/`);
-  const glob = (g: string) => (n: string) => matchesGlob!(n, g);
+  // A relative glob is matched against the path relative to cwd, so `[ ] { }` in cwd stay literal.
+  const glob = (pattern: string) => {
+    if (native.isAbsolute(pattern)) {
+      const g = norm(pattern);
+      return (n: string) => matchesGlob!(n, g);
+    }
+    const g = path.posix.normalize(norm(pattern));
+    return (n: string) => matchesGlob!(path.posix.relative(cwd, n), g);
+  };
 
-  const excludes = opts.exclude.map((p) =>
-    GLOB_CHARS.test(p) ? glob(absolute(p)) : literal(absolute(p)),
-  );
+  const excludes = opts.exclude.map((p) => (GLOB_CHARS.test(p) ? glob(p) : literal(absolute(p))));
   const includes: ((n: string) => boolean)[] = [];
   const roots: { base: string; depth: number }[] = [];
   const literals: string[] = [];
@@ -75,7 +81,7 @@ export function makeMatcher(opts: {
       }
       continue;
     }
-    includes.push(glob(absolute(pattern)));
+    includes.push(glob(pattern));
     const parts = pattern.split(win ? /[\\/]/ : "/");
     let baseLen = 0;
     while (baseLen < parts.length - 1 && !GLOB_CHARS.test(parts[baseLen])) baseLen++;
