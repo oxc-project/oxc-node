@@ -1,18 +1,35 @@
 import { createHash } from "node:crypto";
 import * as NodeModule from "node:module";
 import { pathToFileURL } from "node:url";
+import { isMainThread } from "node:worker_threads";
 
 import { addHook } from "pirates";
 
 import {
   OxcTransformer,
   createResolve,
+  enableWatchReport,
   freezeTransformDeps,
   getTsconfigPath,
   initTracing,
   load as oxcLoad,
   transformsDep,
 } from "./index.js";
+import { installSignalAck } from "./signal-ack.mjs";
+import { createRelay, flush, watchSink, withFlush } from "./watch-report.mjs";
+
+// A no-op unless oxnode set OXNODE_SIGNAL_ACK for this process.
+if (isMainThread) {
+  installSignalAck();
+}
+
+// Where to report the files a watch parent should restart on, or `null` when
+// nobody is watching. Turned on before the first transform or resolve, which
+// is when tsconfig files are read.
+const watch = watchSink();
+if (watch) {
+  enableWatchReport();
+}
 
 // Destructure from NodeModule namespace to support older Node.js versions
 const { Module, createRequire, register, registerHooks, setSourceMapsSupport } = NodeModule;
@@ -165,6 +182,11 @@ addHook(
         error.code = "ERR_REQUIRE_ASYNC_MODULE";
       }
       throw error;
+    } finally {
+      // A transform reads the tsconfig of the file it compiles.
+      if (watch) {
+        flush(watch);
+      }
     }
     let transformed = output.source();
     const sourceMap = output.sourceMap();
@@ -336,7 +358,12 @@ function canRegisterSyncHooks() {
 // `module.registerHooks()` on every runtime that implements it completely.
 if (canRegisterSyncHooks()) {
   initTracing();
-  registerHooks({ load, resolve });
+  // A hook records what it read or looked for, and then reports it.
+  registerHooks(
+    watch
+      ? { load: withFlush(load, watch), resolve: withFlush(resolve, watch) }
+      : { load, resolve },
+  );
 } else {
   // The hooks run on their own thread. The mode goes over as a snapshot: under
   // WASI that thread's binding is a separate copy a later `setTransformDeps`
@@ -344,9 +371,12 @@ if (canRegisterSyncHooks()) {
   // instead of diverging between the `require()` matcher on this binding and
   // the ESM hooks on the other. The frozen mode is sent, not just an override,
   // because the worker's env may be an older snapshot of process.env.
-  // `setTsconfigPath` rides the same snapshot.
+  // `setTsconfigPath` rides the same snapshot. That thread has no
+  // `process.send`, so its watch reports come back through `watchPort`.
+  const watchPort = watch ? createRelay(watch) : undefined;
   register("@oxc-node/core/esm", {
     parentURL: import.meta.url,
-    data: { tsconfigPath: getTsconfigPath(), transformDeps: freezeTransformDeps() },
+    data: { tsconfigPath: getTsconfigPath(), transformDeps: freezeTransformDeps(), watchPort },
+    transferList: watchPort ? [watchPort] : [],
   });
 }

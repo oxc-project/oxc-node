@@ -23,7 +23,8 @@ default = ["napi"]
 # The embedder writes its own thin `#[napi]` forwarders — for `create_resolve`,
 # `load`, `transform`, `OxcTransformer`, `set_tsconfig_path`,
 # `get_tsconfig_path`, `set_transform_deps`, `get_transform_deps`,
-# `transforms_dep` and `freeze_transform_deps` — compiling this crate against
+# `transforms_dep`, `freeze_transform_deps`, and for watch mode
+# `enable_watch_report` and `take_watch_dependencies` — compiling this crate against
 # the same napi 3.x version so the `Function`, `PromiseRaw`, `Either` and
 # `FnArgs` types used in those signatures unify with the host's. It also calls
 # `detect_runtime_syntax` from its own `napi(module_exports)` hook (without it
@@ -55,6 +56,13 @@ napi = ["dep:mimalloc-safe"]
 # a no-op there. Named after `rolldown_binding`'s feature, so an addon linking
 # both enables the same feature on each. The published packages keep mimalloc.
 default_global_allocator = []
+
+# oxc_resolver's `yarn_pnp` feature changes the signature of
+# `FileSystem::new`, which oxc-node implements for its watch-mode file
+# system. An embedder whose build turns `oxc_resolver/yarn_pnp` on (through
+# `oxc_resolver_napi`, for one) has to enable this too, or the crate does
+# not compile. oxc-node itself never resolves through Yarn PnP.
+yarn_pnp = ["oxc_resolver/yarn_pnp"]
 
 [dependencies]
 memchr = "2"
