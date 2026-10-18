@@ -5,6 +5,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
   type FSWatcher,
 } from "node:fs";
@@ -363,6 +364,36 @@ describe("DirWatcher", () => {
       w.close();
     }
   });
+
+  test.skipIf(process.platform === "win32")(
+    "a link in a walked folder pointed at a new target watches that target",
+    async () => {
+      const root = temp();
+      const [config, shared] = [join(root, "config"), join(root, "shared")];
+      mkdirSync(config);
+      mkdirSync(shared);
+      writeFileSync(join(shared, "a.json"), "1");
+      writeFileSync(join(shared, "b.json"), "1");
+      const link = join(config, "current.json");
+      symlinkSync("../shared/a.json", link);
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "linux", watch: fake.watch });
+      try {
+        w.addRoot(config, Infinity);
+        await until(() => fake.open(config).length === 1, "the folder's watch");
+        await until(() => fake.open(shared).length === 1, "the target's watch");
+        rmSync(link);
+        symlinkSync("../shared/b.json", link);
+        fake.open(config)[0].emit("current.json");
+        expect(changes).toEqual([link]);
+        writeFileSync(join(shared, "b.json"), "22");
+        fake.open(shared)[0].emit("b.json");
+        expect(changes).toEqual([link, link]);
+      } finally {
+        w.close();
+      }
+    },
+  );
 
   test("a folder swapped by rename gets a new watch, found by its inode", async () => {
     const root = temp();
