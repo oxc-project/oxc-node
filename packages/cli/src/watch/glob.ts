@@ -18,6 +18,57 @@ export interface Matcher {
 // `@ + !` mean something only before `(`: scoped packages and `(group)` folders are literal.
 const GLOB_CHARS = /[*?[\]{}]|[+@!]\(/;
 
+const MAX_EXPANSIONS = 64;
+
+/**
+ * `a/{b,c/d}/e` → `a/b/e`, `a/c/d/e`. Groups without a comma (`{1..3}`) stay. Too many
+ * alternatives: the pattern as it is. `\\` escapes, except on Windows, where it is a separator.
+ */
+export function expandBraces(pattern: string, win: boolean): string[] {
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === "\\" && !win) {
+      i++;
+    } else if (c === "{") {
+      if (depth++ === 0) start = i;
+    } else if (c === "}" && depth > 0 && --depth === 0) {
+      const alts = splitTop(pattern.slice(start + 1, i), win);
+      if (alts.length < 2) continue;
+      const [pre, post] = [pattern.slice(0, start), pattern.slice(i + 1)];
+      const out: string[] = [];
+      for (const alt of alts) {
+        for (const one of expandBraces(pre + alt + post, win)) {
+          out.push(one);
+          if (out.length > MAX_EXPANSIONS) return [pattern];
+        }
+      }
+      return out;
+    }
+  }
+  return [pattern];
+}
+
+// Split a group's body at its own commas, not those of groups inside it.
+function splitTop(body: string, win: boolean): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let from = 0;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === "\\" && !win) i++;
+    else if (c === "{") depth++;
+    else if (c === "}" && depth > 0) depth--;
+    else if (c === "," && depth === 0) {
+      out.push(body.slice(from, i));
+      from = i + 1;
+    }
+  }
+  out.push(body.slice(from));
+  return out;
+}
+
 export const isDirOnDisk = (p: string) => {
   try {
     return statSync(p).isDirectory();
@@ -93,15 +144,18 @@ export function makeMatcher(opts: {
       continue;
     }
     includes.push(glob(pattern));
-    const parts = pattern.split(win ? /[\\/]/ : "/");
-    let baseLen = 0;
-    while (baseLen < parts.length - 1 && !GLOB_CHARS.test(parts[baseLen])) baseLen++;
-    const rest = parts.slice(baseLen);
-    // `/*.json` and `C:/*.json` start at the root, not at cwd.
-    const fixed = baseLen === 0 ? "." : parts.slice(0, baseLen).join("/") || "/";
-    const base = native.resolve(opts.cwd, /^[A-Za-z]:$/.test(fixed) ? `${fixed}/` : fixed);
-    named.push({ base: norm(base), parts: rest.map(norm) });
-    roots.push({ base, depth: rest.includes("**") ? Infinity : rest.length });
+    // `{src/**,node_modules/**}/*.ts`: a group can hold `/`, so expand groups before splitting.
+    for (const one of expandBraces(pattern, win)) {
+      const parts = one.split(win ? /[\\/]/ : "/");
+      let baseLen = 0;
+      while (baseLen < parts.length - 1 && !GLOB_CHARS.test(parts[baseLen])) baseLen++;
+      const rest = parts.slice(baseLen);
+      // `/*.json` and `C:/*.json` start at the root, not at cwd.
+      const fixed = baseLen === 0 ? "." : parts.slice(0, baseLen).join("/") || "/";
+      const base = native.resolve(opts.cwd, /^[A-Za-z]:$/.test(fixed) ? `${fixed}/` : fixed);
+      named.push({ base: norm(base), parts: rest.map(norm) });
+      roots.push({ base, depth: rest.includes("**") ? Infinity : rest.length });
+    }
   }
 
   const ignoreDirs = (opts.ignoreDirs ?? []).map(norm);
@@ -146,8 +200,10 @@ export function makeMatcher(opts: {
         (name === "node_modules" || name.startsWith(".")) &&
         !named.some(
           (include) =>
-            n.startsWith(include.base.endsWith("/") ? include.base : `${include.base}/`) &&
-            fits(n.slice(include.base.replace(/\/$/, "").length + 1).split("/"), include.parts),
+            // A folder in the fixed part (`node_modules/pkg/**`) is named by it.
+            n === include.base ||
+            (n.startsWith(include.base.endsWith("/") ? include.base : `${include.base}/`) &&
+              fits(n.slice(include.base.replace(/\/$/, "").length + 1).split("/"), include.parts)),
         );
       // `**/dist/**` matches what is inside dist, not dist itself. Only such a `/**` exclude
       // speaks for every child: `dir/!(keep)` leaves `dir/keep`.

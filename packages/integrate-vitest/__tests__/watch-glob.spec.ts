@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { makeMatcher } from "../../cli/src/watch/glob.js";
+import { expandBraces, makeMatcher } from "../../cli/src/watch/glob.js";
 
 const CWD = "/proj";
 const dirs = new Set(["/proj/config", "/proj/src"]);
@@ -97,7 +97,9 @@ describe("makeMatcher", () => {
       { base: "/proj/src", depth: 1 },
       { base: "/proj/src", depth: 2 },
       { base: "/proj/a/b", depth: Infinity },
-      { base: "/proj", depth: 2 },
+      // Each alternative of a group, from its own fixed part.
+      { base: "/proj/x", depth: 1 },
+      { base: "/proj/y", depth: 1 },
       { base: "/abs/dir", depth: 1 },
       { base: "/proj/rel", depth: Infinity },
     ]);
@@ -144,10 +146,23 @@ describe("makeMatcher", () => {
     expect(two.pruneDir("/proj/src/node_modules")).toBe(true);
     // Only where the folder can be on the pattern's path, not wherever its name appears.
     const deep = matcher(["src/{web,api}/fixtures/node_modules/pkg/**"]);
+    // Each alternative is walked from its own fixed part.
+    expect(deep.roots()).toEqual([
+      { base: "/proj/src/web/fixtures/node_modules/pkg", depth: Infinity },
+      { base: "/proj/src/api/fixtures/node_modules/pkg", depth: Infinity },
+    ]);
     expect(deep.pruneDir("/proj/src/node_modules")).toBe(true);
     expect(deep.pruneDir("/proj/src/web/node_modules")).toBe(true);
-    expect(deep.pruneDir("/proj/src/web/fixtures/node_modules")).toBe(false);
     expect(deep.pruneDir("/proj/src/web/fixtures/node_modules/pkg/node_modules")).toBe(true);
+    // A group may hold `/`.
+    const slash = matcher(["{src/**,node_modules/**}/*.ts"]);
+    expect(slash.roots()).toEqual([
+      { base: "/proj/src", depth: Infinity },
+      { base: "/proj/node_modules", depth: Infinity },
+    ]);
+    expect(slash.pruneDir("/proj/node_modules")).toBe(false);
+    expect(slash.pruneDir("/proj/node_modules/pkg/node_modules")).toBe(true);
+    expect(slash.classify("/proj/node_modules/pkg/a.ts", "walk")).toBe("watch");
     expect(
       matcher(["src/*.ts", "src/x/node_modules/*.js"]).pruneDir("/proj/src/node_modules"),
     ).toBe(true);
@@ -160,6 +175,17 @@ describe("makeMatcher", () => {
     expect(m.pruneDir("/proj/dir/other")).toBe(true);
     expect(matcher(["**/*.ts"], ["dir/*"]).pruneDir("/proj/dir")).toBe(false);
     expect(matcher(["**/*.ts"], ["dir/**"]).pruneDir("/proj/dir")).toBe(true);
+  });
+
+  test("expandBraces", () => {
+    expect(expandBraces("a/{b,c/d}/e", false)).toEqual(["a/b/e", "a/c/d/e"]);
+    expect(expandBraces("{a,{b,c}}x", false)).toEqual(["ax", "bx", "cx"]);
+    expect(expandBraces("{a,b}{c,d}", false)).toEqual(["ac", "ad", "bc", "bd"]);
+    expect(expandBraces("x{1..3}/{a,b}", false)).toEqual(["x{1..3}/a", "x{1..3}/b"]);
+    expect(expandBraces("\\{a,b}", false)).toEqual(["\\{a,b}"]);
+    expect(expandBraces("src\\{a,b}", true)).toEqual(["src\\a", "src\\b"]);
+    const many = "{a,b,c,d}{a,b,c,d}{a,b,c,d}{a,b,c,d}";
+    expect(expandBraces(many, false)).toEqual([many]);
   });
 
   test("pruneDir with **/dist/**", () => {
