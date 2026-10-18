@@ -117,12 +117,11 @@ export function runWatch(argv: string[]): Promise<number> {
       if (seen.has(p)) return;
       seen.add(p);
       const verdict = matcher.classify(p, source);
-      if (verdict !== "watch") {
-        debug(`skip ${p} (${verdict === "exclude" ? "exclude" : "default"})`);
-        return;
-      }
-      watcher.add(p);
-      // Node.js reports real paths, but not under --preserve-symlinks.
+      if (verdict === "watch") watcher.add(p);
+      else debug(`skip ${p} (${verdict === "exclude" ? "exclude" : "default"})`);
+      if (verdict === "exclude") return;
+      // Node.js reports real paths, but not under --preserve-symlinks, where a linked
+      // workspace package shows up under node_modules and its real path must still count.
       try {
         const real = realpathSync.native(p);
         if (real !== p) want(real, source);

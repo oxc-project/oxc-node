@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, test } from "vitest";
 
@@ -240,6 +240,26 @@ console.log("RUN", p, s, process.pid);\n${KEEP}`,
     await o2.waitFor(runLine("p1 s1"));
     await o2.watched(pkg(optIn));
     await o2.editUntil(pkg(optIn), () => 'export const p = "p2";\n', runLine("p2 s1"));
+  });
+
+  test("--preserve-symlinks: a linked workspace package is watched by its real path", async () => {
+    const root = project({
+      "package.json": ESM,
+      "packages/pkg/package.json": JSON.stringify({ name: "pkg", type: "module" }),
+      "packages/pkg/index.js": 'export const p = "p1";\n',
+      "main.ts": `import { p } from "pkg";\nconsole.log("RUN", p, process.pid);\n${KEEP}`,
+    });
+    // The link path is under node_modules, and so ignored; its real path is not.
+    symlinkSync(
+      join(root, "packages/pkg"),
+      join(root, "node_modules/pkg"),
+      POSIX ? "dir" : "junction",
+    );
+    const real = join(root, "packages/pkg/index.js");
+    const o = startOxnode(["watch", "--preserve-symlinks", "main.ts"], root);
+    await o.waitFor(runLine("p1"));
+    await o.watched(real);
+    await o.editUntil(real, () => 'export const p = "p2";\n', runLine("p2"));
   });
 
   test("five writes within 20 ms restart once", async () => {
