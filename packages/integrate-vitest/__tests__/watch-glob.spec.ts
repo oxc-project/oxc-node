@@ -197,6 +197,19 @@ describe("makeMatcher", () => {
       isDir: () => false,
     });
     expect(win.roots()).toEqual([{ base: "D:\\", depth: 1 }]);
+    // No drive: cwd's drive.
+    const noDrive = makeMatcher({
+      cwd: "C:\\proj",
+      include: ["/*.json", "\\etc\\app.conf"],
+      exclude: ["/skip.json"],
+      platform: "win32",
+      isDir: () => false,
+    });
+    expect(noDrive.roots()[0]).toEqual({ base: "C:\\", depth: 1 });
+    expect(noDrive.classify("C:\\a.json", "walk")).toBe("watch");
+    expect(noDrive.classify("C:\\skip.json", "walk")).toBe("exclude");
+    expect(noDrive.classify("C:\\etc\\app.conf", "walk")).toBe("watch");
+    expect(noDrive.literals()).toEqual(["C:\\etc\\app.conf"]);
   });
 
   test("@ + ! ( ) are glob syntax only as an extglob", () => {

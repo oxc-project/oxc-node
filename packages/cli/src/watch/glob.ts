@@ -42,8 +42,12 @@ export function makeMatcher(opts: {
   // Windows paths are case-insensitive, and `matchesGlob` is not.
   const norm = (p: string) => (win ? p.replaceAll("\\", "/").toLowerCase() : p);
   const cwd = norm(opts.cwd);
+  // On Windows `/x` is on cwd's drive: `C:/x`.
+  const drive = win ? native.resolve(opts.cwd, "/").replace(/[\\/]$/, "") : "";
+  const rooted = (pattern: string) =>
+    win && /^[\\/](?![\\/])/.test(pattern) ? drive + pattern : pattern;
   const absolute = (pattern: string) => {
-    const p = norm(pattern);
+    const p = norm(rooted(pattern));
     return native.isAbsolute(pattern) ? p : path.posix.join(cwd, p);
   };
 
@@ -58,7 +62,7 @@ export function makeMatcher(opts: {
   // A relative glob is matched against the path relative to cwd, so `[ ] { }` in cwd stay literal.
   const glob = (pattern: string) => {
     if (native.isAbsolute(pattern)) {
-      const g = norm(pattern);
+      const g = norm(rooted(pattern));
       return (n: string) => matchesGlob!(n, g);
     }
     const g = path.posix.normalize(norm(pattern));
