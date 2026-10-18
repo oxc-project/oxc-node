@@ -1,6 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -23,9 +22,6 @@ import { HAS_PTY, runInPty, type PtyStep } from "./helpers/pty.js";
  */
 const CLI = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
 const CORE = dirname(fileURLToPath(new URL("../../core/register.mjs", import.meta.url)));
-// The child side of the SIGINT ack (OXNODE_SIGNAL_ACK). Without it, Ctrl+C reaches an app
-// that has its own SIGINT listener twice: from the terminal, and from oxnode 50 ms later.
-const HAS_ACK = existsSync(join(CORE, "signal-ack.mjs"));
 const posix = process.platform !== "win32";
 
 const env = {
@@ -210,36 +206,22 @@ describe.skipIf(!posix)("signals", () => {
     },
   );
 
-  // Needs the child side of the ack in @oxc-node/core (signal-ack.mjs).
-  test.skipIf(!HAS_ACK)(
-    "Ctrl+C: the app gets one SIGINT, and oxnode waits for its cleanup",
-    async () => {
-      const run = oxnode(["cleanup-7.ts"]);
-      await run.waitFor(/READY/);
-      process.kill(-run.child.pid!, "SIGINT");
-      expect(await run.exited).toEqual({ code: 7, signal: null });
-      expect(count(run.out(), /GOT SIGINT/)).toBe(1);
-      expect(run.out()).toMatch(/GOT SIGINT[\s\S]*cleaned/);
-    },
-  );
+  test("Ctrl+C: the app gets one SIGINT, and oxnode waits for its cleanup", async () => {
+    const run = oxnode(["cleanup-7.ts"]);
+    await run.waitFor(/READY/);
+    process.kill(-run.child.pid!, "SIGINT");
+    expect(await run.exited).toEqual({ code: 7, signal: null });
+    expect(count(run.out(), /GOT SIGINT/)).toBe(1);
+    expect(run.out()).toMatch(/GOT SIGINT[\s\S]*cleaned/);
+  });
 
-  // Needs the child side of the ack in @oxc-node/core (signal-ack.mjs).
-  test.skipIf(!HAS_ACK)("npm: Ctrl+C plus a forwarded SIGINT still gives one", async () => {
+  test("npm: Ctrl+C plus a forwarded SIGINT still gives one", async () => {
     const run = oxnode(["cleanup-7.ts"]);
     await run.waitFor(/READY/);
     process.kill(-run.child.pid!, "SIGINT");
     process.kill(run.child.pid!, "SIGINT");
     expect(await run.exited).toEqual({ code: 7, signal: null });
     expect(count(run.out(), /GOT SIGINT/)).toBe(1);
-  });
-
-  test("Ctrl+C: oxnode exits after the app's cleanup, with its code", async () => {
-    const run = oxnode(["cleanup-7.ts"]);
-    await run.waitFor(/READY/);
-    process.kill(-run.child.pid!, "SIGINT");
-    // Until the ack lands, the app may see SIGINT twice; what counts here is that oxnode waits.
-    expect(await run.exited).toEqual({ code: 7, signal: null });
-    expect(run.out()).toContain("cleaned");
   });
 
   test("a signal-exit style app still dies by SIGINT, and sees one listener", async () => {
