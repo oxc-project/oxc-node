@@ -475,6 +475,38 @@ describe("DirWatcher", () => {
   });
 
   test.skipIf(process.platform === "win32")(
+    "--poll: a link pointed at a new target stops watching the old one",
+    async () => {
+      const root = temp();
+      const [config, shared] = [join(root, "config"), join(root, "shared")];
+      mkdirSync(config);
+      mkdirSync(shared);
+      const [a, b] = [join(shared, "a.json"), join(shared, "b.json")];
+      writeFileSync(a, "1");
+      writeFileSync(b, "1");
+      const link = join(config, "current.json");
+      symlinkSync("../shared/a.json", link);
+      const { w, changes, debug } = start({ poll: 20 });
+      try {
+        w.addRoot(config, Infinity);
+        expect(debug).toContain(`watch ${a}`);
+        rmSync(link);
+        symlinkSync("../shared/b.json", link);
+        await until(() => debug.includes(`watch ${b}`), "the new target");
+        const seen = changes.length;
+        writeFileSync(a, "22");
+        await new Promise((r) => setTimeout(r, 300));
+        expect(changes).toHaveLength(seen);
+        writeFileSync(b, "22");
+        await until(() => changes.length > seen, "a change in the new target");
+        expect(changes.at(-1)).toBe(link);
+      } finally {
+        w.close();
+      }
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
     "a target two links point to stays watched until both are gone",
     async () => {
       const root = temp();

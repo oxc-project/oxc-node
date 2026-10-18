@@ -7,7 +7,6 @@ import {
   unwatchFile,
   watch,
   watchFile,
-  type BigIntStats,
   type FSWatcher,
 } from "node:fs";
 import path from "node:path";
@@ -32,12 +31,6 @@ function sigOf(p: string): Sig {
     return null;
   }
 }
-
-// `fs.watchFile` reports a missing file as all zeros.
-const sigOfStats = (s: BigIntStats): Sig =>
-  s.ino === 0n && s.mtimeNs === 0n
-    ? null
-    : { ino: s.ino, size: s.size, mtimeNs: s.mtimeNs, ctimeNs: s.ctimeNs };
 
 /**
  * Whether a file changed, from its stat before and after. `event`: an event named it, rather
@@ -166,12 +159,9 @@ export class DirWatcher {
       this.#scheduleSync();
       return;
     }
-    watchFile(file, { interval: this.#o.poll, bigint: true }, (curr) => {
-      const entry = this.#files.get(k)!;
-      const next = sigOfStats(curr);
-      if (!changed(entry.sig, next)) return;
-      entry.sig = next;
-      this.#o.onChange(shown);
+    // The same check as for an event, so a link's target is followed here too.
+    watchFile(file, { interval: this.#o.poll, bigint: true }, () => {
+      if (this.#files.has(k)) this.#check(k);
     });
   }
 
