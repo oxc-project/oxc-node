@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import {
+  envFileNestedWatcher,
   nodeOptionsTokens,
   parseWatchArgs,
   tsconfigEnv,
@@ -182,6 +183,15 @@ describe("parseWatchArgs", () => {
     ["-", /needs an entry file/],
   ])("rejects %s", (flag, message) => {
     expect(err([flag, "app.ts"])).toMatch(message);
+  });
+
+  test("envFileNestedWatcher reads the env files again on each call", () => {
+    const files: Record<string, string> = { ".env": "A=1\n" };
+    const read = (f: string) => files[f];
+    expect(envFileNestedWatcher({}, [".env"], read)).toBeUndefined();
+    files[".env"] = "NODE_OPTIONS=--watch-path=src\n";
+    expect(envFileNestedWatcher({}, [".env"], read)).toMatch(/nested watcher/);
+    expect(envFileNestedWatcher({ NODE_OPTIONS: "" }, [".env"], read)).toBeUndefined();
   });
 
   test("NODE_OPTIONS is split as Node.js splits it", () => {

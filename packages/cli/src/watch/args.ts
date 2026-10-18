@@ -289,17 +289,27 @@ export function parseWatchArgs(
   if (!out.entry && !out.help) {
     return { error: "missing <entry>" };
   }
-  // Node.js also takes NODE_OPTIONS from --env-file, unless it is set already; the last file wins.
-  if (env.NODE_OPTIONS === undefined) {
-    let fromFiles: string | undefined;
-    for (const file of out.envFiles) {
-      const text = read(file);
-      const value = text === undefined ? undefined : parseEnv(text).NODE_OPTIONS;
-      if (value !== undefined) fromFiles = value;
-    }
-    if (startsWatcher(fromFiles)) return { error: `${NESTED} (from --env-file)` };
+  const nested = envFileNestedWatcher(env, out.envFiles, read);
+  return nested ? { error: nested } : out;
+}
+
+/**
+ * Node.js also takes NODE_OPTIONS from --env-file, unless it is set already; the last file wins.
+ * Checked before each start, as the files are watched and may change.
+ */
+export function envFileNestedWatcher(
+  env: NodeJS.ProcessEnv,
+  envFiles: string[],
+  read: (file: string) => string | undefined = readEnvFile,
+): string | undefined {
+  if (env.NODE_OPTIONS !== undefined) return undefined;
+  let fromFiles: string | undefined;
+  for (const file of envFiles) {
+    const text = read(file);
+    const value = text === undefined ? undefined : parseEnv(text).NODE_OPTIONS;
+    if (value !== undefined) fromFiles = value;
   }
-  return out;
+  return startsWatcher(fromFiles) ? `${NESTED} (from --env-file)` : undefined;
 }
 
 /** The child env for `--tsconfig`: oxc-node reads TS_NODE_PROJECT before OXC_TSCONFIG_PATH. */
