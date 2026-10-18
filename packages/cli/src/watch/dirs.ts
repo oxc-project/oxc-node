@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import type { Matcher } from "./glob.js";
+import { isDirOnDisk as isDir, type Matcher } from "./glob.js";
 
 type Sig = { ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint } | null;
 
@@ -335,13 +335,5 @@ export class DirWatcher {
     if (!changed(entry.sig, next)) return;
     entry.sig = next;
     this.#o.onChange(entry.path);
-  }
-}
-
-function isDir(p: string): boolean {
-  try {
-    return statSync(p).isDirectory();
-  } catch {
-    return false;
   }
 }

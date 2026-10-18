@@ -18,7 +18,7 @@ export interface Matcher {
 // `@ + !` mean something only before `(`: scoped packages and `(group)` folders are literal.
 const GLOB_CHARS = /[*?[\]{}]|[+@!]\(/;
 
-const isDirOnDisk = (p: string) => {
+export const isDirOnDisk = (p: string) => {
   try {
     return statSync(p).isDirectory();
   } catch {
