@@ -1,7 +1,10 @@
 import { constants } from "node:os";
 import { resolve } from "node:path";
 
-/** Node.js options that take their value as the next token. */
+/**
+ * Node.js options that take their value as the next token: those `node --help` shows as
+ * `--name=...` on Node.js 22, 24 and 26, less test, bench and build-only ones.
+ */
 export const NODE_VALUE_FLAGS = new Set([
   "-r",
   "--require",
@@ -20,6 +23,43 @@ export const NODE_VALUE_FLAGS = new Set([
   "--redirect-warnings",
   "--report-dir",
   "--diagnostic-dir",
+  "--allow-fs-read",
+  "--allow-fs-write",
+  "--cpu-prof-dir",
+  "--cpu-prof-interval",
+  "--cpu-prof-name",
+  "--disable-proto",
+  "--dns-result-order",
+  "--experimental-config-file",
+  "--experimental-default-type",
+  "--experimental-package-map",
+  "--heap-prof-dir",
+  "--heap-prof-interval",
+  "--heap-prof-name",
+  "--heapsnapshot-near-heap-limit",
+  "--heapsnapshot-signal",
+  "--icu-data-dir",
+  "--inspect-publish-uid",
+  "--localstorage-file",
+  "--max-http-header-size",
+  "--max-old-space-size-percentage",
+  "--network-family-autoselection-attempt-timeout",
+  "--openssl-config",
+  "--report-filename",
+  "--report-signal",
+  "--secure-heap",
+  "--secure-heap-min",
+  "--snapshot-blob",
+  "--tls-cipher-list",
+  "--tls-keylog",
+  "--trace-event-categories",
+  "--trace-event-file-pattern",
+  "--trace-require-module",
+  "--unhandled-rejections",
+  "--use-largepages",
+  "--v8-pool-size",
+  "--vfs-load",
+  "--watch-kill-signal",
 ]);
 
 export interface WatchArgs {

@@ -113,6 +113,18 @@ describe("parseWatchArgs", () => {
     expect(a.clearScreen).toBe(false);
   });
 
+  test("a Node.js flag's value after a space is not the entry", () => {
+    const a = ok(["--openssl-config", "openssl.cnf", "--max-http-header-size", "9000", "app.ts"]);
+    expect(a.entry).toBe("app.ts");
+    expect(a.nodeArgs).toEqual([
+      "--openssl-config",
+      "openssl.cnf",
+      "--max-http-header-size",
+      "9000",
+      "app.ts",
+    ]);
+  });
+
   test("an unknown Node.js flag with a space hides later watch flags but keeps the order", () => {
     const a = ok(["--stack-size", "2000", "--include", "x", "app.ts"]);
     // `2000` is taken for the entry: Node.js still sees `--stack-size 2000 --include x app.ts`.
