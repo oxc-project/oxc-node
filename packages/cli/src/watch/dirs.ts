@@ -31,8 +31,11 @@ const sigOfStats = (s: BigIntStats): Sig =>
     ? null
     : { ino: s.ino, size: s.size, mtimeNs: s.mtimeNs, ctimeNs: s.ctimeNs };
 
-/** Whether an event for a file is a real change, from its stat before and after. */
-export function changed(prev: Sig, next: Sig): boolean {
+/**
+ * Whether a file changed, from its stat before and after. `event`: an event named it, rather
+ * than a look made without one.
+ */
+export function changed(prev: Sig, next: Sig, event = true): boolean {
   if (!prev || !next) return prev !== next;
   if (
     prev.ino !== next.ino ||
@@ -43,8 +46,8 @@ export function changed(prev: Sig, next: Sig): boolean {
     return true;
   }
   // Nothing moved: FSEvents replays old events. With whole-second timestamps, though,
-  // a same-size edit within the second looks the same, so it still counts.
-  return next.mtimeNs % 1_000_000_000n === 0n;
+  // a same-size edit within the second looks the same, so after an event it still counts.
+  return event && next.mtimeNs % 1_000_000_000n === 0n;
 }
 
 export interface DirWatcherOptions {
@@ -279,7 +282,7 @@ export class DirWatcher {
     // Files may have changed or arrived before the watch was open: after the stat or walk at
     // start, or while a folder was missing or replaced.
     for (const dir of fresh) {
-      this.#checkDir(dir);
+      this.#checkDir(dir, false);
       const walked = this.#walked.get(this.#key(dir));
       if (walked) this.#rescan(walked);
     }
@@ -290,7 +293,7 @@ export class DirWatcher {
     this.#handles.delete(k);
     this.#restarted();
     // macOS may report a removed folder with one event for the folder and none for its files.
-    this.#checkDir(h.dir);
+    this.#checkDir(h.dir, false);
   }
 
   // On macOS libuv has one FSEvents stream for all watches, made again from "now" on each open or
@@ -301,7 +304,7 @@ export class DirWatcher {
     clearTimeout(this.#settleTimer);
     this.#settleTimer = setTimeout(() => {
       this.#settleTimer = undefined;
-      for (const k of this.#files.keys()) this.#check(k);
+      for (const k of this.#files.keys()) this.#check(k, false);
       this.#scheduleSync();
     }, 250);
   }
@@ -408,14 +411,14 @@ export class DirWatcher {
     }
   }
 
-  #checkDir(dir: string) {
-    for (const k of this.#byDir.get(this.#key(dir)) ?? []) this.#check(k);
+  #checkDir(dir: string, event = true) {
+    for (const k of this.#byDir.get(this.#key(dir)) ?? []) this.#check(k, event);
   }
 
-  #check(k: string) {
+  #check(k: string, event = true) {
     const entry = this.#files.get(k)!;
     const next = sigOf(entry.path);
-    if (!changed(entry.sig, next)) return;
+    if (!changed(entry.sig, next, event)) return;
     entry.sig = next;
     // A link pointed somewhere else: watch the new target too. Only a link: Windows gives other
     // paths a second spelling (8.3 names), which is the same file.

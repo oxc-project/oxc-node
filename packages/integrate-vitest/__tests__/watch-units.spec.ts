@@ -6,6 +6,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
   type FSWatcher,
 } from "node:fs";
@@ -414,6 +415,27 @@ describe("DirWatcher", () => {
       expect(changes).toEqual([file]);
       await new Promise((r) => setTimeout(r, 100));
       expect(fake.opened.filter((h) => !h.closed).map((h) => h.dir)).toEqual([alias]);
+    } finally {
+      w.close();
+    }
+  });
+
+  test("a whole-second timestamp counts as a change only after an event", async () => {
+    const root = temp();
+    const file = join(root, "a.ts");
+    writeFileSync(file, "1");
+    utimesSync(file, 1_700_000_000, 1_700_000_000);
+    const fake = fakeWatch();
+    // macOS: also looks at every file again once its FSEvents stream restarts.
+    const { w, changes } = start({ platform: "darwin", watch: fake.watch });
+    try {
+      w.add(file);
+      await until(() => fake.open(root).length === 1, "the watch");
+      await new Promise((r) => setTimeout(r, 400));
+      expect(changes).toEqual([]);
+      // A same-size edit within the same second looks the same.
+      fake.open(root)[0].emit("a.ts");
+      expect(changes).toEqual([file]);
     } finally {
       w.close();
     }
