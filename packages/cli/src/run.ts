@@ -21,6 +21,8 @@ const CORE_SIGNALS = new Set([
   "SIGQUIT",
   "SIGTRAP",
   "SIGSYS",
+  "SIGXCPU",
+  "SIGXFSZ",
 ]);
 
 export type ExitPlan = { raise: NodeJS.Signals } | { code: number };
