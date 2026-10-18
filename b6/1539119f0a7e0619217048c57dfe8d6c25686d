@@ -1,0 +1,31 @@
+packages/integrate-vitest/__tests__/helpers/watch.ts
+  s_d25296fd97a711::t_41360dcf05ff4e 1-280
+packages/integrate-vitest/__tests__/watch-cli.spec.ts
+  s_d25296fd97a711::t_c395e1af73a5a3 1-500
+packages/integrate-vitest/__tests__/watch-node-flag.spec.ts
+  s_5b25d6ae40e975::t_3c2208ab084771 1-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b61539119f0a7e0619217048c57dfe8d6c25686d",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    },
+    "s_d25296fd97a711": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a49dccbd86091c6e7",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
