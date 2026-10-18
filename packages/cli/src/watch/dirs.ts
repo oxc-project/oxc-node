@@ -277,6 +277,9 @@ export class DirWatcher {
   }
 
   #rewalk() {
+    // `fs.watchFile` takes its first stat later, on another thread: a change made before that
+    // fires nothing. So look again from time to time.
+    for (const k of this.#files.keys()) this.#check(k, false);
     this.#walked.clear();
     for (const root of this.#roots) {
       // Known files are skipped, so only new ones count as changes.
