@@ -315,7 +315,7 @@ export function usesNodeWatch(args: string[]): boolean {
     if (arg === "--") {
       return false;
     }
-    if (/^--watch(-path)?(=|$)/.test(arg)) {
+    if (/^--watch([-_]path)?(=|$)/.test(arg)) {
       return true;
     }
   }

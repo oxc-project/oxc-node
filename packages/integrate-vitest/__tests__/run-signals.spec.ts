@@ -125,6 +125,7 @@ describe("usesNodeWatch", () => {
     [["--watch=true", "app.ts"], true],
     [["--watch-path", "src", "app.ts"], true],
     [["--watch-path=src", "app.ts"], true],
+    [["--watch_path=src", "app.ts"], true],
     [["--import", "x", "--watch", "app.ts"], true],
     [["--inspect", "--watch", "app.ts"], true],
     // Value flags the parser does not list.

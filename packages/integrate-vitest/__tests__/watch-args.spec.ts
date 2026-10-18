@@ -113,6 +113,12 @@ describe("parseWatchArgs", () => {
     expect(a.clearScreen).toBe(false);
   });
 
+  test("a Node.js flag spelled with `_` is read as Node.js reads it", () => {
+    const a = ok(["--env_file", ".env", "--openssl_config", "x.cnf", "app.ts"]);
+    expect(a.entry).toBe("app.ts");
+    expect(a.envFiles).toEqual([".env"]);
+  });
+
   test("a Node.js flag's value after a space is not the entry", () => {
     const a = ok(["--openssl-config", "openssl.cnf", "--max-http-header-size", "9000", "app.ts"]);
     expect(a.entry).toBe("app.ts");
@@ -148,6 +154,7 @@ describe("parseWatchArgs", () => {
   test.each([
     ["--watch", /use --include/],
     ["--watch-path=src", /use --include/],
+    ["--watch_path=src", /use --include/],
     ["-e", /needs an entry file/],
     ["--eval=1", /needs an entry file/],
     ["-p", /needs an entry file/],
@@ -166,6 +173,7 @@ describe("parseWatchArgs", () => {
       /nested watcher/,
     );
     expect(err(["app.ts"], { NODE_OPTIONS: "--watch-path=src" })).toMatch(/nested watcher/);
+    expect(err(["app.ts"], { NODE_OPTIONS: "--watch_path=src" })).toMatch(/nested watcher/);
     expect(ok(["app.ts"], { NODE_OPTIONS: "--max-old-space-size=100" }).entry).toBe("app.ts");
   });
 

@@ -107,7 +107,8 @@ export function parseWatchArgs(
   argv: string[],
   env: NodeJS.ProcessEnv,
 ): WatchArgs | { error: string } {
-  if (env.NODE_OPTIONS?.split(/\s+/).some((t) => /^--watch(-path)?(=|$)/.test(t))) {
+  // Node.js takes `_` for `-` in option names: `--watch_path`.
+  if (env.NODE_OPTIONS?.split(/\s+/).some((t) => /^--watch([-_]path)?(=|$)/.test(t))) {
     return { error: "NODE_OPTIONS contains --watch, which would start a nested watcher" };
   }
   const polling = env.CHOKIDAR_USEPOLLING === "1" || env.CHOKIDAR_USEPOLLING === "true";
@@ -148,6 +149,8 @@ export function parseWatchArgs(
     const eq = arg.indexOf("=");
     const name = eq === -1 ? arg : arg.slice(0, eq);
     const inline = eq === -1 ? undefined : arg.slice(eq + 1);
+    // How Node.js reads the name: `--watch_path` is `--watch-path`.
+    const nodeName = name.startsWith("--") ? `--${name.slice(2).replaceAll("_", "-")}` : name;
     // Value flags take `=value` or the next token.
     const value = (): string | undefined => inline ?? argv[++i];
 
@@ -226,17 +229,20 @@ export function parseWatchArgs(
         continue;
     }
 
-    if (Object.hasOwn(REJECTED, name)) {
-      return { error: `${name} is not supported by oxnode watch: ${REJECTED[name]}` };
+    if (Object.hasOwn(REJECTED, nodeName)) {
+      return { error: `${name} is not supported by oxnode watch: ${REJECTED[nodeName]}` };
     }
 
     out.nodeArgs.push(arg);
     let nodeValue = inline;
-    if (inline === undefined && NODE_VALUE_FLAGS.has(name) && i + 1 < argv.length) {
+    if (inline === undefined && NODE_VALUE_FLAGS.has(nodeName) && i + 1 < argv.length) {
       nodeValue = argv[++i];
       out.nodeArgs.push(nodeValue);
     }
-    if ((name === "--env-file" || name === "--env-file-if-exists") && nodeValue !== undefined) {
+    if (
+      (nodeName === "--env-file" || nodeName === "--env-file-if-exists") &&
+      nodeValue !== undefined
+    ) {
       out.envFiles.push(nodeValue);
     }
   }
