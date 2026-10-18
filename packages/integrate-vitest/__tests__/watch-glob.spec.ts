@@ -124,6 +124,32 @@ describe("makeMatcher", () => {
     expect(m.pruneDir("/proj/src")).toBe(false);
   });
 
+  test("@ + ! ( ) are glob syntax only as an extglob", () => {
+    const scoped = new Set(["/proj/node_modules/@org/lib", "/proj/src/routes/(app)"]);
+    const m = makeMatcher({
+      cwd: CWD,
+      include: ["node_modules/@org/lib", "node_modules/@scope/pkg/**", "src/routes/(app)"],
+      exclude: ["src/@gen", "src/!(keep).js", "@(a|b)/**"],
+      platform: "linux",
+      isDir: (p) => scoped.has(p),
+    });
+    expect(m.roots()).toEqual([
+      { base: "/proj/node_modules/@org/lib", depth: Infinity },
+      { base: "/proj/node_modules/@scope/pkg", depth: Infinity },
+      { base: "/proj/src/routes/(app)", depth: Infinity },
+    ]);
+    expect(m.classify("/proj/node_modules/@org/lib/index.js", "walk")).toBe("watch");
+    expect(m.classify("/proj/node_modules/@org/lib/index.js", "graph")).toBe("watch");
+    expect(m.classify("/proj/node_modules/@scope/pkg/a/b.js", "walk")).toBe("watch");
+    expect(m.classify("/proj/src/routes/(app)/page.ts", "walk")).toBe("watch");
+    expect(m.classify("/proj/src/@gen/x.ts", "graph")).toBe("exclude");
+    // Extglobs still work.
+    expect(m.classify("/proj/src/other.js", "graph")).toBe("exclude");
+    expect(m.classify("/proj/src/keep.js", "graph")).toBe("watch");
+    expect(m.classify("/proj/a/x.ts", "graph")).toBe("exclude");
+    expect(m.classify("/proj/c/x.ts", "graph")).toBe("watch");
+  });
+
   test("win32: \\ and case", () => {
     const m = makeMatcher({
       cwd: "C:\\Proj",

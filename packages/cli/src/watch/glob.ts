@@ -15,7 +15,8 @@ export interface Matcher {
   pruneDir(absDir: string): boolean;
 }
 
-const GLOB_CHARS = /[*?[\]{}()!+@]/;
+// `@ + !` mean something only before `(`: scoped packages and `(group)` folders are literal.
+const GLOB_CHARS = /[*?[\]{}]|[+@!]\(/;
 
 const isDirOnDisk = (p: string) => {
   try {
