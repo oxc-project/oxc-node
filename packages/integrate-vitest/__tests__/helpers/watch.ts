@@ -123,8 +123,9 @@ export interface Oxnode {
   watched(file: string, opts?: { poll?: boolean }): Promise<void>;
   /**
    * Writes `content(0)`, then `content(1)`, … every 750 ms until `re` shows in
-   * stdout, up to 20 s. A write that lands while a new folder watch is still
-   * starting can be missed (FSEvents), and the next one is not.
+   * stdout, up to 20 s, and stops writing once a write brings a restart. A write
+   * that lands while a new folder watch is still starting can be missed
+   * (FSEvents), and the next one is not.
    */
   editUntil(
     file: string,
@@ -219,11 +220,17 @@ export function startOxnode(
       const from = buffers.stdout.length;
       const until = Date.now() + 20_000;
       for (let attempt = 0; ; attempt++) {
+        const at = buffers.stdout.length;
         save(file, content(attempt));
         try {
           return await wait("stdout", re, REWRITE_MS, from);
         } catch (error) {
           if (Date.now() >= until) throw error;
+          // The write was seen: the app is only slow to start (a worker, a slow runner). Writing
+          // again would restart it before it prints, again and again.
+          if (/\[oxnode\] change in /.test(buffers.stdout.slice(at))) {
+            return await wait("stdout", re, until - Date.now(), from);
+          }
         }
       }
     },
