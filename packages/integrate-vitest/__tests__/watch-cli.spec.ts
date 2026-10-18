@@ -306,8 +306,11 @@ console.log("RUN", v, s, process.pid);\n${KEEP}`,
         .slice(before, before + 2)
         .map((r) => r.split(" ", 2).join(" ")),
     ).toEqual(["b5 s1", "b5 s2"]);
-    expect(count(o.stdout().slice(from), /\[oxnode\] change in /)).toBe(2);
-    expect(firstReason(o.stdout().slice(from))).toMatch(reason("dep.ts"));
+    // Up to the sentinel's run: on a slow machine editUntil may write it again after that.
+    const text = o.stdout().slice(from);
+    const upTo = text.slice(0, text.search(runLine("b5 s2")));
+    expect(count(upTo, /\[oxnode\] change in /)).toBe(2);
+    expect(firstReason(text)).toMatch(reason("dep.ts"));
   });
 
   test("an edit to the entry, with Node.js flags before it and script args after it", async () => {

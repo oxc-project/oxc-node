@@ -122,7 +122,8 @@ describe("DirWatcher", () => {
     temps.push(d);
     return d;
   };
-  const until = async (cond: () => boolean, what: string, ms = 5000) => {
+  // As long as the e2e helper waits: FSEvents can take seconds on a slow CI machine.
+  const until = async (cond: () => boolean, what: string, ms = 20_000) => {
     const end = Date.now() + ms;
     while (!cond()) {
       if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);

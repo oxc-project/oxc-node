@@ -35,7 +35,9 @@ const roots: string[] = [];
  * paths, and macOS keeps tmp under a link), with `@oxc-node/core` linked in.
  */
 export function project(files: Record<string, string>): string {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "oxc-node-watch-e2e-")));
+  // `.native` also expands a Windows 8.3 name (CI's temp folder is under `RUNNER~1`), so the
+  // paths the tests expect are the ones Node.js reports.
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "oxc-node-watch-e2e-")));
   roots.push(root);
   for (const [name, contents] of Object.entries(files)) {
     write(join(root, name), contents);
