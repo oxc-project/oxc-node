@@ -142,10 +142,10 @@ function oxnode(args: string[], extraEnv: NodeJS.ProcessEnv = {}): Run {
 
 afterEach(async () => {
   for (const run of started.splice(0)) {
-    if (run.child.exitCode !== null || run.child.signalCode !== null) continue;
     try {
+      // The group even after oxnode exited: a failed test can leave the app running.
       if (posix) process.kill(-run.child.pid!, "SIGKILL");
-      else run.child.kill();
+      else if (run.child.exitCode === null && run.child.signalCode === null) run.child.kill();
     } catch {}
     await run.exited;
   }
