@@ -278,8 +278,11 @@ describe.skipIf(!posix)("signals", () => {
 
 /** In a real terminal, Ctrl+C reaches oxnode and the app together: plain node is the reference. */
 describe.skipIf(!HAS_PTY)("in a terminal", () => {
-  const inPty = (args: string[], steps: PtyStep[]) =>
-    runInPty([process.execPath, ...args], steps, { cwd: root, env: { ...env, NO_COLOR: "1" } });
+  const inPty = (args: string[], steps: PtyStep[], extra: Record<string, string> = {}) =>
+    runInPty([process.execPath, ...args], steps, {
+      cwd: root,
+      env: { ...env, NO_COLOR: "1", ...extra },
+    });
 
   test("Ctrl+C while the app is busy: its SIGINT listener runs once, as with node", async () => {
     const steps = [{ wait: "BUSY", send: "\x03" }];
@@ -290,6 +293,22 @@ describe.skipIf(!HAS_PTY)("in a terminal", () => {
     expect(run.out).toContain("total 1");
     expect(run).toMatchObject({ code: 0, signal: null, timedOut: false });
   });
+
+  // macOS asks `ps` whether oxnode is in the foreground. On a slow machine Ctrl+C can come
+  // before oxnode listens, or kill that `ps`; a `ps` that sleeps makes both certain.
+  test.skipIf(process.platform !== "darwin")(
+    "Ctrl+C while the app is busy and the foreground check is slow",
+    async () => {
+      const bin = join(root, "slow-ps");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, "ps"), '#!/bin/sh\nsleep 1\nexec /bin/ps "$@"\n', { mode: 0o755 });
+      const run = await inPty([CLI, "busy.mjs"], [{ wait: "BUSY", send: "\x03" }], {
+        PATH: `${bin}${delimiter}${env.PATH}`,
+      });
+      expect(count(run.out, /GOT SIGINT/), run.out).toBe(1);
+      expect(run).toMatchObject({ code: 0, signal: null, timedOut: false });
+    },
+  );
 
   test("oxnode watch: Ctrl+C while the app is busy runs its SIGINT listener once", async () => {
     const run = await inPty([CLI, "watch", "busy.mjs"], [{ wait: "BUSY", send: "\x03" }]);

@@ -74,14 +74,18 @@ export function runWatch(argv: string[]): Promise<number> {
   return new Promise((resolve) => {
     const ack = createSignalAck();
     let child: ChildProcess | undefined;
-    const fromTerminal = sigintFromTerminal();
     const signals = gateSignals(
-      new SignalGate({ nodeWatch: false, platform: process.platform, terminal: fromTerminal }),
+      new SignalGate({
+        nodeWatch: false,
+        platform: process.platform,
+        terminal: sigintFromTerminal,
+      }),
       ack,
       (sig) => child?.kill(sig),
       debug,
     );
-    const enter = args.rerunOnEnter ?? fromTerminal;
+    // Reading stdin from the background would stop oxnode (SIGTTIN).
+    const enter = args.rerunOnEnter ?? sigintFromTerminal();
     const cfg = {
       killSignal: args.killSignal,
       killTimeout: args.killTimeout,

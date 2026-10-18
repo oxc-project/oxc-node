@@ -147,7 +147,8 @@ export function isForeground(): boolean {
 
 /**
  * Whether a SIGINT oxnode gets comes from the terminal's Ctrl+C, which signals the whole
- * foreground group, the child included. Checked once, so a later `bg` is not seen.
+ * foreground group, the child included. Ask it once the SIGINT is in: a Ctrl+C during the
+ * check also kills the `ps` it runs on macOS, and the answer would be false.
  */
 export const sigintFromTerminal = (): boolean => isatty(0) && isForeground();
 
@@ -160,7 +161,7 @@ export type GateAction =
 export class SignalGate {
   #nodeWatch: boolean;
   #platform: NodeJS.Platform;
-  #terminal: boolean;
+  #terminal: () => boolean;
   #waitMs: number;
   #recentMs: number;
   #coalesceMs: number;
@@ -171,15 +172,16 @@ export class SignalGate {
   constructor(o: {
     nodeWatch: boolean;
     platform: NodeJS.Platform;
-    /** See `sigintFromTerminal`. */
-    terminal?: boolean;
+    /** See `sigintFromTerminal`. A function is called for each SIGINT. */
+    terminal?: boolean | (() => boolean);
     waitMs?: number;
     recentMs?: number;
     coalesceMs?: number;
   }) {
     this.#nodeWatch = o.nodeWatch;
     this.#platform = o.platform;
-    this.#terminal = o.terminal ?? false;
+    const terminal = o.terminal ?? false;
+    this.#terminal = typeof terminal === "function" ? terminal : () => terminal;
     this.#waitMs = o.waitMs ?? 50;
     this.#recentMs = o.recentMs ?? 100;
     this.#coalesceMs = o.coalesceMs ?? 500;
@@ -199,7 +201,7 @@ export class SignalGate {
     if (sig === "SIGINT") {
       // The child has it already. The ack cannot tell: it comes late, or never (a REPL eval),
       // when the child's event loop is busy. `kill -INT` to oxnode alone is then not passed on.
-      if (this.#terminal) {
+      if (this.#terminal()) {
         return { action: "skip" };
       }
       if (now - this.#lastAck <= this.#recentMs) {
@@ -263,37 +265,39 @@ export function gateSignals(
 
 /** Spawns the child, passes signals on through the gate, and exits the way the child did. */
 export function runChild(cmd: string, args: string[], o: { nodeWatch: boolean }): void {
+  // Listen first: a Ctrl+C that finds no listener ends oxnode at once and takes the
+  // terminal from the child. A listener runs on a later tick, once `gate` is set.
+  let gate: ReturnType<typeof gateSignals> | undefined;
+  for (const sig of FORWARDED) {
+    process.on(sig, (s: NodeJS.Signals) => gate?.signal(s));
+  }
   const ack = createSignalAck();
   const child = spawn(cmd, args, {
     env: { ...process.env, ...ack.env },
     stdio: "inherit",
   });
-  const gate = gateSignals(
-    // After the spawn, so the check does not hold up the child's start.
+  gate = gateSignals(
     new SignalGate({
       nodeWatch: o.nodeWatch,
       platform: process.platform,
-      terminal: sigintFromTerminal(),
+      terminal: sigintFromTerminal,
     }),
     ack,
     (sig) => {
       child.kill(sig);
     },
   );
-  for (const sig of FORWARDED) {
-    process.on(sig, (s: NodeJS.Signals) => gate.signal(s));
-  }
   child.on("error", (error) => {
     console.error(error);
     // Only a failed spawn ends oxnode; a failed kill leaves the child to exit on its own.
     if (child.pid === undefined) {
-      gate.dispose();
+      gate?.dispose();
       ack.close();
       process.exit(1);
     }
   });
   child.on("exit", (code, signal) => {
-    gate.dispose();
+    gate?.dispose();
     ack.close();
     exitLike(code, signal);
   });
