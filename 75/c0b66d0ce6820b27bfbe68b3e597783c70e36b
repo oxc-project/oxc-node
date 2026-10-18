@@ -1,0 +1,21 @@
+packages/core/oxc-node.wasi.d.cts
+  s_bb1aae237a7bc6::t_9c1ec0aba28a10 36-44,171-176
+packages/integrate-vitest/__tests__/watch-report.spec.ts
+  s_bb1aae237a7bc6::t_4c92706eb14261 2,361-377
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "75c0b66d0ce6820b27bfbe68b3e597783c70e36b",
+  "prompts": {},
+  "sessions": {
+    "s_bb1aae237a7bc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a087909ceff3cb286",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
