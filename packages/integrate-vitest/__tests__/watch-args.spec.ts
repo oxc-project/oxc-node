@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import {
   configFileNestedWatcher,
   envFileNestedWatcher,
+  nestedWatcher,
   nodeOptionsTokens,
   parseWatchArgs,
   tsconfigEnv,
@@ -191,7 +192,7 @@ describe("parseWatchArgs", () => {
     const files: Record<string, string> = {
       "on.json": JSON.stringify({ nodeOptions: { watch: true } }),
       "path.json": JSON.stringify({ nodeOptions: { "watch-path": "src" } }),
-      // A `watch` section turns watch mode on by being there.
+      // From Node.js 25.4, a `watch` section turns watch mode on by being there.
       "section.json": JSON.stringify({ watch: { "watch-preserve-output": true } }),
       "section-off.json": JSON.stringify({
         watch: { watch: false, "watch-preserve-output": true },
@@ -206,13 +207,17 @@ describe("parseWatchArgs", () => {
       "node.config.json": JSON.stringify({ nodeOptions: { watch: true } }),
       "bad.json": "{",
     };
-    const withFiles = (argv: string[], major = 26) =>
-      parseWatchArgs(argv, {}, (f) => files[f], major);
+    const withFiles = (argv: string[], version = "26.12.0") =>
+      parseWatchArgs(argv, {}, (f) => files[f], version);
     expect(withFiles(["--experimental-config-file=on.json", "app.ts"])).toEqual({
       error: expect.stringMatching(/config file on\.json turns on --watch/),
     });
     expect(withFiles(["--config-file=path.json", "app.ts"])).toHaveProperty("error");
     expect(withFiles(["--config-file=section.json", "app.ts"])).toHaveProperty("error");
+    expect(withFiles(["--config-file=section.json", "app.ts"], "25.4.0")).toHaveProperty("error");
+    expect(withFiles(["--config-file=section.json", "app.ts"], "24.22.0")).not.toHaveProperty(
+      "error",
+    );
     expect(withFiles(["--experimental-default-config-file", "app.ts"])).toHaveProperty("error");
     expect(withFiles(["--experimental_config_file=on.json", "app.ts"])).toHaveProperty("error");
     expect(withFiles(["--config-file=section-off.json", "app.ts"])).not.toHaveProperty("error");
@@ -220,29 +225,54 @@ describe("parseWatchArgs", () => {
     expect(withFiles(["--config-file=bad.json", "app.ts"])).not.toHaveProperty("error");
     expect(withFiles(["--config-file=missing.json", "app.ts"])).not.toHaveProperty("error");
     // `configs`: the entry for this major version.
-    expect(withFiles(["--config-file=versions.json", "app.ts"], 26)).not.toHaveProperty("error");
-    expect(withFiles(["--config-file=versions.json", "app.ts"], 25)).toHaveProperty("error");
+    expect(withFiles(["--config-file=versions.json", "app.ts"], "26.12.0")).not.toHaveProperty(
+      "error",
+    );
+    expect(withFiles(["--config-file=versions.json", "app.ts"], "25.9.0")).toHaveProperty("error");
     // Read again on each call: checked before every start.
     files["off.json"] = JSON.stringify({ nodeOptions: { watch: true } });
     expect(configFileNestedWatcher(["off.json"], (f) => files[f])).toMatch(/nested watcher/);
   });
 
+  test("--no-watch beats a config file that turns watch mode on", () => {
+    const files: Record<string, string> = {
+      "on.json": JSON.stringify({ nodeOptions: { watch: true } }),
+      ".env": "NODE_OPTIONS=--no-watch\n",
+    };
+    const read = (f: string) => files[f];
+    const withEnv = (argv: string[], env: NodeJS.ProcessEnv = {}) =>
+      parseWatchArgs(argv, env, read, "26.12.0");
+    const cfg = "--config-file=on.json";
+    expect(withEnv([cfg, "--no-watch", "app.ts"])).toMatchObject({ configFiles: [] });
+    expect(withEnv(["--no_watch", cfg, "app.ts"])).not.toHaveProperty("error");
+    expect(withEnv([cfg, "app.ts"], { NODE_OPTIONS: "--no-watch" })).not.toHaveProperty("error");
+    expect(withEnv(["--env-file=.env", cfg, "app.ts"])).not.toHaveProperty("error");
+    // Only before the entry: after it, the words are the app's.
+    expect(withEnv([cfg, "app.ts", "--no-watch"])).toHaveProperty("error");
+    // Before each start: an env file that drops --no-watch lets the config file count again.
+    const args = { envFiles: [".env"], configFiles: ["on.json"] };
+    expect(nestedWatcher(args, {}, read, "26.12.0")).toBeUndefined();
+    files[".env"] = "A=1\n";
+    expect(nestedWatcher(args, {}, read, "26.12.0")).toMatch(/config file on\.json/);
+  });
+
   test("a bare config-file flag is read as the Node.js version reads it", () => {
     const files: Record<string, string> = { "node.config.json": "{}", "cfg.json": "{}" };
-    const withFiles = (argv: string[], major: number) =>
-      parseWatchArgs(argv, {}, (f) => files[f], major);
-    // Node.js 24+: `node.config.json`, and the next word is the entry.
-    const bare = withFiles(["--config-file", "app.ts"], 26);
-    expect(bare).toMatchObject({ entry: "app.ts", configFiles: ["node.config.json"] });
-    expect(withFiles(["--experimental-config-file", "app.ts"], 24)).toMatchObject({
-      entry: "app.ts",
-      configFiles: ["node.config.json"],
-    });
-    // Node.js 22 takes the next word as the path.
-    expect(withFiles(["--experimental-config-file", "cfg.json", "app.ts"], 22)).toMatchObject({
-      entry: "app.ts",
-      configFiles: ["cfg.json"],
-    });
+    const withFiles = (argv: string[], version: string) =>
+      parseWatchArgs(argv, {}, (f) => files[f], version);
+    const bare = { entry: "app.ts", configFiles: ["node.config.json"] };
+    const next = { entry: "app.ts", configFiles: ["cfg.json"] };
+    // From 24.19 and 26.1: `node.config.json`, and the next word is the entry.
+    expect(withFiles(["--config-file", "app.ts"], "26.12.0")).toMatchObject(bare);
+    expect(withFiles(["--experimental-config-file", "app.ts"], "24.19.0")).toMatchObject(bare);
+    expect(withFiles(["--experimental-config-file", "app.ts"], "26.1.0")).toMatchObject(bare);
+    expect(withFiles(["--experimental-config-file", "app.ts"], "27.0.0")).toMatchObject(bare);
+    // Before that, the next word is the path.
+    for (const version of ["22.18.0", "24.15.0", "25.9.0", "26.0.0"]) {
+      expect(
+        withFiles(["--experimental-config-file", "cfg.json", "app.ts"], version),
+      ).toMatchObject(next);
+    }
   });
 
   test("envFileNestedWatcher reads the env files again on each call", () => {

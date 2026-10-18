@@ -7,19 +7,14 @@ import { fileURLToPath } from "node:url";
 import { Command, Option, type Usage } from "clipanion";
 
 import { createSignalAck, FORWARDED, gateSignals, SignalGate, sigintFromTerminal } from "../run.js";
-import {
-  configFileNestedWatcher,
-  envFileNestedWatcher,
-  parseWatchArgs,
-  tsconfigEnv,
-} from "./args.js";
+import { nestedWatcher, parseWatchArgs, tsconfigEnv } from "./args.js";
 import { DirWatcher } from "./dirs.js";
 import { makeMatcher, type Matcher, type Source } from "./glob.js";
 import { HELP, USAGE } from "./help.js";
 import { killTree } from "./kill-tree.js";
 import { debug, log } from "./log.js";
 import { step, type Effect, type Event, type State } from "./machine.js";
-import { parseWatchMessage } from "./messages.js";
+import { fromOxcNode, parseWatchMessage } from "./messages.js";
 
 export class WatchCommand extends Command {
   static paths = [[`watch`]];
@@ -136,9 +131,10 @@ export function runWatch(argv: string[]): Promise<number> {
     const runSeen = new Set<string>();
     const want = (p: string, source: Source) => {
       if (seen.has(p) || runSeen.has(p)) return;
-      (source === "graph" ? runSeen : seen).add(p);
+      const run = source === "graph" || source === "oxc";
+      (run ? runSeen : seen).add(p);
       const verdict = matcher.classify(p, source);
-      if (verdict === "watch") watcher.add(p, source === "graph");
+      if (verdict === "watch") watcher.add(p, run);
       else debug(`skip ${p} (${verdict === "exclude" ? "exclude" : "default"})`);
       if (verdict === "exclude") return;
       // Node.js reports real paths, but not under --preserve-symlinks, where a linked
@@ -148,7 +144,7 @@ export function runWatch(argv: string[]): Promise<number> {
         if (real !== p) {
           if (!reported.has(fold(real))) {
             reported.set(fold(real), p);
-            if (source === "graph") runAliases.add(fold(real));
+            if (run) runAliases.add(fold(real));
           }
           // A given link: the watcher follows it, and drops its old target when it moves.
           if (source === "literal" && lstatSync(p).isSymbolicLink()) return;
@@ -165,9 +161,7 @@ export function runWatch(argv: string[]): Promise<number> {
 
     const spawnChild = () => {
       // An env file edited since the last start may now hold NODE_OPTIONS=--watch.
-      const nested =
-        envFileNestedWatcher(process.env, args.envFiles) ??
-        configFileNestedWatcher(args.configFiles);
+      const nested = nestedWatcher(args, process.env);
       if (nested) {
         // After this step's other effects, as for a spawn that fails.
         queueMicrotask(() => dispatch({ t: "spawnError", err: nested }));
@@ -185,7 +179,8 @@ export function runWatch(argv: string[]): Promise<number> {
         const paths = parseWatchMessage(msg);
         if (paths) {
           // A late report from the run before must not add back what the new run dropped.
-          if (c === latest) for (const p of paths) want(p, "graph");
+          const source = fromOxcNode(msg) ? "oxc" : "graph";
+          if (c === latest) for (const p of paths) want(p, source);
         } else if (process.send && process.connected) {
           // Like Node.js' watcher, pass the app's own messages on.
           process.send(msg as never, () => {});

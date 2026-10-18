@@ -1,7 +1,9 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 
-export type Source = "graph" | "walk" | "literal";
+// "oxc": reported by oxc-node (a tsconfig, a missing file), not by Node.js. Like "graph",
+// it counts for one run.
+export type Source = "graph" | "oxc" | "walk" | "literal";
 export type Verdict = "watch" | "exclude" | "default-ignore";
 
 export interface Matcher {
@@ -175,8 +177,8 @@ export function makeMatcher(opts: {
       if (includes.some((m) => m(n))) return "watch";
       if (source === "literal") return "watch";
       if (source === "walk") return "default-ignore";
-      // A JSON file there is kept: a tsconfig can `extends` one from a package.
-      const inNodeModules = n.split("/").includes("node_modules") && !n.endsWith(".json");
+      // A tsconfig can `extends` one from a package.
+      const inNodeModules = source !== "oxc" && n.split("/").includes("node_modules");
       if (inNodeModules || ignoreDirs.some((d) => literal(d)(n))) {
         return "default-ignore";
       }

@@ -207,10 +207,13 @@ describe("tsconfig files", () => {
       "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
       "main.cts": 'const ok: string = "ok";\nconsole.log(ok);\n',
     });
-    const { paths, stdout, code } = await spy(root, [...REGISTER, "./main.cts"]);
+    const { messages, paths, stdout, code } = await spy(root, [...REGISTER, "./main.cts"]);
     expect(code).toBe(0);
     expect(stdout).toBe("ok\n");
     expect(paths).toContain("tsconfig.json");
+    // Tagged, so `oxnode watch` tells it from what Node.js reports.
+    const url = pathToFileURL(join(root, "tsconfig.json")).href;
+    expect(messages).toContainEqual({ "watch:import": [url], "oxc-node": true });
   });
 });
 

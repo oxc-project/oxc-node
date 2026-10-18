@@ -17,7 +17,7 @@ import { afterAll, describe, expect, test } from "vitest";
 
 import { DirWatcher, type DirWatcherOptions } from "../../cli/src/watch/dirs.js";
 import { descendants, parseProcStat, parsePs } from "../../cli/src/watch/kill-tree.js";
-import { parseWatchMessage } from "../../cli/src/watch/messages.js";
+import { fromOxcNode, parseWatchMessage } from "../../cli/src/watch/messages.js";
 
 const abs = (p: string) => resolve(p);
 
@@ -27,6 +27,13 @@ describe("parseWatchMessage", () => {
     expect(parseWatchMessage("watch:import")).toBe(null);
     expect(parseWatchMessage({ type: "ready" })).toBe(null);
     expect(parseWatchMessage(42)).toBe(null);
+  });
+
+  test("what oxc-node reports carries its own key", () => {
+    expect(fromOxcNode({ "watch:import": ["file:///x.json"], "oxc-node": true })).toBe(true);
+    expect(fromOxcNode({ "watch:import": ["file:///x.json"] })).toBe(false);
+    expect(fromOxcNode({ "watch:import": ["file:///x.json"], "oxc-node": "yes" })).toBe(false);
+    expect(fromOxcNode(null)).toBe(false);
   });
 
   test("watch:import file URLs", () => {

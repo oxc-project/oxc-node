@@ -52,11 +52,13 @@ export function watchSink() {
 
 /**
  * Send what the binding recorded, one URL per message: the watch parent reads a
- * whole array in one `try`, so one bad entry would drop the rest.
+ * whole array in one `try`, so one bad entry would drop the rest. `oxnode watch`
+ * reads the `oxc-node` key to tell these from what Node.js reports (a tsconfig
+ * in `node_modules` counts, an imported file there does not); Node.js ignores it.
  */
 export function flush(sink) {
   for (const url of takeWatchDependencies()) {
-    sink({ "watch:import": [url] });
+    sink({ "watch:import": [url], "oxc-node": true });
   }
 }
 

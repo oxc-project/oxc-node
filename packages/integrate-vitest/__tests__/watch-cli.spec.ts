@@ -158,6 +158,25 @@ ${KEEP}`,
     );
   });
 
+  test("a tsconfig extended from a package in node_modules", async () => {
+    const paths = (dir: string) =>
+      JSON.stringify({ compilerOptions: { paths: { "@lib/*": [`../../${dir}/*`] } } });
+    const shared = "node_modules/shared-config/tsconfig.json";
+    const root = project({
+      "package.json": ESM,
+      "tsconfig.json": JSON.stringify({ extends: "shared-config/tsconfig.json" }),
+      "node_modules/shared-config/package.json": JSON.stringify({ name: "shared-config" }),
+      [shared]: paths("a"),
+      "main.ts": `import { v } from "@lib/value";\nconsole.log("RUN", v, process.pid);\n${KEEP}`,
+      "a/value.ts": value("a"),
+      "b/value.ts": value("b"),
+    });
+    const o = startOxnode(["watch", "main.ts"], root);
+    await o.waitFor(runLine("a"));
+    await o.watched(join(root, shared));
+    await o.editUntil(join(root, shared), () => paths("b"), runLine("b"));
+  });
+
   test("the config named by --tsconfig", async () => {
     const paths = (dir: string) =>
       JSON.stringify({ compilerOptions: { paths: { "@lib/*": [`./${dir}/*`] } } });

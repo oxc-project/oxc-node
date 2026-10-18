@@ -1,6 +1,13 @@
 import { fileURLToPath } from "node:url";
 import { isAbsolute, resolve } from "node:path";
 
+/** Whether oxc-node sent this report: a tsconfig it read or a path a failed resolve tried. */
+export function fromOxcNode(msg: unknown): boolean {
+  return (
+    typeof msg === "object" && msg !== null && (msg as Record<string, unknown>)["oxc-node"] === true
+  );
+}
+
 /**
  * The paths in a `watch:require` / `watch:import` message, or null when it is not one.
  * Each entry is read on its own: Node.js drops the whole array when one entry is bad.

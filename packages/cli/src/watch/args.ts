@@ -78,7 +78,10 @@ export interface WatchArgs {
   nodeArgs: string[];
   entry: string;
   envFiles: string[];
-  /** Node.js config files (`--experimental-config-file`, `--config-file`), checked for watch mode. */
+  /**
+   * Node.js config files (`--experimental-config-file`, `--config-file`), checked for watch mode.
+   * None after `--no-watch`, which beats them.
+   */
   configFiles: string[];
   notes: string[];
 }
@@ -134,6 +137,7 @@ export function nodeOptionsTokens(s: string): string[] {
 // Node.js takes `_` for `-` in option names: `--watch_path`.
 const startsWatcher = (nodeOptions: string | undefined) =>
   nodeOptionsTokens(nodeOptions ?? "").some((t) => /^--watch([-_]path)?(=|$)/.test(t));
+const NO_WATCH = /^--no[-_]watch$/;
 const NESTED = "NODE_OPTIONS contains --watch, which would start a nested watcher";
 
 const readEnvFile = (file: string): string | undefined => {
@@ -144,14 +148,25 @@ const readEnvFile = (file: string): string | undefined => {
   }
 };
 
-const NODE_MAJOR = Number(process.versions.node.split(".")[0]);
+const NODE_VERSION = process.versions.node;
+const majorOf = (version: string) => Number(version.split(".")[0]);
+
+/** Whether `version` has a change released in each `[major, minor]` given, and every later major. */
+const atLeast = (version: string, ...mins: [number, number][]) => {
+  const [major, minor] = version.split(".").map(Number);
+  return mins.some(([m, n]) => major === m && minor >= n) || major > mins[mins.length - 1][0];
+};
+/** Node.js 24.19 and 26.1 read a bare `--experimental-config-file` as `node.config.json`. */
+const bareConfigFlag = (version: string) => atLeast(version, [24, 19], [26, 1]);
+/** Node.js 25.4 turns a flag on when the config file has a section named after it. */
+const sectionTurnsOn = (version: string) => atLeast(version, [25, 4], [26, 0]);
 
 export function parseWatchArgs(
   argv: string[],
   env: NodeJS.ProcessEnv,
   read: (file: string) => string | undefined = readEnvFile,
   // The child runs on this Node.js, so its flags are read as this version reads them.
-  nodeMajor = NODE_MAJOR,
+  nodeVersion = NODE_VERSION,
 ): WatchArgs | { error: string } {
   if (startsWatcher(env.NODE_OPTIONS)) return { error: NESTED };
   const polling = env.CHOKIDAR_USEPOLLING === "1" || env.CHOKIDAR_USEPOLLING === "true";
@@ -171,6 +186,7 @@ export function parseWatchArgs(
     notes: [],
   };
 
+  let noWatch = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--") {
@@ -280,15 +296,16 @@ export function parseWatchArgs(
     }
 
     out.nodeArgs.push(arg);
+    if (NO_WATCH.test(nodeName)) noWatch = true;
     let nodeValue = inline;
-    // Node.js 24+ reads a bare config-file flag as `node.config.json`; 22 takes the next word.
     const configFlag =
       nodeName === "--experimental-config-file" ||
       nodeName === "--config-file" ||
       nodeName === "--experimental-default-config-file";
+    // Before 24.19 and 26.1, Node.js takes the next word as the config file.
     const takesValue =
       NODE_VALUE_FLAGS.has(nodeName) &&
-      !(nodeName === "--experimental-config-file" && nodeMajor > 22);
+      !(nodeName === "--experimental-config-file" && bareConfigFlag(nodeVersion));
     if (inline === undefined && takesValue && i + 1 < argv.length) {
       nodeValue = argv[++i];
       out.nodeArgs.push(nodeValue);
@@ -305,29 +322,51 @@ export function parseWatchArgs(
   if (!out.entry && !out.help) {
     return { error: "missing <entry>" };
   }
-  const nested =
-    envFileNestedWatcher(env, out.envFiles, read) ??
-    configFileNestedWatcher(out.configFiles, read, nodeMajor);
+  if (noWatch) out.configFiles = [];
+  const nested = nestedWatcher(out, env, read, nodeVersion);
   return nested ? { error: nested } : out;
 }
 
 /**
- * A Node.js config file applies `nodeOptions` as flags, and a `watch` section turns on --watch by
- * being there (unless it holds `"watch": false`). With `configs`, Node.js takes the first entry for
- * its major version. Either starts a nested watcher. Checked before each start too.
+ * Why the child would start a watcher of its own, from what can change between starts: the
+ * env files and the config files. Checked before each start.
+ */
+export function nestedWatcher(
+  args: Pick<WatchArgs, "envFiles" | "configFiles">,
+  env: NodeJS.ProcessEnv,
+  read: (file: string) => string | undefined = readEnvFile,
+  nodeVersion = NODE_VERSION,
+): string | undefined {
+  const nested = envFileNestedWatcher(env, args.envFiles, read);
+  if (nested) return nested;
+  // NODE_OPTIONS beats the config file.
+  const nodeOptions = childNodeOptions(env, args.envFiles, read);
+  if (nodeOptionsTokens(nodeOptions ?? "").some((t) => NO_WATCH.test(t))) return undefined;
+  return configFileNestedWatcher(args.configFiles, read, nodeVersion);
+}
+
+/**
+ * A Node.js config file applies `nodeOptions` as flags, and from 25.4 a `watch` section turns on
+ * --watch by being there (unless it holds `"watch": false`). With `configs`, Node.js takes the
+ * first entry for its major version. Either starts a nested watcher.
  */
 export function configFileNestedWatcher(
   configFiles: string[],
   read: (file: string) => string | undefined = readEnvFile,
-  nodeMajor = NODE_MAJOR,
+  nodeVersion = NODE_VERSION,
 ): string | undefined {
+  const nodeMajor = majorOf(nodeVersion);
   const isObject = (v: unknown): v is Record<string, unknown> =>
     typeof v === "object" && v !== null && !Array.isArray(v);
   const watchKey = (key: string) => /^watch([-_]path)?$/.test(key);
   const turnsOn = (config: unknown) => {
     if (!isObject(config)) return false;
     const { nodeOptions, watch } = config;
-    if (isObject(watch) && !Object.entries(watch).some(([k, v]) => k === "watch" && v === false)) {
+    if (
+      sectionTurnsOn(nodeVersion) &&
+      isObject(watch) &&
+      !Object.entries(watch).some(([k, v]) => k === "watch" && v === false)
+    ) {
       return true;
     }
     return (
@@ -355,23 +394,32 @@ export function configFileNestedWatcher(
   return undefined;
 }
 
-/**
- * Node.js also takes NODE_OPTIONS from --env-file, unless it is set already; the last file wins.
- * Checked before each start, as the files are watched and may change.
- */
-export function envFileNestedWatcher(
+/** NODE_OPTIONS as the child gets it: from --env-file unless it is set already; the last file wins. */
+function childNodeOptions(
   env: NodeJS.ProcessEnv,
   envFiles: string[],
-  read: (file: string) => string | undefined = readEnvFile,
+  read: (file: string) => string | undefined,
 ): string | undefined {
-  if (env.NODE_OPTIONS !== undefined) return undefined;
+  if (env.NODE_OPTIONS !== undefined) return env.NODE_OPTIONS;
   let fromFiles: string | undefined;
   for (const file of envFiles) {
     const text = read(file);
     const value = text === undefined ? undefined : parseEnv(text).NODE_OPTIONS;
     if (value !== undefined) fromFiles = value;
   }
-  return startsWatcher(fromFiles) ? `${NESTED} (from --env-file)` : undefined;
+  return fromFiles;
+}
+
+/** NODE_OPTIONS from --env-file that turns on --watch. The files are watched and may change. */
+export function envFileNestedWatcher(
+  env: NodeJS.ProcessEnv,
+  envFiles: string[],
+  read: (file: string) => string | undefined = readEnvFile,
+): string | undefined {
+  if (env.NODE_OPTIONS !== undefined) return undefined;
+  return startsWatcher(childNodeOptions(env, envFiles, read))
+    ? `${NESTED} (from --env-file)`
+    : undefined;
 }
 
 /** The child env for `--tsconfig`: oxc-node reads TS_NODE_PROJECT before OXC_TSCONFIG_PATH. */
