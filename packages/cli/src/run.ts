@@ -52,9 +52,7 @@ export function exitLike(code: number | null, signal: NodeJS.Signals | null): ne
 }
 
 export interface SignalAck {
-  path?: string;
   env: Record<string, string>;
-  lastAckAt(): number;
   onAck(cb: () => void): void;
   close(): void;
 }
@@ -64,11 +62,9 @@ export interface SignalAck {
  * (`@oxc-node/core/signal-ack.mjs`), so oxnode does not send it a second one.
  */
 export function createSignalAck(): SignalAck {
-  let lastAt = -Infinity;
   const callbacks: (() => void)[] = [];
   const none: SignalAck = {
     env: {},
-    lastAckAt: () => lastAt,
     onAck: () => {},
     close: () => {},
   };
@@ -86,7 +82,6 @@ export function createSignalAck(): SignalAck {
     socket.on("data", (data) => {
       for (const byte of data) {
         if (byte === 0x49 /* I */) {
-          lastAt = Date.now();
           for (const cb of callbacks) cb();
         }
       }
@@ -120,9 +115,7 @@ export function createSignalAck(): SignalAck {
   }
   process.once("SIGQUIT", onQuit);
   return {
-    path,
     env: { OXNODE_SIGNAL_ACK: path },
-    lastAckAt: () => lastAt,
     onAck: (cb) => void callbacks.push(cb),
     close,
   };
