@@ -1,0 +1,21 @@
+packages/cli/src/watch/glob.ts
+  s_5b25d6ae40e975::t_98b59b3c2e30fd 118-135,141
+packages/integrate-vitest/__tests__/watch-glob.spec.ts
+  s_5b25d6ae40e975::t_6af3a905706533 139-147
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9c12f0628be921a4b4632d735bdd77941584cff3",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
