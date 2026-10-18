@@ -6,6 +6,7 @@ import { Builtins, Cli, Command, Option, Usage } from "clipanion";
 
 import pkgJson from "../package.json" with { type: "json" };
 import { runChild, usesNodeWatch } from "./run.js";
+import { WatchCommand } from "./watch/command.js";
 
 const [node, app, ...stdArgs] = process.argv;
 
@@ -21,6 +22,7 @@ class MainCommand extends Command {
     examples: [
       [`Run a script`, `oxnode ./src/index.ts`],
       [`repl`, `oxnode`],
+      [`Watch mode`, `oxnode watch ./src/index.ts`],
     ],
   };
 
@@ -59,6 +61,7 @@ const cli = new Cli({
 });
 
 cli.register(MainCommand);
+cli.register(WatchCommand);
 cli.register(Builtins.HelpCommand);
 cli.register(Builtins.VersionCommand);
 void cli.runExit(stdArgs);
