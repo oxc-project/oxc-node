@@ -272,6 +272,24 @@ describe("DirWatcher", () => {
     }
   });
 
+  test("two roots on one folder: the deeper walk wins", async () => {
+    const root = temp();
+    const src = join(root, "src");
+    mkdirSync(join(src, "deep"), { recursive: true });
+    writeFileSync(join(src, "a.ts"), "1");
+    writeFileSync(join(src, "deep", "b.json"), "1");
+    const { w, debug } = start({ watch: fakeWatch().watch });
+    try {
+      // `--include 'src/*.ts' --include 'src/**/*.json'`
+      w.addRoot(src, 1);
+      w.addRoot(src, Infinity);
+      await until(() => debug.includes(`watch ${join(src, "deep", "b.json")}`), "the nested file");
+      expect(debug).toContain(`watch ${join(src, "a.ts")}`);
+    } finally {
+      w.close();
+    }
+  });
+
   test("Linux: a walked --include folder replaced in place is walked again", async () => {
     const root = temp();
     const conf = join(root, "conf");

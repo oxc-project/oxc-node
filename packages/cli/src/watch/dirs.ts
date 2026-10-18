@@ -178,17 +178,17 @@ export class DirWatcher {
       root.missing = true;
       return false;
     }
-    if (!this.#walked.has(this.#key(root.base))) {
-      // Files under a root that shows up later are new; at start they are not.
-      this.#walk(root.base, 0, root.depth, root.missing);
-    }
+    // Files under a root that shows up later are new; at start they are not.
+    this.#walk(root.base, 0, root.depth, root.missing);
     root.missing = false;
     return true;
   }
 
   #walk(dir: string, level: number, depth: number, fire: boolean) {
     const k = this.#key(dir);
-    if (this.#walked.has(k)) return;
+    const seen = this.#walked.get(k);
+    // Roots can share folders (`src/*.ts` and `src/**/*.json`): the deeper walk wins.
+    if (seen && seen.depth - seen.level >= depth - level) return;
     this.#walked.set(k, { dir, depth, level });
     let entries;
     try {
