@@ -474,6 +474,22 @@ describe("DirWatcher", () => {
     }
   });
 
+  test("a folder made where a file was wanted is no change by itself", async () => {
+    const root = temp();
+    const gen = join(root, "generated");
+    const fake = fakeWatch();
+    const { w, changes } = start({ platform: "linux", watch: fake.watch });
+    try {
+      w.add(gen);
+      await until(() => fake.open(root).length === 1, "the watch");
+      mkdirSync(join(gen, "tmp"), { recursive: true });
+      fake.open(root)[0].emit("generated");
+      expect(changes).toEqual([]);
+    } finally {
+      w.close();
+    }
+  });
+
   test("a whole-second timestamp counts as a change only after an event", async () => {
     const root = temp();
     const file = join(root, "a.ts");

@@ -34,6 +34,8 @@ function isLink(p: string): boolean {
 function sigOf(p: string): Sig {
   try {
     const s = statSync(p, { bigint: true });
+    // A folder where a file was wanted (a literal --include): its walk sees what is in it.
+    if (s.isDirectory()) return null;
     return { ino: s.ino, size: s.size, mtimeNs: s.mtimeNs, ctimeNs: s.ctimeNs };
   } catch {
     return null;
