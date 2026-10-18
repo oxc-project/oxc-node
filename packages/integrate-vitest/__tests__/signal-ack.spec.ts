@@ -210,6 +210,69 @@ describe.skipIf(process.platform === "win32")("the SIGINT ack", () => {
     }
   });
 
+  test("the ack does not count toward the listener limit", async () => {
+    const acks = await listen();
+    try {
+      // Plain Node.js warns only past ten SIGINT listeners, the default limit.
+      const source = (count: number, before = "") =>
+        [
+          before,
+          `for (let i = 0; i < ${count}; i++) process.on("SIGINT", () => {});`,
+          'console.log("ready " + process.listenerCount("SIGINT") + " " + process.getMaxListeners());',
+          "setTimeout(() => process.exit(0), 50);",
+          "",
+        ].join("\n");
+      const ten = start(app(source(10)), { OXNODE_SIGNAL_ACK: acks.path });
+      expect(await ten.exited).toEqual({ code: 0, signal: null });
+      expect(ten.stdout()).toBe("ready 10 10\n");
+      expect(ten.stderr()).not.toContain("MaxListenersExceededWarning");
+
+      // A limit the app sets itself, before or after the ack is in.
+      const set = start(app(source(20, "process.setMaxListeners(20);")), {
+        OXNODE_SIGNAL_ACK: acks.path,
+      });
+      expect(await set.exited).toEqual({ code: 0, signal: null });
+      expect(set.stdout()).toBe("ready 20 20\n");
+      expect(set.stderr()).not.toContain("MaxListenersExceededWarning");
+      const later = start(
+        app(
+          ['process.on("SIGINT", () => {});', "process.setMaxListeners(20);", source(19)].join(
+            "\n",
+          ),
+        ),
+        { OXNODE_SIGNAL_ACK: acks.path },
+      );
+      expect(await later.exited).toEqual({ code: 0, signal: null });
+      expect(later.stdout()).toBe("ready 20 20\n");
+      expect(later.stderr()).not.toContain("MaxListenersExceededWarning");
+
+      // One past the limit still warns, as it does without oxnode.
+      const eleven = start(app(source(11)), { OXNODE_SIGNAL_ACK: acks.path });
+      expect(await eleven.exited).toEqual({ code: 0, signal: null });
+      expect(eleven.stdout()).toBe("ready 11 10\n");
+      expect(eleven.stderr()).toContain("MaxListenersExceededWarning");
+
+      // Once the ack is out, the limit is back where it was.
+      const removed = start(
+        app(
+          [
+            'process.on("SIGINT", () => {});',
+            'process.removeAllListeners("SIGINT");',
+            'for (let i = 0; i < 11; i++) process.on("exit", () => {});',
+            'console.log("ready " + process.getMaxListeners());',
+            "",
+          ].join("\n"),
+        ),
+        { OXNODE_SIGNAL_ACK: acks.path },
+      );
+      expect(await removed.exited).toEqual({ code: 0, signal: null });
+      expect(removed.stdout()).toBe("ready 10\n");
+      expect(removed.stderr()).toContain("11 exit listeners added");
+    } finally {
+      acks.server.close();
+    }
+  });
+
   test("without OXNODE_SIGNAL_ACK nothing changes", async () => {
     const root = app(
       [

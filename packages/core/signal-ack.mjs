@@ -26,8 +26,32 @@ export function installSignalAck() {
   const ack = () => {
     socket?.write("I");
   };
+
+  // The ack still counts toward the listener limit, so ten SIGINT listeners of
+  // the app's own would warn. The limit is one higher while the ack is in, and
+  // reported without it. It is the limit of every event on `process`, so the
+  // others get one more listener before Node.js warns.
+  const getMaxListeners = process.getMaxListeners.bind(process);
+  const setMaxListeners = process.setMaxListeners.bind(process);
+  // The limit set for the ack, while it is in and the limit is a finite one.
+  let raised = null;
+  const raise = () => {
+    const max = getMaxListeners();
+    raised = max > 0 && Number.isFinite(max) ? max + 1 : null;
+    if (raised !== null) {
+      setMaxListeners(raised);
+    }
+  };
+  const lower = () => {
+    if (raised !== null && getMaxListeners() === raised) {
+      setMaxListeners(raised - 1);
+    }
+    raised = null;
+  };
+
   const install = () => {
     installed = true;
+    raise();
     if (!socket) {
       socket = connect(path);
       socket.on("error", () => {
@@ -56,6 +80,7 @@ export function installSignalAck() {
     }
     if (listener === ack) {
       installed = false;
+      lower();
       return;
     }
     // Once only the ack is left, remove it too, so Node.js restores the default
@@ -83,5 +108,16 @@ export function installSignalAck() {
       return count;
     }
     return count - 1;
+  };
+  process.getMaxListeners = () => {
+    const max = getMaxListeners();
+    return raised !== null && max === raised ? max - 1 : max;
+  };
+  process.setMaxListeners = (n) => {
+    setMaxListeners(n);
+    if (installed) {
+      raise();
+    }
+    return process;
   };
 }
