@@ -1,0 +1,21 @@
+packages/cli/src/watch/dirs.ts
+  s_72fbff7cfe1780::t_5e02c253af9c95 13
+packages/cli/src/watch/glob.ts
+  s_72fbff7cfe1780::t_dedda1bab29322 21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3a3bacd36b331d61af9bec6b47a6f6820b341fb7",
+  "prompts": {},
+  "sessions": {
+    "s_72fbff7cfe1780": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-affe26a984ed254fe",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
