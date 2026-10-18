@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import {
+  configFileNestedWatcher,
   envFileNestedWatcher,
   nodeOptionsTokens,
   parseWatchArgs,
@@ -37,6 +38,7 @@ describe("parseWatchArgs", () => {
       nodeArgs: ["app.ts"],
       entry: "app.ts",
       envFiles: [],
+      configFiles: [],
       notes: [],
     });
   });
@@ -183,6 +185,33 @@ describe("parseWatchArgs", () => {
     ["-", /needs an entry file/],
   ])("rejects %s", (flag, message) => {
     expect(err([flag, "app.ts"])).toMatch(message);
+  });
+
+  test("a Node.js config file that turns on watch mode is an error", () => {
+    const files: Record<string, string> = {
+      "on.json": JSON.stringify({ nodeOptions: { watch: true } }),
+      "path.json": JSON.stringify({ nodeOptions: { "watch-path": "src" } }),
+      "section.json": JSON.stringify({ watch: { watch_path: ["src"] } }),
+      "off.json": JSON.stringify({ nodeOptions: { watch: false, "watch-preserve-output": true } }),
+      "node.config.json": JSON.stringify({ nodeOptions: { watch: true } }),
+      "bad.json": "{",
+    };
+    const withFiles = (argv: string[]) => parseWatchArgs(argv, {}, (f) => files[f]);
+    expect(withFiles(["--experimental-config-file=on.json", "app.ts"])).toEqual({
+      error: expect.stringMatching(/config file on\.json turns on --watch/),
+    });
+    expect(withFiles(["--experimental-config-file", "path.json", "app.ts"])).toHaveProperty(
+      "error",
+    );
+    expect(withFiles(["--config-file=section.json", "app.ts"])).toHaveProperty("error");
+    expect(withFiles(["--experimental-default-config-file", "app.ts"])).toHaveProperty("error");
+    expect(withFiles(["--experimental_config_file=on.json", "app.ts"])).toHaveProperty("error");
+    expect(withFiles(["--config-file=off.json", "app.ts"])).not.toHaveProperty("error");
+    expect(withFiles(["--config-file=bad.json", "app.ts"])).not.toHaveProperty("error");
+    expect(withFiles(["--config-file=missing.json", "app.ts"])).not.toHaveProperty("error");
+    // Read again on each call: checked before every start.
+    files["off.json"] = JSON.stringify({ nodeOptions: { watch: true } });
+    expect(configFileNestedWatcher(["off.json"], (f) => files[f])).toMatch(/nested watcher/);
   });
 
   test("envFileNestedWatcher reads the env files again on each call", () => {

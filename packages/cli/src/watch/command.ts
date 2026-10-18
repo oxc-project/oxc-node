@@ -7,7 +7,12 @@ import { fileURLToPath } from "node:url";
 import { Command, Option, type Usage } from "clipanion";
 
 import { createSignalAck, FORWARDED, gateSignals, SignalGate, sigintFromTerminal } from "../run.js";
-import { envFileNestedWatcher, parseWatchArgs, tsconfigEnv } from "./args.js";
+import {
+  configFileNestedWatcher,
+  envFileNestedWatcher,
+  parseWatchArgs,
+  tsconfigEnv,
+} from "./args.js";
 import { DirWatcher } from "./dirs.js";
 import { makeMatcher, type Matcher, type Source } from "./glob.js";
 import { HELP, USAGE } from "./help.js";
@@ -160,7 +165,9 @@ export function runWatch(argv: string[]): Promise<number> {
 
     const spawnChild = () => {
       // An env file edited since the last start may now hold NODE_OPTIONS=--watch.
-      const nested = envFileNestedWatcher(process.env, args.envFiles);
+      const nested =
+        envFileNestedWatcher(process.env, args.envFiles) ??
+        configFileNestedWatcher(args.configFiles);
       if (nested) {
         // After this step's other effects, as for a spawn that fails.
         queueMicrotask(() => dispatch({ t: "spawnError", err: nested }));

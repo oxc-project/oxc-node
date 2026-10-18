@@ -34,6 +34,7 @@ export const NODE_VALUE_FLAGS = new Set([
   "--disable-proto",
   "--dns-result-order",
   "--experimental-config-file",
+  "--config-file",
   "--experimental-default-type",
   "--experimental-package-map",
   "--heap-prof-dir",
@@ -78,6 +79,8 @@ export interface WatchArgs {
   nodeArgs: string[];
   entry: string;
   envFiles: string[];
+  /** Node.js config files (`--experimental-config-file`, `--config-file`), checked for watch mode. */
+  configFiles: string[];
   notes: string[];
 }
 
@@ -161,6 +164,7 @@ export function parseWatchArgs(
     nodeArgs: [],
     entry: "",
     envFiles: [],
+    configFiles: [],
     notes: [],
   };
 
@@ -284,13 +288,51 @@ export function parseWatchArgs(
     ) {
       out.envFiles.push(nodeValue);
     }
+    if (
+      (nodeName === "--experimental-config-file" || nodeName === "--config-file") &&
+      nodeValue !== undefined
+    ) {
+      out.configFiles.push(nodeValue);
+    }
+    if (nodeName === "--experimental-default-config-file") out.configFiles.push("node.config.json");
   }
 
   if (!out.entry && !out.help) {
     return { error: "missing <entry>" };
   }
-  const nested = envFileNestedWatcher(env, out.envFiles, read);
+  const nested =
+    envFileNestedWatcher(env, out.envFiles, read) ?? configFileNestedWatcher(out.configFiles, read);
   return nested ? { error: nested } : out;
+}
+
+/**
+ * A Node.js config file applies `nodeOptions` (and, on newer Node.js, a `watch` section) as
+ * flags, so `"watch": true` there also starts a nested watcher. Checked before each start too.
+ */
+export function configFileNestedWatcher(
+  configFiles: string[],
+  read: (file: string) => string | undefined = readEnvFile,
+): string | undefined {
+  const turnsOn = (options: unknown) =>
+    typeof options === "object" &&
+    options !== null &&
+    Object.entries(options).some(
+      ([key, value]) => /^watch([-_]path)?$/.test(key) && value !== false && value != null,
+    );
+  for (const file of configFiles) {
+    const text = read(file);
+    if (text === undefined) continue;
+    let config: { nodeOptions?: unknown; watch?: unknown };
+    try {
+      config = JSON.parse(text);
+    } catch {
+      continue; // Node.js reports a bad config file itself.
+    }
+    if (turnsOn(config?.nodeOptions) || turnsOn(config?.watch)) {
+      return `the Node.js config file ${file} turns on --watch, which would start a nested watcher`;
+    }
+  }
+  return undefined;
 }
 
 /**
