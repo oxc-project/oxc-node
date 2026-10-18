@@ -147,19 +147,29 @@ describe("DirWatcher", () => {
 
   /** Stands in for `fs.watch`: events come only from the test, as from inotify. */
   const fakeWatch = () => {
-    const opened: { dir: string; emit: (name: string) => void; closed: boolean }[] = [];
+    const opened: { dir: string; emit: (name: string | null) => void; closed: boolean }[] = [];
+    // `onOpen` runs before the watch exists: what it does, no event reports.
+    let onOpen: ((dir: string) => void) | undefined;
     const watch = ((dir: string, listener: (type: string, name: string | null) => void) => {
+      onOpen?.(dir);
       const h = Object.assign(new EventEmitter(), {
         close: () => {
           entry.closed = true;
         },
       });
-      const entry = { dir, emit: (name: string) => listener("rename", name), closed: false };
+      const entry = {
+        dir,
+        emit: (name: string | null) => listener("rename", name),
+        closed: false,
+      };
       opened.push(entry);
       return h as unknown as FSWatcher;
     }) as unknown as DirWatcherOptions["watch"];
     const open = (dir: string) => opened.filter((h) => h.dir === dir && !h.closed);
-    return { watch, opened, open };
+    const setOnOpen = (f: typeof onOpen) => {
+      onOpen = f;
+    };
+    return { watch, opened, open, setOnOpen };
   };
 
   test("removing a folder is a change for the files in it", async () => {
@@ -307,6 +317,48 @@ describe("DirWatcher", () => {
       first.emit("conf");
       await until(() => changes.includes(join(conf, "b.json")), "the new file");
       expect(changes).toContain(join(conf, "a.json"));
+    } finally {
+      w.close();
+    }
+  });
+
+  test("an event with no file name looks for new files in a walked folder", async () => {
+    const root = temp();
+    const conf = join(root, "conf");
+    mkdirSync(conf);
+    writeFileSync(join(conf, "a.json"), "1");
+    const fake = fakeWatch();
+    const { w, changes } = start({ platform: "linux", watch: fake.watch });
+    try {
+      w.addRoot(conf, Infinity);
+      await until(() => fake.open(conf).length === 1, "the watch");
+      writeFileSync(join(conf, "b.json"), "1");
+      fake.open(conf)[0].emit(null);
+      expect(changes).toEqual([join(conf, "b.json")]);
+    } finally {
+      w.close();
+    }
+  });
+
+  test("a change made before the first watch opens is not lost", async () => {
+    const root = temp();
+    const [src, conf] = [join(root, "src"), join(root, "conf")];
+    mkdirSync(src);
+    mkdirSync(conf);
+    const file = join(src, "a.ts");
+    writeFileSync(file, "1");
+    const fake = fakeWatch();
+    const { w, changes } = start({ platform: "linux", watch: fake.watch });
+    try {
+      w.add(file);
+      w.addRoot(conf, Infinity);
+      // After the stat of the file and the walk of the folder, before their watches.
+      fake.setOnOpen((dir) => {
+        if (dir === src) writeFileSync(file, "22");
+        if (dir === conf) writeFileSync(join(conf, "new.json"), "1");
+      });
+      await until(() => fake.open(src).length === 1 && fake.open(conf).length === 1, "watches");
+      expect(changes.sort()).toEqual([file, join(conf, "new.json")].sort());
     } finally {
       w.close();
     }

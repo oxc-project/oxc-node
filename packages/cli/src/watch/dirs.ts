@@ -107,7 +107,6 @@ export class DirWatcher {
   #syncTimer: NodeJS.Timeout | undefined;
   #pollTimer: NodeJS.Timeout | undefined;
   #settleTimer: NodeJS.Timeout | undefined;
-  #synced = false;
   #closed = false;
 
   constructor(o: DirWatcherOptions) {
@@ -276,15 +275,13 @@ export class DirWatcher {
     for (const [k, dir] of needed) {
       if (!this.#handles.has(k) && !this.#failed.has(k) && this.#open(k, dir)) fresh.push(dir);
     }
-    // A folder that was missing or replaced may already hold the files, and no watch saw them arrive.
-    if (this.#synced) {
-      for (const dir of fresh) {
-        this.#checkDir(dir);
-        const walked = this.#walked.get(this.#key(dir));
-        if (walked) this.#rescan(walked);
-      }
+    // Files may have changed or arrived before the watch was open: after the stat or walk at
+    // start, or while a folder was missing or replaced.
+    for (const dir of fresh) {
+      this.#checkDir(dir);
+      const walked = this.#walked.get(this.#key(dir));
+      if (walked) this.#rescan(walked);
     }
-    this.#synced = true;
   }
 
   #drop(k: string, h: Handle) {
@@ -356,7 +353,10 @@ export class DirWatcher {
     if (this.#closed) return;
     // The event type is ignored: macOS reports writes as `rename`.
     if (name === null) {
+      // No name (allowed by Node): any file here may have changed, or a new one arrived.
       this.#checkDir(dir);
+      const walked = this.#walked.get(this.#key(dir));
+      if (walked) this.#rescan(walked);
       this.#scheduleSync();
       return;
     }
