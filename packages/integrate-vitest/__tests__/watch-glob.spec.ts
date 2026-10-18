@@ -245,6 +245,16 @@ describe("makeMatcher", () => {
     expect(noDrive.classify("C:\\skip.json", "walk")).toBe("exclude");
     expect(noDrive.classify("C:\\etc\\app.conf", "walk")).toBe("watch");
     expect(noDrive.literals()).toEqual(["C:\\etc\\app.conf"]);
+    // Drive-relative: from cwd when cwd is on that drive.
+    const driveRel = makeMatcher({
+      cwd: "C:\\proj",
+      include: ["C:src/*.ts"],
+      exclude: [],
+      platform: "win32",
+      isDir: () => false,
+    });
+    expect(driveRel.roots()).toEqual([{ base: "C:\\proj\\src", depth: 1 }]);
+    expect(driveRel.classify("C:\\proj\\src\\a.ts", "walk")).toBe("watch");
   });
 
   test("@ + ! ( ) are glob syntax only as an extglob", () => {

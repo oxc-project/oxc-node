@@ -95,11 +95,18 @@ export function makeMatcher(opts: {
   const cwd = norm(opts.cwd);
   // On Windows `/x` is on cwd's drive: `C:/x`.
   const drive = win ? native.resolve(opts.cwd, "/").replace(/[\\/]$/, "") : "";
+  // `C:src` is relative to the current folder on C:.
   const rooted = (pattern: string) =>
-    win && /^[\\/](?![\\/])/.test(pattern) ? drive + pattern : pattern;
+    !win
+      ? pattern
+      : /^[\\/](?![\\/])/.test(pattern)
+        ? drive + pattern
+        : /^[A-Za-z]:(?![\\/])/.test(pattern)
+          ? native.resolve(opts.cwd, pattern)
+          : pattern;
   const absolute = (pattern: string) => {
     const p = norm(rooted(pattern));
-    return native.isAbsolute(pattern) ? p : path.posix.join(cwd, p);
+    return native.isAbsolute(rooted(pattern)) ? p : path.posix.join(cwd, p);
   };
 
   const globs = [...opts.include, ...opts.exclude].filter((p) => GLOB_CHARS.test(p));
@@ -112,7 +119,7 @@ export function makeMatcher(opts: {
   const literal = (lit: string) => (n: string) => n === lit || n.startsWith(`${lit}/`);
   // A relative glob is matched against the path relative to cwd, so `[ ] { }` in cwd stay literal.
   const glob = (pattern: string) => {
-    if (native.isAbsolute(pattern)) {
+    if (native.isAbsolute(rooted(pattern))) {
       const g = norm(rooted(pattern));
       return (n: string) => matchesGlob!(n, g);
     }
