@@ -116,6 +116,20 @@ describe("makeMatcher", () => {
     expect(m.classify("/proj/generated-not/a.ts", "graph")).toBe("watch");
   });
 
+  test("pruneDir keeps a node_modules or dot folder that an include names below its base", () => {
+    const pkg = matcher(["packages/**/node_modules/pkg/**"]);
+    expect(pkg.pruneDir("/proj/packages/a/node_modules")).toBe(false);
+    expect(pkg.classify("/proj/packages/a/node_modules/pkg/index.js", "walk")).toBe("watch");
+    expect(pkg.pruneDir("/proj/packages/a/.cache")).toBe(true);
+    const story = matcher(["**/.storybook/*.ts"]);
+    expect(story.pruneDir("/proj/app/.storybook")).toBe(false);
+    expect(story.pruneDir("/proj/app/.git")).toBe(true);
+    expect(story.pruneDir("/proj/node_modules")).toBe(true);
+    expect(matcher(["**/.*/*.ts"]).pruneDir("/proj/.config")).toBe(false);
+    // A bare `*` does not name node_modules.
+    expect(matcher(["*/*/*.ts"]).pruneDir("/proj/node_modules")).toBe(true);
+  });
+
   test("pruneDir with **/dist/**", () => {
     const m = matcher(["**/*.js"], ["**/dist/**"]);
     expect(m.pruneDir("/proj/dist")).toBe(true);

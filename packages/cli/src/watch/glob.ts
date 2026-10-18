@@ -67,6 +67,9 @@ export function makeMatcher(opts: {
 
   const excludes = opts.exclude.map((p) => (GLOB_CHARS.test(p) ? glob(p) : literal(absolute(p))));
   const includes: ((n: string) => boolean)[] = [];
+  // The parts of each include glob below its base, to tell when one names a folder that walks
+  // skip by default: `packages/**/node_modules/pkg/**`, `**/.storybook/*.ts`.
+  const named: string[] = [];
   const roots: { base: string; depth: number }[] = [];
   const literals: string[] = [];
   for (const pattern of opts.include) {
@@ -86,6 +89,7 @@ export function makeMatcher(opts: {
     let baseLen = 0;
     while (baseLen < parts.length - 1 && !GLOB_CHARS.test(parts[baseLen])) baseLen++;
     const rest = parts.slice(baseLen);
+    named.push(...rest.map(norm));
     roots.push({
       base: native.resolve(opts.cwd, parts.slice(0, baseLen).join("/") || "."),
       depth: rest.includes("**") ? Infinity : rest.length,
@@ -112,10 +116,15 @@ export function makeMatcher(opts: {
     pruneDir(absDir) {
       const n = norm(absDir);
       const name = path.posix.basename(n);
+      // Only a part written out, or a glob part that starts with `.`, names such a folder:
+      // `*` alone never walks into every node_modules.
+      const skipped =
+        (name === "node_modules" || name.startsWith(".")) &&
+        !named.some((part) =>
+          GLOB_CHARS.test(part) ? part.startsWith(".") && matchesGlob!(name, part) : part === name,
+        );
       // `**/dist/**` matches what is inside dist, not dist itself.
-      return (
-        name === "node_modules" || name.startsWith(".") || excluded(n) || excluded(`${n}/__probe__`)
-      );
+      return skipped || excluded(n) || excluded(`${n}/__probe__`);
     },
   };
 }
