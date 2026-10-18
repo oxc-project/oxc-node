@@ -1,0 +1,21 @@
+packages/cli/src/run.ts
+  s_fe3c5e00bd87c7::t_44aa7097202ac8 100,115-121
+packages/integrate-vitest/__tests__/cli-signals.spec.ts
+  s_fe3c5e00bd87c7::t_c8d7201d26599d 6,253-269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f00f479e2d5158975f4c98b4bdfde8a61c7d792c",
+  "prompts": {},
+  "sessions": {
+    "s_fe3c5e00bd87c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a9f72bbcf7f30412e",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}

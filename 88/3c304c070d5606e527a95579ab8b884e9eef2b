@@ -1,0 +1,21 @@
+packages/cli/src/watch/machine.ts
+  s_fe3c5e00bd87c7::t_cb440e358bb48b 12,85,145,152,167,169,172,201
+packages/integrate-vitest/__tests__/watch-machine.spec.ts
+  s_fe3c5e00bd87c7::t_7c19da30ca8b8e 64,74,155-159,165,172,228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "883c304c070d5606e527a95579ab8b884e9eef2b",
+  "prompts": {},
+  "sessions": {
+    "s_fe3c5e00bd87c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a9f72bbcf7f30412e",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
