@@ -126,8 +126,12 @@ describe("makeMatcher", () => {
     expect(story.pruneDir("/proj/app/.git")).toBe(true);
     expect(story.pruneDir("/proj/node_modules")).toBe(true);
     expect(matcher(["**/.*/*.ts"]).pruneDir("/proj/.config")).toBe(false);
-    // A bare `*` does not name node_modules.
+    // Grouped names count; a bare `*` or a negation does not name node_modules.
+    expect(matcher(["{node_modules,src}/**/*.js"]).pruneDir("/proj/node_modules")).toBe(false);
+    expect(matcher(["@(node_modules|src)/**/*.js"]).pruneDir("/proj/node_modules")).toBe(false);
+    expect(matcher(["**/{.storybook,stories}/*.ts"]).pruneDir("/proj/a/.storybook")).toBe(false);
     expect(matcher(["*/*/*.ts"]).pruneDir("/proj/node_modules")).toBe(true);
+    expect(matcher(["!(dist)/**/*.ts"]).pruneDir("/proj/node_modules")).toBe(true);
   });
 
   test("pruneDir with **/dist/**", () => {

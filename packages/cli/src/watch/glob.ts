@@ -116,12 +116,14 @@ export function makeMatcher(opts: {
     pruneDir(absDir) {
       const n = norm(absDir);
       const name = path.posix.basename(n);
-      // Only a part written out, or a glob part that starts with `.`, names such a folder:
-      // `*` alone never walks into every node_modules.
+      // A part names such a folder when it matches it but not just any name: `.storybook`,
+      // `{node_modules,src}`, `@(node_modules|src)` do; `*` never walks into every node_modules.
       const skipped =
         (name === "node_modules" || name.startsWith(".")) &&
         !named.some((part) =>
-          GLOB_CHARS.test(part) ? part.startsWith(".") && matchesGlob!(name, part) : part === name,
+          GLOB_CHARS.test(part)
+            ? matchesGlob!(name, part) && !matchesGlob!("oxnode-any-name", part)
+            : part === name,
         );
       // `**/dist/**` matches what is inside dist, not dist itself.
       return skipped || excluded(n) || excluded(`${n}/__probe__`);
