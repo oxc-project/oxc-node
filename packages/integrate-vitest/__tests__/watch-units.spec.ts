@@ -395,6 +395,30 @@ describe("DirWatcher", () => {
     },
   );
 
+  test("a change to a file that is not a link opens no second watch", async () => {
+    const root = temp();
+    const real = join(root, "real");
+    mkdirSync(real);
+    // A second spelling of the folder, as Windows' 8.3 names give.
+    const alias = join(root, "alias");
+    symlinkSync(real, alias, process.platform === "win32" ? "junction" : "dir");
+    const file = join(alias, "x.ts");
+    writeFileSync(file, "1");
+    const fake = fakeWatch();
+    const { w, changes } = start({ platform: "linux", watch: fake.watch });
+    try {
+      w.add(file);
+      await until(() => fake.open(alias).length === 1, "the watch");
+      writeFileSync(file, "22");
+      fake.open(alias)[0].emit("x.ts");
+      expect(changes).toEqual([file]);
+      await new Promise((r) => setTimeout(r, 100));
+      expect(fake.opened.filter((h) => !h.closed).map((h) => h.dir)).toEqual([alias]);
+    } finally {
+      w.close();
+    }
+  });
+
   test("a folder swapped by rename gets a new watch, found by its inode", async () => {
     const root = temp();
     const gen = join(root, "gen");

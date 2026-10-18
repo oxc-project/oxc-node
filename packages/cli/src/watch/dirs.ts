@@ -1,5 +1,6 @@
 import {
   existsSync,
+  lstatSync,
   readdirSync,
   realpathSync,
   statSync,
@@ -416,11 +417,14 @@ export class DirWatcher {
     const next = sigOf(entry.path);
     if (!changed(entry.sig, next)) return;
     entry.sig = next;
-    // A link pointed somewhere else: watch the new target too.
+    // A link pointed somewhere else: watch the new target too. Only a link: Windows gives other
+    // paths a second spelling (8.3 names), which is the same file.
     if (entry.shown === entry.path) {
       try {
-        const real = realpathSync.native(entry.path);
-        if (this.#key(real) !== k) this.add(real, entry.path);
+        if (lstatSync(entry.path).isSymbolicLink()) {
+          const real = realpathSync.native(entry.path);
+          if (this.#key(real) !== k) this.add(real, entry.path);
+        }
       } catch {}
     }
     this.#o.onChange(entry.shown);
