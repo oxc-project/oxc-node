@@ -474,6 +474,42 @@ describe("DirWatcher", () => {
     }
   });
 
+  test.skipIf(process.platform === "win32")(
+    "a target two links point to stays watched until both are gone",
+    async () => {
+      const root = temp();
+      const [config, shared] = [join(root, "config"), join(root, "shared")];
+      mkdirSync(config);
+      mkdirSync(shared);
+      const target = join(shared, "a.json");
+      writeFileSync(target, "1");
+      const [one, two] = ["one.json", "two.json"].map((n) => join(config, n));
+      symlinkSync("../shared/a.json", one);
+      symlinkSync("../shared/a.json", two);
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "linux", watch: fake.watch });
+      const edit = (body: string) => {
+        writeFileSync(target, body);
+        fake.open(shared)[0]?.emit("a.json");
+      };
+      try {
+        w.addRoot(config, Infinity);
+        await until(() => fake.open(shared).length === 1, "the target's watch");
+        rmSync(one);
+        fake.open(config)[0].emit("one.json");
+        expect(changes).toEqual([one]);
+        edit("22");
+        expect(changes).toEqual([one, two]);
+        rmSync(two);
+        fake.open(config)[0].emit("two.json");
+        edit("333");
+        expect(changes).toEqual([one, two, two]);
+      } finally {
+        w.close();
+      }
+    },
+  );
+
   test("a folder swapped by rename gets a new watch, found by its inode", async () => {
     const root = temp();
     const gen = join(root, "gen");

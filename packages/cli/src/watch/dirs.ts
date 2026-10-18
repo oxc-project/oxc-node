@@ -80,6 +80,7 @@ interface Entry {
   shown: string;
   sig: Sig;
   target?: string;
+  links?: Set<string>;
 }
 
 interface WalkedDir {
@@ -114,8 +115,9 @@ export class DirWatcher {
   #o: DirWatcherOptions;
   #win: boolean;
   /**
-   * `shown` is the name a change is reported under: the link, for a link's target.
-   * `target` is the key of the file a link points to.
+   * `shown` is the name a change is reported under: a link, for a link's target.
+   * `target` is the key of the file a link points to; `links`, the keys of the links a target is
+   * watched for (none when it is wanted itself).
    */
   #files = new Map<string, Entry>();
   #byDir = new Map<string, Set<string>>();
@@ -147,7 +149,13 @@ export class DirWatcher {
   /** Watch one file, which may not exist yet. */
   add(file: string, shown = file): void {
     const k = this.#key(file);
-    if (this.#closed || this.#files.has(k)) return;
+    const have = this.#files.get(k);
+    if (have && shown === file && have.links) {
+      // Wanted itself now, not only as a link's target: kept whatever the links do.
+      have.links = undefined;
+      have.shown = file;
+    }
+    if (this.#closed || have) return;
     this.#files.set(k, { path: file, shown, sig: sigOf(file) });
     const dk = this.#key(path.dirname(file));
     const set = this.#byDir.get(dk);
@@ -252,10 +260,21 @@ export class DirWatcher {
     } catch {}
     const next = real && this.#key(real) !== this.#key(entry.path) ? this.#key(real) : undefined;
     if (next === entry.target) return;
+    const link = this.#key(entry.path);
     const old = entry.target === undefined ? undefined : this.#files.get(entry.target);
-    if (old?.shown === entry.path) this.#remove(entry.target!);
+    if (old?.links) {
+      // Dropped once no link points to it; until then, reported under a link that still does.
+      old.links.delete(link);
+      const [rest] = old.links;
+      if (rest === undefined) this.#remove(entry.target!);
+      else old.shown = this.#files.get(rest)?.path ?? old.shown;
+    }
     entry.target = next;
-    if (real && next) this.add(real, entry.path);
+    if (real && next) {
+      this.add(real, entry.path);
+      const target = this.#files.get(next);
+      if (target && target.shown !== target.path) (target.links ??= new Set()).add(link);
+    }
   }
 
   #remove(k: string) {
