@@ -1,0 +1,21 @@
+packages/core/signal-ack.mjs
+  s_72fbff7cfe1780::t_e832df0fb74b39 29-51,54,83,112-122
+packages/integrate-vitest/__tests__/signal-ack.spec.ts
+  s_72fbff7cfe1780::t_7985556e6486db 213-275
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "a0825445ce8d9ebbe413e499a7994839ab47a673",
+  "prompts": {},
+  "sessions": {
+    "s_72fbff7cfe1780": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-affe26a984ed254fe",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
