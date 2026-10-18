@@ -175,7 +175,9 @@ export function makeMatcher(opts: {
       if (includes.some((m) => m(n))) return "watch";
       if (source === "literal") return "watch";
       if (source === "walk") return "default-ignore";
-      if (n.split("/").includes("node_modules") || ignoreDirs.some((d) => literal(d)(n))) {
+      // A JSON file there is kept: a tsconfig can `extends` one from a package.
+      const inNodeModules = n.split("/").includes("node_modules") && !n.endsWith(".json");
+      if (inNodeModules || ignoreDirs.some((d) => literal(d)(n))) {
         return "default-ignore";
       }
       return "watch";

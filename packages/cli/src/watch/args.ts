@@ -34,7 +34,6 @@ export const NODE_VALUE_FLAGS = new Set([
   "--disable-proto",
   "--dns-result-order",
   "--experimental-config-file",
-  "--config-file",
   "--experimental-default-type",
   "--experimental-package-map",
   "--heap-prof-dir",
@@ -145,10 +144,14 @@ const readEnvFile = (file: string): string | undefined => {
   }
 };
 
+const NODE_MAJOR = Number(process.versions.node.split(".")[0]);
+
 export function parseWatchArgs(
   argv: string[],
   env: NodeJS.ProcessEnv,
   read: (file: string) => string | undefined = readEnvFile,
+  // The child runs on this Node.js, so its flags are read as this version reads them.
+  nodeMajor = NODE_MAJOR,
 ): WatchArgs | { error: string } {
   if (startsWatcher(env.NODE_OPTIONS)) return { error: NESTED };
   const polling = env.CHOKIDAR_USEPOLLING === "1" || env.CHOKIDAR_USEPOLLING === "true";
@@ -278,7 +281,15 @@ export function parseWatchArgs(
 
     out.nodeArgs.push(arg);
     let nodeValue = inline;
-    if (inline === undefined && NODE_VALUE_FLAGS.has(nodeName) && i + 1 < argv.length) {
+    // Node.js 24+ reads a bare config-file flag as `node.config.json`; 22 takes the next word.
+    const configFlag =
+      nodeName === "--experimental-config-file" ||
+      nodeName === "--config-file" ||
+      nodeName === "--experimental-default-config-file";
+    const takesValue =
+      NODE_VALUE_FLAGS.has(nodeName) &&
+      !(nodeName === "--experimental-config-file" && nodeMajor > 22);
+    if (inline === undefined && takesValue && i + 1 < argv.length) {
       nodeValue = argv[++i];
       out.nodeArgs.push(nodeValue);
     }
@@ -288,47 +299,56 @@ export function parseWatchArgs(
     ) {
       out.envFiles.push(nodeValue);
     }
-    if (
-      (nodeName === "--experimental-config-file" || nodeName === "--config-file") &&
-      nodeValue !== undefined
-    ) {
-      out.configFiles.push(nodeValue);
-    }
-    if (nodeName === "--experimental-default-config-file") out.configFiles.push("node.config.json");
+    if (configFlag) out.configFiles.push(nodeValue || "node.config.json");
   }
 
   if (!out.entry && !out.help) {
     return { error: "missing <entry>" };
   }
   const nested =
-    envFileNestedWatcher(env, out.envFiles, read) ?? configFileNestedWatcher(out.configFiles, read);
+    envFileNestedWatcher(env, out.envFiles, read) ??
+    configFileNestedWatcher(out.configFiles, read, nodeMajor);
   return nested ? { error: nested } : out;
 }
 
 /**
- * A Node.js config file applies `nodeOptions` (and, on newer Node.js, a `watch` section) as
- * flags, so `"watch": true` there also starts a nested watcher. Checked before each start too.
+ * A Node.js config file applies `nodeOptions` as flags, and a `watch` section turns on --watch by
+ * being there (unless it holds `"watch": false`). With `configs`, Node.js takes the first entry for
+ * its major version. Either starts a nested watcher. Checked before each start too.
  */
 export function configFileNestedWatcher(
   configFiles: string[],
   read: (file: string) => string | undefined = readEnvFile,
+  nodeMajor = NODE_MAJOR,
 ): string | undefined {
-  const turnsOn = (options: unknown) =>
-    typeof options === "object" &&
-    options !== null &&
-    Object.entries(options).some(
-      ([key, value]) => /^watch([-_]path)?$/.test(key) && value !== false && value != null,
+  const isObject = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  const watchKey = (key: string) => /^watch([-_]path)?$/.test(key);
+  const turnsOn = (config: unknown) => {
+    if (!isObject(config)) return false;
+    const { nodeOptions, watch } = config;
+    if (isObject(watch) && !Object.entries(watch).some(([k, v]) => k === "watch" && v === false)) {
+      return true;
+    }
+    return (
+      isObject(nodeOptions) &&
+      Object.entries(nodeOptions).some(([k, v]) => watchKey(k) && v !== false && v != null)
     );
+  };
   for (const file of configFiles) {
     const text = read(file);
     if (text === undefined) continue;
-    let config: { nodeOptions?: unknown; watch?: unknown };
+    let config: unknown;
     try {
       config = JSON.parse(text);
     } catch {
       continue; // Node.js reports a bad config file itself.
     }
-    if (turnsOn(config?.nodeOptions) || turnsOn(config?.watch)) {
+    if (isObject(config) && Array.isArray(config.configs)) {
+      const entry = config.configs.find((c) => isObject(c) && c.nodeVersion === nodeMajor);
+      config = isObject(entry) ? entry.config : undefined;
+    }
+    if (turnsOn(config)) {
       return `the Node.js config file ${file} turns on --watch, which would start a nested watcher`;
     }
   }

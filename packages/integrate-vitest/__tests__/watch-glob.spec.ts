@@ -49,6 +49,11 @@ describe("makeMatcher", () => {
   test("node_modules anywhere is ignored for graph files and walks", () => {
     const m = matcher([]);
     expect(m.classify("/proj/node_modules/pkg/index.js", "graph")).toBe("default-ignore");
+    // A tsconfig `extends` from a package.
+    expect(m.classify("/proj/node_modules/@tsconfig/node22/tsconfig.json", "graph")).toBe("watch");
+    expect(m.classify("/proj/node_modules/@tsconfig/node22/tsconfig.json", "walk")).toBe(
+      "default-ignore",
+    );
     expect(m.classify("/proj/packages/a/node_modules/pkg/index.js", "graph")).toBe(
       "default-ignore",
     );

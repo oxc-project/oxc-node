@@ -191,27 +191,58 @@ describe("parseWatchArgs", () => {
     const files: Record<string, string> = {
       "on.json": JSON.stringify({ nodeOptions: { watch: true } }),
       "path.json": JSON.stringify({ nodeOptions: { "watch-path": "src" } }),
-      "section.json": JSON.stringify({ watch: { watch_path: ["src"] } }),
+      // A `watch` section turns watch mode on by being there.
+      "section.json": JSON.stringify({ watch: { "watch-preserve-output": true } }),
+      "section-off.json": JSON.stringify({
+        watch: { watch: false, "watch-preserve-output": true },
+      }),
       "off.json": JSON.stringify({ nodeOptions: { watch: false, "watch-preserve-output": true } }),
+      "versions.json": JSON.stringify({
+        configs: [
+          { nodeVersion: 25, config: { nodeOptions: { "watch-path": "src" } } },
+          { nodeVersion: 26, config: { nodeOptions: { import: ["x"] } } },
+        ],
+      }),
       "node.config.json": JSON.stringify({ nodeOptions: { watch: true } }),
       "bad.json": "{",
     };
-    const withFiles = (argv: string[]) => parseWatchArgs(argv, {}, (f) => files[f]);
+    const withFiles = (argv: string[], major = 26) =>
+      parseWatchArgs(argv, {}, (f) => files[f], major);
     expect(withFiles(["--experimental-config-file=on.json", "app.ts"])).toEqual({
       error: expect.stringMatching(/config file on\.json turns on --watch/),
     });
-    expect(withFiles(["--experimental-config-file", "path.json", "app.ts"])).toHaveProperty(
-      "error",
-    );
+    expect(withFiles(["--config-file=path.json", "app.ts"])).toHaveProperty("error");
     expect(withFiles(["--config-file=section.json", "app.ts"])).toHaveProperty("error");
     expect(withFiles(["--experimental-default-config-file", "app.ts"])).toHaveProperty("error");
     expect(withFiles(["--experimental_config_file=on.json", "app.ts"])).toHaveProperty("error");
+    expect(withFiles(["--config-file=section-off.json", "app.ts"])).not.toHaveProperty("error");
     expect(withFiles(["--config-file=off.json", "app.ts"])).not.toHaveProperty("error");
     expect(withFiles(["--config-file=bad.json", "app.ts"])).not.toHaveProperty("error");
     expect(withFiles(["--config-file=missing.json", "app.ts"])).not.toHaveProperty("error");
+    // `configs`: the entry for this major version.
+    expect(withFiles(["--config-file=versions.json", "app.ts"], 26)).not.toHaveProperty("error");
+    expect(withFiles(["--config-file=versions.json", "app.ts"], 25)).toHaveProperty("error");
     // Read again on each call: checked before every start.
     files["off.json"] = JSON.stringify({ nodeOptions: { watch: true } });
     expect(configFileNestedWatcher(["off.json"], (f) => files[f])).toMatch(/nested watcher/);
+  });
+
+  test("a bare config-file flag is read as the Node.js version reads it", () => {
+    const files: Record<string, string> = { "node.config.json": "{}", "cfg.json": "{}" };
+    const withFiles = (argv: string[], major: number) =>
+      parseWatchArgs(argv, {}, (f) => files[f], major);
+    // Node.js 24+: `node.config.json`, and the next word is the entry.
+    const bare = withFiles(["--config-file", "app.ts"], 26);
+    expect(bare).toMatchObject({ entry: "app.ts", configFiles: ["node.config.json"] });
+    expect(withFiles(["--experimental-config-file", "app.ts"], 24)).toMatchObject({
+      entry: "app.ts",
+      configFiles: ["node.config.json"],
+    });
+    // Node.js 22 takes the next word as the path.
+    expect(withFiles(["--experimental-config-file", "cfg.json", "app.ts"], 22)).toMatchObject({
+      entry: "app.ts",
+      configFiles: ["cfg.json"],
+    });
   });
 
   test("envFileNestedWatcher reads the env files again on each call", () => {
