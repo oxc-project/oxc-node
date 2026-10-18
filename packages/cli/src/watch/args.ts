@@ -106,9 +106,32 @@ function parseBool(name: string, value: string | undefined): boolean | { error: 
   return { error: `${name} takes true or false, got "${value}"` };
 }
 
+/** NODE_OPTIONS split as Node.js does: at spaces, but not inside `"…"`, where `\` escapes. */
+export function nodeOptionsTokens(s: string): string[] {
+  const out: string[] = [];
+  let cur: string | undefined;
+  let quoted = false;
+  for (let i = 0; i < s.length; i++) {
+    let c = s[i];
+    if (c === "\\" && quoted) {
+      c = s[++i] ?? "";
+    } else if (c === " " && !quoted) {
+      if (cur !== undefined) out.push(cur);
+      cur = undefined;
+      continue;
+    } else if (c === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    cur = (cur ?? "") + c;
+  }
+  if (cur !== undefined) out.push(cur);
+  return out;
+}
+
 // Node.js takes `_` for `-` in option names: `--watch_path`.
 const startsWatcher = (nodeOptions: string | undefined) =>
-  nodeOptions?.split(/\s+/).some((t) => /^--watch([-_]path)?(=|$)/.test(t)) ?? false;
+  nodeOptionsTokens(nodeOptions ?? "").some((t) => /^--watch([-_]path)?(=|$)/.test(t));
 const NESTED = "NODE_OPTIONS contains --watch, which would start a nested watcher";
 
 const readEnvFile = (file: string): string | undefined => {

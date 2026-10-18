@@ -1,7 +1,12 @@
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
-import { parseWatchArgs, tsconfigEnv, type WatchArgs } from "../../cli/src/watch/args.js";
+import {
+  nodeOptionsTokens,
+  parseWatchArgs,
+  tsconfigEnv,
+  type WatchArgs,
+} from "../../cli/src/watch/args.js";
 
 const parse = (argv: string[], env: NodeJS.ProcessEnv = {}) => parseWatchArgs(argv, env);
 
@@ -177,6 +182,17 @@ describe("parseWatchArgs", () => {
     ["-", /needs an entry file/],
   ])("rejects %s", (flag, message) => {
     expect(err([flag, "app.ts"])).toMatch(message);
+  });
+
+  test("NODE_OPTIONS is split as Node.js splits it", () => {
+    expect(nodeOptionsTokens(' --a  "--watch-path=src dir" "x\\"y" b\\c ')).toEqual([
+      "--a",
+      "--watch-path=src dir",
+      'x"y',
+      "b\\c",
+    ]);
+    expect(err(["app.ts"], { NODE_OPTIONS: '"--watch-path=src dir"' })).toMatch(/nested watcher/);
+    expect(err(["app.ts"], { NODE_OPTIONS: '--x "--watch"' })).toMatch(/nested watcher/);
   });
 
   test("NODE_OPTIONS with --watch from an env file is an error", () => {
