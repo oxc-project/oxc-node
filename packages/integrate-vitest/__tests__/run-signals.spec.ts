@@ -1,0 +1,123 @@
+import { constants } from "node:os";
+import { describe, expect, test } from "vitest";
+
+import { exitPlan, SignalGate, usesNodeWatch } from "../../cli/src/run.js";
+
+const gate = (o: { nodeWatch?: boolean; platform?: NodeJS.Platform } = {}) =>
+  new SignalGate({ nodeWatch: o.nodeWatch ?? false, platform: o.platform ?? "linux" });
+
+describe("SignalGate", () => {
+  test("SIGINT waits 50 ms, then forwards when no ack came (kill -INT to oxnode alone)", () => {
+    const g = gate();
+    expect(g.onSignal("SIGINT", 1000)).toEqual({ action: "wait", ms: 50 });
+    expect(g.onWaitExpired()).toEqual({ action: "forward", as: "SIGINT" });
+  });
+
+  test("an ack during the wait cancels it (Ctrl+C, the app saw it first)", () => {
+    const g = gate();
+    expect(g.onSignal("SIGINT", 1000)).toEqual({ action: "wait", ms: 50 });
+    g.onAck(1010);
+    expect(g.onWaitExpired()).toEqual({ action: "skip" });
+  });
+
+  test("a recent ack skips at once", () => {
+    const g = gate();
+    g.onAck(1000);
+    expect(g.onSignal("SIGINT", 1080)).toEqual({ action: "skip" });
+  });
+
+  test("an old ack does not count", () => {
+    const g = gate();
+    g.onAck(1000);
+    expect(g.onSignal("SIGINT", 1200)).toEqual({ action: "wait", ms: 50 });
+  });
+
+  test("the same signal within 500 ms is merged (npm forwards it too)", () => {
+    const g = gate();
+    expect(g.onSignal("SIGTERM", 1000)).toEqual({ action: "forward", as: "SIGTERM" });
+    expect(g.onSignal("SIGTERM", 1100)).toEqual({ action: "skip" });
+    expect(g.onSignal("SIGTERM", 1700)).toEqual({ action: "forward", as: "SIGTERM" });
+    expect(g.onSignal("SIGINT", 1000)).toEqual({ action: "wait", ms: 50 });
+    expect(g.onSignal("SIGINT", 1002)).toEqual({ action: "skip" });
+    expect(g.onWaitExpired()).toEqual({ action: "forward", as: "SIGINT" });
+  });
+
+  test("SIGHUP goes to Node.js' watcher as SIGTERM", () => {
+    expect(gate({ nodeWatch: true }).onSignal("SIGHUP", 0)).toEqual({
+      action: "forward",
+      as: "SIGTERM",
+    });
+    expect(gate().onSignal("SIGHUP", 0)).toEqual({ action: "forward", as: "SIGHUP" });
+    expect(gate({ nodeWatch: true }).onSignal("SIGTERM", 0)).toEqual({
+      action: "forward",
+      as: "SIGTERM",
+    });
+  });
+
+  test("win32 never forwards", () => {
+    const g = gate({ platform: "win32" });
+    for (const sig of ["SIGINT", "SIGBREAK", "SIGHUP"] as NodeJS.Signals[]) {
+      expect(g.onSignal(sig, 0)).toEqual({ action: "skip" });
+    }
+  });
+
+  test("a wait that already ended does not forward twice", () => {
+    const g = gate();
+    g.onSignal("SIGINT", 0);
+    expect(g.onWaitExpired()).toEqual({ action: "forward", as: "SIGINT" });
+    expect(g.onWaitExpired()).toEqual({ action: "skip" });
+  });
+});
+
+describe("exitPlan", () => {
+  test("an exit code passes through", () => {
+    expect(exitPlan(0, null, "linux")).toEqual({ code: 0 });
+    expect(exitPlan(42, null, "linux")).toEqual({ code: 42 });
+    expect(exitPlan(null, null, "linux")).toEqual({ code: 1 });
+  });
+
+  test.each(["SIGINT", "SIGTERM", "SIGHUP", "SIGKILL"] as NodeJS.Signals[])(
+    "%s is raised again",
+    (sig) => {
+      expect(exitPlan(null, sig, "linux")).toEqual({ raise: sig });
+      expect(exitPlan(null, sig, "darwin")).toEqual({ raise: sig });
+    },
+  );
+
+  test.each([
+    "SIGABRT",
+    "SIGSEGV",
+    "SIGBUS",
+    "SIGFPE",
+    "SIGILL",
+    "SIGQUIT",
+    "SIGTRAP",
+    "SIGSYS",
+  ] as NodeJS.Signals[])("%s gives 128+n instead of a core dump", (sig) => {
+    expect(exitPlan(null, sig, "linux")).toEqual({ code: 128 + constants.signals[sig] });
+  });
+
+  test("win32 never raises", () => {
+    expect(exitPlan(null, "SIGTERM", "win32")).toEqual({ code: 128 + constants.signals.SIGTERM });
+    expect(exitPlan(3221225786, null, "win32")).toEqual({ code: 3221225786 });
+  });
+});
+
+describe("usesNodeWatch", () => {
+  test.each([
+    [["--watch", "app.ts"], true],
+    [["--watch=true", "app.ts"], true],
+    [["--watch-path", "src", "app.ts"], true],
+    [["--watch-path=src", "app.ts"], true],
+    [["--import", "x", "--watch", "app.ts"], true],
+    [["--inspect", "--watch", "app.ts"], true],
+    [["app.ts", "--watch"], false],
+    [["--", "app.ts", "--watch"], false],
+    [["--watch-preserve-output", "app.ts"], false],
+    [["--watch-kill-signal", "SIGINT", "app.ts"], false],
+    [["--watchful", "app.ts"], false],
+    [[], false],
+  ])("%j → %s", (args, expected) => {
+    expect(usesNodeWatch(args)).toBe(expected);
+  });
+});
