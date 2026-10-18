@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -355,6 +355,23 @@ describe("paths a failed resolve looked for", () => {
     expect(appGot).toContain('app got {"hello":"app"}');
     // Whatever Node.js itself relays, nothing of oxc-node's reaches the app.
     expect(appGot.filter((line) => line.includes("from-worker.ts"))).toEqual([]);
+  });
+});
+
+describe("the binding's watch exports", () => {
+  // The binding glue is edited by hand, not regenerated; keep every entry and
+  // its types in step.
+  test.each([
+    ["index.js", "module.exports.NAME = nativeBinding.NAME"],
+    ["index.d.ts", "export declare function NAME("],
+    ["oxc-node.wasi.cjs", "module.exports.NAME = __napiModule.exports.NAME"],
+    ["oxc-node.wasi.d.cts", "export declare function NAME("],
+    ["oxc-node.wasi-browser.js", "export const NAME = __napiModule.exports.NAME"],
+  ])("%s", (file, pattern) => {
+    const source = readFileSync(join(CORE, file), "utf8");
+    for (const name of ["enableWatchReport", "takeWatchDependencies"]) {
+      expect(source).toContain(pattern.replaceAll("NAME", name));
+    }
   });
 });
 
