@@ -1,0 +1,19 @@
+packages/integrate-vitest/__tests__/watch-args.spec.ts
+  s_5b25d6ae40e975::t_73b47cd7c2ee3b 68-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "fef12382e7b0c1cbf33dceb98bf13d9c76f0c0f7",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
