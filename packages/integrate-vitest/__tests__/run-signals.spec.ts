@@ -3,8 +3,12 @@ import { describe, expect, test } from "vitest";
 
 import { exitPlan, SignalGate, usesNodeWatch } from "../../cli/src/run.js";
 
-const gate = (o: { nodeWatch?: boolean; platform?: NodeJS.Platform } = {}) =>
-  new SignalGate({ nodeWatch: o.nodeWatch ?? false, platform: o.platform ?? "linux" });
+const gate = (o: { nodeWatch?: boolean; platform?: NodeJS.Platform; terminal?: boolean } = {}) =>
+  new SignalGate({
+    nodeWatch: o.nodeWatch ?? false,
+    platform: o.platform ?? "linux",
+    terminal: o.terminal,
+  });
 
 describe("SignalGate", () => {
   test("SIGINT waits 50 ms, then forwards when no ack came (kill -INT to oxnode alone)", () => {
@@ -52,6 +56,13 @@ describe("SignalGate", () => {
       action: "forward",
       as: "SIGTERM",
     });
+  });
+
+  test("in the terminal's foreground, SIGINT is never forwarded: Ctrl+C reached the child too", () => {
+    const g = gate({ terminal: true });
+    expect(g.onSignal("SIGINT", 1000)).toEqual({ action: "skip" });
+    expect(g.onWaitExpired()).toEqual({ action: "skip" });
+    expect(g.onSignal("SIGTERM", 1000)).toEqual({ action: "forward", as: "SIGTERM" });
   });
 
   test("win32 never forwards", () => {

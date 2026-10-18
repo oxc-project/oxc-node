@@ -1,10 +1,11 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { unlinkSync } from "node:fs";
+import { readFileSync, unlinkSync } from "node:fs";
 import { createServer } from "node:net";
 import os from "node:os";
 import { join } from "node:path";
 import process from "node:process";
+import { isatty } from "node:tty";
 
 import { NODE_VALUE_FLAGS } from "./watch/args.js";
 
@@ -121,6 +122,36 @@ export function createSignalAck(): SignalAck {
   };
 }
 
+/** Whether oxnode is in the terminal's foreground group: reading stdin from the background stops it (SIGTTIN). */
+export function isForeground(): boolean {
+  try {
+    if (process.platform === "win32") return true;
+    if (process.platform === "linux") {
+      const stat = readFileSync("/proc/self/stat", "utf8");
+      // After the name: state, ppid, pgrp, session, tty_nr, tpgid
+      const f = stat
+        .slice(stat.lastIndexOf(")") + 1)
+        .trim()
+        .split(/\s+/);
+      return f[2] === f[5];
+    }
+    const [pgid, tpgid] = execFileSync("ps", ["-o", "pgid=,tpgid=", "-p", String(process.pid)], {
+      encoding: "utf8",
+    })
+      .trim()
+      .split(/\s+/);
+    return pgid === tpgid;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether a SIGINT oxnode gets comes from the terminal's Ctrl+C, which signals the whole
+ * foreground group, the child included. Checked once, so a later `bg` is not seen.
+ */
+export const sigintFromTerminal = (): boolean => isatty(0) && isForeground();
+
 export type GateAction =
   | { action: "skip" }
   | { action: "forward"; as: NodeJS.Signals }
@@ -130,6 +161,7 @@ export type GateAction =
 export class SignalGate {
   #nodeWatch: boolean;
   #platform: NodeJS.Platform;
+  #terminal: boolean;
   #waitMs: number;
   #recentMs: number;
   #coalesceMs: number;
@@ -140,12 +172,15 @@ export class SignalGate {
   constructor(o: {
     nodeWatch: boolean;
     platform: NodeJS.Platform;
+    /** See `sigintFromTerminal`. */
+    terminal?: boolean;
     waitMs?: number;
     recentMs?: number;
     coalesceMs?: number;
   }) {
     this.#nodeWatch = o.nodeWatch;
     this.#platform = o.platform;
+    this.#terminal = o.terminal ?? false;
     this.#waitMs = o.waitMs ?? 50;
     this.#recentMs = o.recentMs ?? 100;
     this.#coalesceMs = o.coalesceMs ?? 500;
@@ -163,6 +198,11 @@ export class SignalGate {
       return { action: "skip" };
     }
     if (sig === "SIGINT") {
+      // The child has it already. The ack cannot tell: it comes late, or never (a REPL eval),
+      // when the child's event loop is busy. `kill -INT` to oxnode alone is then not passed on.
+      if (this.#terminal) {
+        return { action: "skip" };
+      }
       if (now - this.#lastAck <= this.#recentMs) {
         return { action: "skip" };
       }
@@ -230,7 +270,12 @@ export function runChild(cmd: string, args: string[], o: { nodeWatch: boolean })
     stdio: "inherit",
   });
   const gate = gateSignals(
-    new SignalGate({ nodeWatch: o.nodeWatch, platform: process.platform }),
+    // After the spawn, so the check does not hold up the child's start.
+    new SignalGate({
+      nodeWatch: o.nodeWatch,
+      platform: process.platform,
+      terminal: sigintFromTerminal(),
+    }),
     ack,
     (sig) => {
       child.kill(sig);

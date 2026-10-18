@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, describe, expect, test } from "vitest";
 
 import { descendants, processTable } from "../../cli/src/watch/kill-tree.js";
+import { HAS_PTY, runInPty, type PtyStep } from "./helpers/pty.js";
 
 /**
  * Plain runs: oxnode passes signals on to the app once and exits the way the app did.
@@ -71,6 +72,17 @@ process.on("SIGINT", onSig);
 console.log("COUNT", process.listenerCount("SIGINT"));
 ${READY}`,
   "no-listener.ts": READY,
+  // Busy when Ctrl+C comes, so its SIGINT listener (and the ack) runs late.
+  "busy.mjs": `let n = 0;
+process.on("SIGINT", () => {
+  console.log("GOT SIGINT", ++n);
+  setTimeout(() => { console.log("total", n); process.exit(0); }, 300);
+});
+console.log("BUSY");
+const end = Date.now() + 200;
+while (Date.now() < end) {}
+setInterval(() => {}, 1000);
+`,
 };
 for (const [name, source] of Object.entries(apps)) writeFileSync(join(root, name), source);
 
@@ -256,5 +268,45 @@ describe.skipIf(!posix)("signals", () => {
     send(run.child.pid!);
     await run.exited;
     for (const pid of pids) expect(await isGone(pid), `pid ${pid}`).toBe(true);
+  });
+});
+
+/** In a real terminal, Ctrl+C reaches oxnode and the app together: plain node is the reference. */
+describe.skipIf(!HAS_PTY)("in a terminal", () => {
+  const inPty = (args: string[], steps: PtyStep[]) =>
+    runInPty([process.execPath, ...args], steps, { cwd: root, env: { ...env, NO_COLOR: "1" } });
+
+  test("Ctrl+C while the app is busy: its SIGINT listener runs once, as with node", async () => {
+    const steps = [{ wait: "BUSY", send: "\x03" }];
+    const node = await inPty(["busy.mjs"], steps);
+    expect(node.out).toContain("total 1");
+    const run = await inPty([CLI, "busy.mjs"], steps);
+    expect(count(run.out, /GOT SIGINT/), run.out).toBe(1);
+    expect(run.out).toContain("total 1");
+    expect(run).toMatchObject({ code: 0, signal: null, timedOut: false });
+  });
+
+  test("oxnode watch: Ctrl+C while the app is busy runs its SIGINT listener once", async () => {
+    const run = await inPty([CLI, "watch", "busy.mjs"], [{ wait: "BUSY", send: "\x03" }]);
+    expect(count(run.out, /GOT SIGINT/), run.out).toBe(1);
+    expect(run.out).toContain("total 1");
+    expect(run).toMatchObject({ code: 0, signal: null, timedOut: false });
+  });
+
+  test("the REPL survives Ctrl+C during a long synchronous eval, as with node", async () => {
+    const steps: PtyStep[] = [
+      // console.log has a side effect, so the input preview never runs the loop.
+      { wait: "> ", send: 'console.log("LOOP" + "ING"); while (true) {}\r' },
+      { wait: "LOOPING", delay: 100, send: "\x03" },
+      // Node.js 24 puts the signal name in backticks.
+      { wait: "interrupted by `?SIGINT", send: "" },
+      // Long enough for a SIGINT oxnode would forward after its 50 ms wait.
+      { wait: "> ", delay: 300, send: 'console.log("ALIVE" + 1)\r' },
+      { wait: "ALIVE1", send: ".exit\r" },
+    ];
+    const node = await inPty(["--no-warnings"], steps);
+    expect(node, node.out).toMatchObject({ code: 0, done: steps.length });
+    const run = await inPty([CLI], steps);
+    expect(run, run.out).toMatchObject({ code: 0, signal: null, done: steps.length });
   });
 });

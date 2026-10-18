@@ -1,13 +1,12 @@
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { isatty } from "node:tty";
 import { fileURLToPath } from "node:url";
 
 import { Command, Option, type Usage } from "clipanion";
 
-import { createSignalAck, FORWARDED, gateSignals, SignalGate } from "../run.js";
+import { createSignalAck, FORWARDED, gateSignals, SignalGate, sigintFromTerminal } from "../run.js";
 import { parseWatchArgs, tsconfigEnv } from "./args.js";
 import { DirWatcher } from "./dirs.js";
 import { makeMatcher, type Matcher, type Source } from "./glob.js";
@@ -31,30 +30,6 @@ export class WatchCommand extends Command {
 
   async execute() {
     return runWatch(this.args);
-  }
-}
-
-/** Whether oxnode is in the terminal's foreground group: reading stdin from the background stops it (SIGTTIN). */
-function isForeground(): boolean {
-  try {
-    if (process.platform === "win32") return true;
-    if (process.platform === "linux") {
-      const stat = readFileSync("/proc/self/stat", "utf8");
-      // After the name: state, ppid, pgrp, session, tty_nr, tpgid
-      const f = stat
-        .slice(stat.lastIndexOf(")") + 1)
-        .trim()
-        .split(/\s+/);
-      return f[2] === f[5];
-    }
-    const [pgid, tpgid] = execFileSync("ps", ["-o", "pgid=,tpgid=", "-p", String(process.pid)], {
-      encoding: "utf8",
-    })
-      .trim()
-      .split(/\s+/);
-    return pgid === tpgid;
-  } catch {
-    return false;
   }
 }
 
@@ -99,13 +74,14 @@ export function runWatch(argv: string[]): Promise<number> {
   return new Promise((resolve) => {
     const ack = createSignalAck();
     let child: ChildProcess | undefined;
+    const fromTerminal = sigintFromTerminal();
     const signals = gateSignals(
-      new SignalGate({ nodeWatch: false, platform: process.platform }),
+      new SignalGate({ nodeWatch: false, platform: process.platform, terminal: fromTerminal }),
       ack,
       (sig) => child?.kill(sig),
       debug,
     );
-    const enter = args.rerunOnEnter ?? (isatty(0) && isForeground());
+    const enter = args.rerunOnEnter ?? fromTerminal;
     const cfg = {
       killSignal: args.killSignal,
       killTimeout: args.killTimeout,
