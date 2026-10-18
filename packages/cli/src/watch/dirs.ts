@@ -153,8 +153,9 @@ export class DirWatcher {
   addRoot(base: string, depth: number): void {
     const root = { base, depth, missing: false };
     this.#roots.push(root);
+    // Now, before the app starts: what arrives from here on is a change, found when the watch opens.
+    this.#walkRoot(root);
     if (this.#o.poll === false) this.#scheduleSync();
-    else this.#walkRoot(root);
   }
 
   close(): void {

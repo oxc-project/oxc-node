@@ -420,6 +420,28 @@ describe("DirWatcher", () => {
     }
   });
 
+  test("a file added to a root right after addRoot, before any watch, is a change", async () => {
+    const root = temp();
+    const conf = join(root, "conf");
+    const later = join(root, "later");
+    mkdirSync(conf);
+    writeFileSync(join(conf, "a.json"), "1");
+    const fake = fakeWatch();
+    const { w, changes } = start({ platform: "linux", watch: fake.watch });
+    try {
+      w.addRoot(conf, Infinity);
+      w.addRoot(later, Infinity);
+      // The app has started; its watches are not open yet.
+      writeFileSync(join(conf, "b.json"), "1");
+      mkdirSync(later);
+      writeFileSync(join(later, "c.json"), "1");
+      await until(() => fake.open(conf).length === 1 && fake.open(later).length === 1, "watches");
+      expect(changes.sort()).toEqual([join(conf, "b.json"), join(later, "c.json")].sort());
+    } finally {
+      w.close();
+    }
+  });
+
   test("a whole-second timestamp counts as a change only after an event", async () => {
     const root = temp();
     const file = join(root, "a.ts");
