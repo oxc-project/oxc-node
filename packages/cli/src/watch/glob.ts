@@ -70,6 +70,7 @@ export function makeMatcher(opts: {
   };
 
   const excludes = opts.exclude.map((p) => (GLOB_CHARS.test(p) ? glob(p) : literal(absolute(p))));
+  const treeExcludes = opts.exclude.filter((p) => /[\\/]\*\*$/.test(p)).map(glob);
   const includes: ((n: string) => boolean)[] = [];
   // The parts of each include glob below its base, to tell when one names a folder that walks
   // skip by default: `packages/**/node_modules/pkg/**`, `**/.storybook/*.ts`. Each holds only
@@ -148,8 +149,9 @@ export function makeMatcher(opts: {
             n.startsWith(include.base.endsWith("/") ? include.base : `${include.base}/`) &&
             fits(n.slice(include.base.replace(/\/$/, "").length + 1).split("/"), include.parts),
         );
-      // `**/dist/**` matches what is inside dist, not dist itself.
-      return skipped || excluded(n) || excluded(`${n}/__probe__`);
+      // `**/dist/**` matches what is inside dist, not dist itself. Only such a `/**` exclude
+      // speaks for every child: `dir/!(keep)` leaves `dir/keep`.
+      return skipped || excluded(n) || treeExcludes.some((m) => m(`${n}/__probe__`));
     },
   };
 }

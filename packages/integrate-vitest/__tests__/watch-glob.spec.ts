@@ -153,6 +153,15 @@ describe("makeMatcher", () => {
     ).toBe(true);
   });
 
+  test("pruneDir keeps a folder when an exclude spares some of its children", () => {
+    const m = matcher(["**/*.ts"], ["dir/!(keep)"]);
+    expect(m.pruneDir("/proj/dir")).toBe(false);
+    expect(m.pruneDir("/proj/dir/keep")).toBe(false);
+    expect(m.pruneDir("/proj/dir/other")).toBe(true);
+    expect(matcher(["**/*.ts"], ["dir/*"]).pruneDir("/proj/dir")).toBe(false);
+    expect(matcher(["**/*.ts"], ["dir/**"]).pruneDir("/proj/dir")).toBe(true);
+  });
+
   test("pruneDir with **/dist/**", () => {
     const m = matcher(["**/*.js"], ["**/dist/**"]);
     expect(m.pruneDir("/proj/dist")).toBe(true);
