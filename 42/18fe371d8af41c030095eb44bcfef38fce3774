@@ -1,0 +1,29 @@
+packages/cli/src/watch/kill-tree.ts
+  s_6c3daa89a8f7d9::t_d609224f54578d 56-57,89
+packages/integrate-vitest/__tests__/cli-signals.spec.ts
+  s_d25296fd97a711::t_15905903c37d1a 1,16,161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4218fe371d8af41c030095eb44bcfef38fce3774",
+  "prompts": {},
+  "sessions": {
+    "s_6c3daa89a8f7d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ab66df65ed35c4ac1",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    },
+    "s_d25296fd97a711": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a49dccbd86091c6e7",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
