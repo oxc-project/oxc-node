@@ -22,6 +22,7 @@ export const NODE_VALUE_FLAGS = new Set([
   "--disable-warning",
   "--redirect-warnings",
   "--report-dir",
+  "--report-directory",
   "--diagnostic-dir",
   "--allow-fs-read",
   "--allow-fs-write",
@@ -154,7 +155,7 @@ export function parseWatchArgs(
     // Value flags take `=value` or the next token.
     const value = (): string | undefined => inline ?? argv[++i];
 
-    switch (name) {
+    switch (nodeName) {
       case "-h":
       case "--help":
         out.help = true;

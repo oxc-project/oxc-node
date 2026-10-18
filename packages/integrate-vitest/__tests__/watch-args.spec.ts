@@ -64,6 +64,10 @@ describe("parseWatchArgs", () => {
     expect(ok(["--ignore", "dist/**", "app.ts"]).exclude).toEqual(["dist/**"]);
     expect(ok(["--watch-preserve-output", "app.ts"]).clearScreen).toBe(false);
     expect(ok(["--watch-kill-signal=SIGINT", "app.ts"]).killSignal).toBe("SIGINT");
+    expect(ok(["--watch_preserve_output", "app.ts"]).clearScreen).toBe(false);
+    const u = ok(["--watch_kill_signal", "SIGUSR1", "app.ts"]);
+    expect(u.killSignal).toBe("SIGUSR1");
+    expect(u.nodeArgs).toEqual(["app.ts"]);
   });
 
   test("!x in --include is an exclude", () => {
@@ -122,6 +126,7 @@ describe("parseWatchArgs", () => {
   test("a Node.js flag's value after a space is not the entry", () => {
     const a = ok(["--openssl-config", "openssl.cnf", "--max-http-header-size", "9000", "app.ts"]);
     expect(a.entry).toBe("app.ts");
+    expect(ok(["--report-directory", "reports", "app.ts"]).entry).toBe("app.ts");
     expect(a.nodeArgs).toEqual([
       "--openssl-config",
       "openssl.cnf",
