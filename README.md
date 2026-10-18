@@ -57,6 +57,146 @@ Running `oxnode` without arguments starts the Node REPL. Use
 `oxnode --node-help` to print Node's help; `oxnode --help` prints help for the
 wrapper.
 
+## Watch mode
+
+There are two watch modes:
+
+| Command                          | Watcher          | Use it for                                                   |
+| -------------------------------- | ---------------- | ------------------------------------------------------------ |
+| `oxnode watch ./src/server.ts`   | oxnode's own     | globs, Return to rerun, a kill timeout, polling              |
+| `oxnode --watch ./src/server.ts` | Node's `--watch` | Node's own flags, such as `--watch-path` or `--watch --test` |
+
+```bash
+npx oxnode watch ./src/server.ts
+npx oxnode watch --include "./config/*.json" --exclude "src/**/*.test.ts" ./src/server.ts --port 3000
+npx oxnode watch --inspect --clear-screen=false ./src/index.ts
+```
+
+```
+oxnode watch [watch options] [node options] [--] <entry> [script args...]
+             └─────── before the entry ────────┘         └─ to the app ─┘
+```
+
+Write Node options as `--flag=value`. Everything after the entry goes to the
+script, so `--port 3000` above reaches the app.
+
+The output looks like this:
+
+```
+16:14:24 [oxnode] watching for changes (Enter to rerun)
+RUN v1
+16:14:27 [oxnode] change in ./src/dep.ts, restarting
+RUN v2
+16:14:31 [oxnode] exited with code 1 — waiting for changes (Enter to rerun)
+```
+
+When the app exits or crashes, `oxnode watch` keeps watching and runs it again
+on the next change.
+
+### What restarts
+
+| A change to                                         | `oxnode watch`             | `oxnode --watch`                  |
+| --------------------------------------------------- | -------------------------- | --------------------------------- |
+| a file the app imports or requires                  | yes                        | yes                               |
+| `tsconfig.json` and every file it `extends`         | yes                        | yes                               |
+| a file that did not exist yet (`x.ts` for `./x.js`) | yes                        | yes, except Linux with Node 22/24 |
+| a module loaded in a worker thread                  | Node 24+                   | Node 24+                          |
+| an `--env-file` file                                | yes                        | yes                               |
+| the `--tsconfig` file                               | yes                        | (no such flag)                    |
+| a file matching `--include`                         | yes, even if created later | use `--watch-path`                |
+| a file in `node_modules`                            | only with `--include`      | Node's rules                      |
+| a file matching `--exclude`                         | no                         | (no such flag)                    |
+
+Globs are relative to the current folder.
+
+### Options
+
+These are the options from `oxnode watch --help`:
+
+| Option                    | What it does                                                                 |
+| ------------------------- | ---------------------------------------------------------------------------- |
+| `--include <glob>`        | Also watch files matching `<glob>` (repeatable; `"!x"` excludes)             |
+| `--exclude <glob>`        | Never watch files matching `<glob>` (repeatable)                             |
+| `--clear-screen=<bool>`   | Clear the screen before each rerun (default: true, TTY only)                 |
+| `--no-clear-screen`       | Same as `--clear-screen=false`                                               |
+| `--kill-signal <signal>`  | Signal that stops the app before a rerun (default: SIGTERM)                  |
+| `--kill-timeout <ms>`     | Force kill the app if it is still running after `<ms>` (default: 5000)       |
+| `--rerun-on-enter=<bool>` | Rerun when Return is pressed (default: true on a terminal)                   |
+| `--no-rerun-on-enter`     | Never read the terminal; the app keeps stdin to itself                       |
+| `--poll[=<ms>]`           | Poll files instead of using file system events (Docker, WSL, network drives) |
+| `--tsconfig <path>`       | Use this tsconfig (same as OXC_TSCONFIG_PATH)                                |
+| `-h`, `--help`            | Show this help                                                               |
+
+`--poll` checks every 300 ms by default. `--kill-timeout=0` force kills at
+once. Setting `CHOKIDAR_USEPOLLING=1` also turns on `--poll`.
+
+For scripts moved from `tsx`, these also work:
+
+| tsx flag                  | Same as                         |
+| ------------------------- | ------------------------------- |
+| `--ignore <glob>`         | `--exclude <glob>`              |
+| `--watch-preserve-output` | `--no-clear-screen`             |
+| `--watch-kill-signal <s>` | `--kill-signal <s>`             |
+| `--no-cache`              | nothing (oxc-node has no cache) |
+
+`oxnode watch` needs an entry file. It refuses `--watch`, `--watch-path`
+(use `--include`), and `-e`, `-p`, `-i`, `--test`, `--run` and `-`. For tests,
+use `oxnode --watch --test`.
+
+### Keys
+
+| Key    | While the app runs | While oxnode is stopping the app |
+| ------ | ------------------ | -------------------------------- |
+| Return | rerun now          | force kill now                   |
+| Ctrl+C | stop               | press again to force kill        |
+
+A rerun first sends `--kill-signal` to the app. If the app is still running
+after `--kill-timeout`, oxnode kills it and every process it started. A
+second Ctrl+C counts only when it comes more than half a second after the
+first one.
+
+### Exit codes and signals
+
+| Case                                     | `oxnode`, `oxnode --watch`                     | `oxnode watch`                            |
+| ---------------------------------------- | ---------------------------------------------- | ----------------------------------------- |
+| the app exits with a code                | the same code                                  | keeps watching                            |
+| the app is killed by a signal            | ends by the same signal (the shell sees 128+n) | keeps watching                            |
+| the app dies by a core-dump signal       | exits with 128+n, without its own core dump    | keeps watching                            |
+| you stop oxnode (Ctrl+C, `SIGTERM`)      | the app's result, as above                     | the app's exit code if it had one, else 0 |
+| you stop it while the app is not running |                                                | 0                                         |
+| the app cannot start                     | 1                                              | 1                                         |
+| bad watch option, or no entry            |                                                | 1                                         |
+
+`SIGINT`, `SIGTERM` and `SIGHUP` sent to `oxnode` reach the app once. Ctrl+C
+is not sent twice, and the second `SIGINT` that `npm run` sends is dropped.
+Under `oxnode --watch`, `SIGHUP` is passed on as `SIGTERM`, because Node's
+watcher ignores `SIGHUP`.
+
+### Limits
+
+- **Node 22 and worker threads.** Modules loaded only in a worker thread are
+  not tracked. Add them with `--include`.
+- **`oxnode --watch` on Linux with Node 22 or 24.** Node's watcher cannot watch
+  a file that does not exist yet, so creating a missing import does not
+  restart. Use `oxnode watch`, or Node 26.
+- **Docker, WSL (`/mnt/c`) and network drives** often send no file events. Use
+  `--poll`.
+- **Linux `ENOSPC`.** Raise `fs.inotify.max_user_watches`, or use `--poll`.
+- **Globs** need Node 22.5 or later.
+- **Return and stdin.** On a terminal, oxnode and the app both read stdin, so a
+  line typed for the app can go to oxnode. If the app reads the terminal (a
+  prompt or a TUI), use `--no-rerun-on-enter`. Piped stdin always goes to the
+  app, unless you pass `--rerun-on-enter`.
+- **Background jobs.** `oxnode watch app.ts &` does not read the terminal. A job
+  moved to the background later (Ctrl+Z, then `bg`) stops on its next read; use
+  `--no-rerun-on-enter` for that.
+- **Windows** has no graceful stop before a rerun: oxnode ends the app and its
+  children at once, and `--kill-signal` is ignored.
+- **The watch list only grows.** A file the app no longer imports can still
+  cause a rerun.
+- **A script named `watch`.** `oxnode watch` is now the watch command, so run a
+  file named exactly `watch` as `oxnode ./watch`.
+
 ## Node hook
 
 If you do not need the wrapper CLI, install the core package:
