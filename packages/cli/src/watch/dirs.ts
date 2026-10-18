@@ -71,13 +71,15 @@ interface WalkedDir {
 interface Handle {
   w: FSWatcher;
   dir: string;
-  /** The folder's inode when the watch was opened: a new one means the folder was replaced. */
-  ino: bigint | undefined;
+  /** The folder's identity when the watch was opened: a new one means the folder was replaced. */
+  id: string | undefined;
 }
 
-function inoOf(dir: string): bigint | undefined {
+// The inode and the birth time: ext4 gives a folder made right after `rm -rf` the old inode number.
+function idOf(dir: string): string | undefined {
   try {
-    return statSync(dir, { bigint: true }).ino;
+    const s = statSync(dir, { bigint: true });
+    return `${s.ino}:${s.birthtimeNs}`;
   } catch {
     return undefined;
   }
@@ -102,6 +104,7 @@ export class DirWatcher {
   #warned = new Set<string>();
   #syncTimer: NodeJS.Timeout | undefined;
   #pollTimer: NodeJS.Timeout | undefined;
+  #settleTimer: NodeJS.Timeout | undefined;
   #synced = false;
   #closed = false;
 
@@ -153,6 +156,7 @@ export class DirWatcher {
     this.#closed = true;
     clearTimeout(this.#syncTimer);
     clearInterval(this.#pollTimer);
+    clearTimeout(this.#settleTimer);
     for (const h of this.#handles.values()) h.w.close();
     this.#handles.clear();
     if (this.#o.poll !== false) {
@@ -259,7 +263,7 @@ export class DirWatcher {
 
     for (const [k, h] of this.#handles) {
       // A folder replaced by another (a rename over it) keeps the old watch on Linux and Windows.
-      if (!needed.has(k) || inoOf(h.dir) !== h.ino) this.#drop(k, h);
+      if (!needed.has(k) || idOf(h.dir) !== h.id) this.#drop(k, h);
     }
     const fresh: string[] = [];
     for (const [k, dir] of needed) {
@@ -279,8 +283,22 @@ export class DirWatcher {
   #drop(k: string, h: Handle) {
     h.w.close();
     this.#handles.delete(k);
+    this.#restarted();
     // macOS may report a removed folder with one event for the folder and none for its files.
     this.#checkDir(h.dir);
+  }
+
+  // On macOS libuv has one FSEvents stream for all watches, made again from "now" on each open or
+  // close: events not yet delivered (it waits up to 50 ms) or sent meanwhile are lost.
+  // So look at every file again once the new stream runs.
+  #restarted() {
+    if (this.#o.platform !== "darwin" || this.#closed) return;
+    clearTimeout(this.#settleTimer);
+    this.#settleTimer = setTimeout(() => {
+      this.#settleTimer = undefined;
+      for (const k of this.#files.keys()) this.#check(k);
+      this.#scheduleSync();
+    }, 250);
   }
 
   #rescan(walked: WalkedDir) {
@@ -295,9 +313,9 @@ export class DirWatcher {
 
   #open(k: string, dir: string): boolean {
     try {
-      const ino = inoOf(dir);
+      const id = idOf(dir);
       const w = (this.#o.watch ?? watch)(dir, (_type, name) => this.#onEvent(dir, w, name));
-      const h = { w, dir, ino };
+      const h = { w, dir, id };
       w.on("error", () => {
         // Usually the folder went away: watch its parent instead.
         if (this.#handles.get(k) === h) this.#drop(k, h);
@@ -305,6 +323,7 @@ export class DirWatcher {
         this.#scheduleSync();
       });
       this.#handles.set(k, h);
+      this.#restarted();
       this.#o.debug(`ready ${dir}`);
       return true;
     } catch (error) {
@@ -353,6 +372,19 @@ export class DirWatcher {
       // inotify watches the inode, so the watch is dead even if a new folder (maybe with the
       // same inode number) is already there.
       if (h?.w === w && this.#o.platform === "linux") this.#drop(dk, h);
+      this.#scheduleSync();
+    }
+    // After `rm -rf` and `mkdir`, the watch is on the old folder (Linux, Windows) and sees nothing
+    // more. inotify reports the folder itself only once no process uses it (a shell `cd`'d into
+    // it), and Windows names it by its full path. So compare the folder on any event, and again at
+    // the sync when an entry went away: the folder may be going too.
+    const dk = this.#key(dir);
+    const h = this.#handles.get(dk);
+    if (h?.w !== w) return;
+    if (idOf(dir) !== h.id) {
+      this.#drop(dk, h);
+      this.#scheduleSync();
+    } else if (!existsSync(full)) {
       this.#scheduleSync();
     }
   }

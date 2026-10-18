@@ -214,6 +214,64 @@ describe("DirWatcher", () => {
     }
   });
 
+  test.each(["linux", "win32"] as const)(
+    "%s: a folder replaced while a process is in it gets a new watch",
+    async (platform) => {
+      const root = temp();
+      const gen = join(root, "gen");
+      const file = join(gen, "x.ts");
+      mkdirSync(gen);
+      writeFileSync(file, "1");
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform, watch: fake.watch });
+      const open = () => fake.opened.filter((h) => !h.closed);
+      try {
+        w.add(file);
+        await until(() => open().length === 1, "the first watch");
+        const [first] = open();
+        rmSync(gen, { recursive: true });
+        mkdirSync(gen);
+        writeFileSync(file, "22");
+        // Only the file's removal: inotify holds back the event for the folder itself while a
+        // shell is `cd`'d into it, and on ext4 the new folder may get the old inode number.
+        first.emit("x.ts");
+        await until(() => changes.includes(file), "a change");
+        await until(() => open().length === 1 && open()[0] !== first, "a new watch");
+        expect(first.closed).toBe(true);
+        writeFileSync(file, "333");
+        open()[0].emit("x.ts");
+        expect(changes.filter((c) => c === file)).toHaveLength(2);
+      } finally {
+        w.close();
+      }
+    },
+  );
+
+  test("macOS: a change lost while FSEvents restarts is found by a later look", async () => {
+    const root = temp();
+    const [a, b] = ["cfg0", "cfg1"].map((d) => join(root, d, "a.ts"));
+    for (const f of [a, b]) {
+      mkdirSync(join(f, ".."));
+      writeFileSync(f, "1");
+    }
+    const fake = fakeWatch();
+    const { w, changes } = start({ platform: "darwin", watch: fake.watch });
+    try {
+      w.add(a);
+      w.add(b);
+      await until(() => fake.open(join(b, "..")).length === 1, "the first watches");
+      rmSync(join(a, ".."), { recursive: true });
+      fake.open(join(a, ".."))[0].emit("cfg0");
+      // The watch moves to the parent, which restarts libuv's one FSEvents stream.
+      await until(() => fake.open(root).length === 1, "the parent's watch");
+      // Removed meanwhile: the old stream is gone and the new one starts after it.
+      rmSync(join(b, ".."), { recursive: true });
+      await until(() => changes.includes(b), "a change for the second folder");
+    } finally {
+      w.close();
+    }
+  });
+
   test("Linux: a walked --include folder replaced in place is walked again", async () => {
     const root = temp();
     const conf = join(root, "conf");
@@ -261,7 +319,7 @@ describe("DirWatcher", () => {
       first.emit("gen");
       await until(() => changes.includes(file), "a change");
       expect(first.closed).toBe(true);
-      expect(fake.open(gen)).toHaveLength(1);
+      await until(() => fake.open(gen).length === 1, "a new watch");
     } finally {
       w.close();
     }
