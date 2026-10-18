@@ -84,16 +84,12 @@ describe("exitPlan", () => {
     },
   );
 
-  test.each([
-    "SIGABRT",
-    "SIGSEGV",
-    "SIGBUS",
-    "SIGFPE",
-    "SIGILL",
-    "SIGQUIT",
-    "SIGTRAP",
-    "SIGSYS",
-  ] as NodeJS.Signals[])("%s gives 128+n instead of a core dump", (sig) => {
+  // Windows' `os.constants.signals` has no SIGBUS, SIGTRAP or SIGSYS.
+  test.each(
+    ["SIGABRT", "SIGSEGV", "SIGBUS", "SIGFPE", "SIGILL", "SIGQUIT", "SIGTRAP", "SIGSYS"].filter(
+      (sig) => sig in constants.signals,
+    ) as NodeJS.Signals[],
+  )("%s gives 128+n instead of a core dump", (sig) => {
     expect(exitPlan(null, sig, "linux")).toEqual({ code: 128 + constants.signals[sig] });
   });
 
