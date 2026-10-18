@@ -247,6 +247,28 @@ describe("paths a failed resolve looked for", () => {
     );
   });
 
+  test("a missing JSON module imported with an import attribute", async () => {
+    // Plain Node.js reports both. Under the hooks, data.json used to be lost:
+    // a request with import attributes returned before the candidates were sent.
+    const root = project({
+      "package.json": ESM,
+      "main.ts": [
+        "try {",
+        '  await import("./data.json", { with: { type: "json" } });',
+        "} catch {}",
+        "try {",
+        '  await import("./other.json");',
+        "} catch {}",
+        'console.log("done");',
+        "",
+      ].join("\n"),
+    });
+    const { paths, stdout, code, stderr } = await spy(root, [...REGISTER, "./main.ts"]);
+    expect(code, stderr).toBe(0);
+    expect(stdout).toBe("done\n");
+    expect(paths).toEqual(expect.arrayContaining(["data.json", "other.json"]));
+  });
+
   test("a miss right before process.exit() is still reported", async () => {
     const root = project({
       "package.json": ESM,

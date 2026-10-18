@@ -2356,6 +2356,38 @@ pub fn create_resolve<'env>(
         resolution = resolve(&package_resolver);
     }
 
+    // A file that does not exist yet can still be created, so a watch parent
+    // learns every path the resolver tried (`x.ts` for `./x.js`, `dir/index.ts`,
+    // a `paths` alias's targets). It runs ahead of the early returns below, so a
+    // request with import attributes (`./data.json` with `type: "json"`) is
+    // covered too. The paths are asked of the resolver again rather than
+    // collected on every resolve, which keeps the hot path as it is: only a
+    // failure while watching pays for the second run.
+    if watching()
+        && failed
+        && !parent_file.is_some_and(in_node_modules)
+        && let Some((directory, resolver_specifier)) = &request
+    {
+        // The config the failed resolve used.
+        let tsconfig = match (tsconfig_source, parent_file, is_absolute_path) {
+            (TsconfigSource::Manual(tsconfig), ..) => tsconfig.clone(),
+            (TsconfigSource::Auto, Some(parent_file), false) => {
+                tsconfig_source.for_importer(resolver, parent_file, &specifier)
+            }
+            _ => None,
+        };
+        let mut resolve_context = ResolverContext::default();
+        let _ = resolver.resolve_with_context(
+            directory,
+            resolver_specifier,
+            tsconfig.as_deref(),
+            &mut resolve_context,
+        );
+        for path in watch_candidates(&resolve_context.missing_dependencies) {
+            report_watch_path(path);
+        }
+    }
+
     // JSON modules, resolved with oxc-node's own resolver so that tsconfig `paths`, package
     // `exports` and conditions apply to them like they do to everything else. Deciding this
     // from the specifier before resolving, as this used to, meant an aliased or exported
@@ -2462,36 +2494,6 @@ pub fn create_resolve<'env>(
             return add_short_circuit(url, Some(format), context, next_resolve);
         } else {
             return add_short_circuit(url, None, context, next_resolve);
-        }
-    }
-
-    // A file that does not exist yet can still be created, so a watch parent
-    // learns every path the resolver tried (`x.ts` for `./x.js`, `dir/index.ts`,
-    // a `paths` alias's targets). They are asked of the resolver again rather
-    // than collected on every resolve, which keeps the hot path as it is: only a
-    // failure while watching pays for the second run.
-    if watching()
-        && failed
-        && !parent_file.is_some_and(in_node_modules)
-        && let Some((directory, resolver_specifier)) = &request
-    {
-        // The config the failed resolve used.
-        let tsconfig = match (tsconfig_source, parent_file, is_absolute_path) {
-            (TsconfigSource::Manual(tsconfig), ..) => tsconfig.clone(),
-            (TsconfigSource::Auto, Some(parent_file), false) => {
-                tsconfig_source.for_importer(resolver, parent_file, &specifier)
-            }
-            _ => None,
-        };
-        let mut resolve_context = ResolverContext::default();
-        let _ = resolver.resolve_with_context(
-            directory,
-            resolver_specifier,
-            tsconfig.as_deref(),
-            &mut resolve_context,
-        );
-        for path in watch_candidates(&resolve_context.missing_dependencies) {
-            report_watch_path(path);
         }
     }
 
