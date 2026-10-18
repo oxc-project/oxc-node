@@ -257,11 +257,16 @@ describe.skipIf(!posix)("signals", () => {
   });
 
   test.each([
-    ["SIGTERM to oxnode", (pid: number) => process.kill(pid, "SIGTERM")],
-    ["SIGHUP to oxnode", (pid: number) => process.kill(pid, "SIGHUP")],
-    ["Ctrl+C", (pid: number) => process.kill(-pid, "SIGINT")],
-  ])("oxnode --watch + %s leaves nothing running", async (_name, send) => {
-    const run = oxnode(["--watch", "no-listener.ts"]);
+    ["SIGTERM to oxnode", [], (pid: number) => process.kill(pid, "SIGTERM")],
+    ["SIGHUP to oxnode", [], (pid: number) => process.kill(pid, "SIGHUP")],
+    [
+      "SIGHUP to oxnode, after a value flag",
+      ["--unhandled-rejections", "strict"],
+      (pid: number) => process.kill(pid, "SIGHUP"),
+    ],
+    ["Ctrl+C", [], (pid: number) => process.kill(-pid, "SIGINT")],
+  ])("oxnode --watch + %s leaves nothing running", async (_name, flags, send) => {
+    const run = oxnode([...flags, "--watch", "no-listener.ts"]);
     const [, appPid] = await run.waitFor(/READY (\d+)/);
     const pids = tree(run.child.pid!);
     expect(pids).toContain(Number(appPid));

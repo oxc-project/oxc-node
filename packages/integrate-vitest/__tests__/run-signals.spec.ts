@@ -118,7 +118,11 @@ describe("usesNodeWatch", () => {
     [["--watch-path=src", "app.ts"], true],
     [["--import", "x", "--watch", "app.ts"], true],
     [["--inspect", "--watch", "app.ts"], true],
-    [["app.ts", "--watch"], false],
+    // Value flags the parser does not list.
+    [["--unhandled-rejections", "strict", "--watch", "app.ts"], true],
+    [["--cpu-prof-dir", "d", "--watch", "app.ts"], true],
+    // An app arg: SIGTERM ends the app just as SIGHUP would.
+    [["app.ts", "--watch"], true],
     [["--", "app.ts", "--watch"], false],
     [["--watch-preserve-output", "app.ts"], false],
     [["--watch-kill-signal", "SIGINT", "app.ts"], false],

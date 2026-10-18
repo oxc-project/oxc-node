@@ -7,8 +7,6 @@ import { join } from "node:path";
 import process from "node:process";
 import { isatty } from "node:tty";
 
-import { NODE_VALUE_FLAGS } from "./watch/args.js";
-
 /** The signals oxnode passes on to the app. On Windows it only listens, so it outlives the app. */
 export const FORWARDED: NodeJS.Signals[] =
   process.platform === "win32" ? ["SIGINT", "SIGBREAK", "SIGHUP"] : ["SIGINT", "SIGTERM", "SIGHUP"];
@@ -300,18 +298,18 @@ export function runChild(cmd: string, args: string[], o: { nodeWatch: boolean })
   });
 }
 
-/** True when Node.js' own watch mode is asked for before the entry. */
+/**
+ * True when Node.js' own watch mode may be on. Every arg is checked, as finding the entry
+ * needs every Node.js flag that takes a value (`--unhandled-rejections strict`). An app arg
+ * named `--watch` only turns SIGHUP into SIGTERM, which ends the app as well.
+ */
 export function usesNodeWatch(args: string[]): boolean {
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === "--" || !arg.startsWith("-") || arg === "-") {
+  for (const arg of args) {
+    if (arg === "--") {
       return false;
     }
     if (/^--watch(-path)?(=|$)/.test(arg)) {
       return true;
-    }
-    if (NODE_VALUE_FLAGS.has(arg)) {
-      i++;
     }
   }
   return false;
