@@ -373,6 +373,8 @@ export class DirWatcher {
       (target.links ??= new Set()).add(link);
       hops.forEach((h, i) => {
         const hop = this.#files.get(hopKeys[i]) ?? this.#put(h, entry.path, undefined);
+        // A hop can point at another file with the same stat too: see #check.
+        hop.linkSig ??= linkSigOf(h);
         (hop.links ??= new Set()).add(link);
       });
     }
@@ -606,13 +608,22 @@ export class DirWatcher {
       // A link stats as its target, so look at the link itself: it may point at another file
       // with the same stat (a hard link of it), or, its target deleted, be gone or pointed at
       // another missing file. Either way its old target must not stay.
-      if (entry.target !== undefined) {
-        if (changed(entry.linkSig ?? null, linkSigOf(entry.path), false)) {
-          const before = entry.target;
-          this.#follow(entry);
+      if (entry.linkSig !== undefined && changed(entry.linkSig, linkSigOf(entry.path), false)) {
+        let moved = false;
+        const follow = (link: Entry) => {
+          const before = link.target;
+          this.#follow(link);
           // Node.js loads it from the new path now, and resolves its imports from there.
-          if (next !== null && entry.target !== before) this.#o.onChange(entry.shown);
+          if (next !== null && link.target !== before) moved = true;
+        };
+        if (entry.target !== undefined) follow(entry);
+        else entry.linkSig = linkSigOf(entry.path);
+        // A hop: the links through it follow it again. A copy, as following changes the set.
+        for (const l of Array.from(entry.links ?? [])) {
+          const through = this.#files.get(l);
+          if (through?.hops?.includes(k)) follow(through);
         }
+        if (moved) this.#o.onChange(entry.shown);
       }
       return;
     }

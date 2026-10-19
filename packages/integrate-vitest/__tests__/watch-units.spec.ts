@@ -740,6 +740,35 @@ describe("DirWatcher", () => {
   );
 
   test.skipIf(process.platform === "win32")(
+    "a link in a chain pointed at another hard link of the target restarts and follows it",
+    async () => {
+      const root = temp();
+      const [config, shared, real] = ["config", "shared", "real"].map((d) => join(root, d));
+      for (const d of [config, shared, real]) mkdirSync(d);
+      const [a, b] = [join(real, "a.json"), join(real, "b.json")];
+      writeFileSync(a, "1");
+      linkSync(a, b);
+      const alias = join(shared, "alias.json");
+      symlinkSync("../real/a.json", alias);
+      const current = join(config, "current.json");
+      symlinkSync("../shared/alias.json", current);
+      const fake = fakeWatch();
+      const { w, changes, debug } = start({ platform: "linux", watch: fake.watch });
+      try {
+        w.add(current);
+        await until(() => fake.open(real).length === 1, "the target's watch");
+        rmSync(alias);
+        symlinkSync("../real/b.json", alias);
+        fake.open(shared)[0].emit("alias.json");
+        expect(changes).toHaveLength(1);
+        expect(debug).toContain(`watch ${b}`);
+      } finally {
+        w.close();
+      }
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
     "a link removed after its target was deleted lets the old target go",
     async () => {
       const root = temp();
