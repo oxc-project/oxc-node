@@ -128,8 +128,11 @@ export function makeMatcher(opts: {
     throw new Error(`--include and --exclude globs need Node.js 22.5 or later (path.matchesGlob)`);
   }
 
-  // A literal matches itself and everything below it.
-  const literal = (lit: string) => (n: string) => n === lit || n.startsWith(`${lit}/`);
+  // A literal matches itself and everything below it. A root (`/`, `c:/`) already ends in `/`.
+  const literal = (lit: string) => {
+    const below = lit.endsWith("/") ? lit : `${lit}/`;
+    return (n: string) => n === lit || n.startsWith(below);
+  };
   // A relative glob is matched against the path relative to cwd, so `[ ] { }` in cwd stay literal.
   const glob = (pattern: string) => {
     if (native.isAbsolute(rooted(pattern))) {

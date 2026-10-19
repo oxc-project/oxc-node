@@ -145,6 +145,21 @@ describe("makeMatcher", () => {
     expect(win.classify("C:\\proj\\dist\\a.js", "graph")).toBe("exclude");
   });
 
+  test("a literal naming a root covers everything below it", () => {
+    const m = matcher(["/"]);
+    expect(m.classify("/etc/app.conf", "walk")).toBe("watch");
+    expect(matcher([], ["/"]).classify("/proj/a.ts", "graph")).toBe("exclude");
+    const win = makeMatcher({
+      cwd: "C:\\proj",
+      include: ["D:\\"],
+      exclude: ["C:\\"],
+      platform: "win32",
+      isDir: () => false,
+    });
+    expect(win.classify("D:\\data\\a.json", "walk")).toBe("watch");
+    expect(win.classify("C:\\proj\\a.ts", "graph")).toBe("exclude");
+  });
+
   test("a literal exclude under a UNC working folder", () => {
     const unc = makeMatcher({
       cwd: "\\\\server\\share\\proj",
