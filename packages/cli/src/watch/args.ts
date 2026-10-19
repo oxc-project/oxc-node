@@ -325,11 +325,7 @@ export function parseWatchArgs(
       nodeName === "--experimental-config-file" ||
       nodeName === "--config-file" ||
       nodeName === "--experimental-default-config-file";
-    // Before 24.19 and 26.1, Node.js takes the next word as the config file.
-    const takesValue =
-      NODE_VALUE_FLAGS.has(nodeName) &&
-      !(nodeName === "--experimental-config-file" && bareConfigFlag(nodeVersion));
-    if (inline === undefined && takesValue && i + 1 < argv.length) {
+    if (inline === undefined && takesNextWord(nodeName, nodeVersion) && i + 1 < argv.length) {
       nodeValue = argv[++i];
       out.nodeArgs.push(nodeValue);
     }
@@ -373,6 +369,17 @@ function pickConfig(configs: ConfigFlag[], nodeVersion: string): string[] {
 }
 
 /** Normalized long flag name and inline value: `--watch_path=x` is `--watch-path`, `x`. */
+/** Whether Node.js takes the next word as the value of `arg`, a flag with no `=value`. */
+export function takesNextWord(arg: string, nodeVersion = NODE_VERSION): boolean {
+  if (arg.includes("=")) return false;
+  const name = arg.startsWith("--") ? `--${arg.slice(2).replaceAll("_", "-")}` : arg;
+  // Before 24.19 and 26.1, Node.js takes the next word as the config file.
+  return (
+    NODE_VALUE_FLAGS.has(name) &&
+    !(name === "--experimental-config-file" && bareConfigFlag(nodeVersion))
+  );
+}
+
 function splitFlag(arg: string): [string, string | undefined] {
   const eq = arg.indexOf("=");
   const name = `--${(eq === -1 ? arg : arg.slice(0, eq)).slice(2).replaceAll("_", "-")}`;

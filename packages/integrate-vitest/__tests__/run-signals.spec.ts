@@ -141,7 +141,10 @@ describe("usesNodeWatch", () => {
     [["--no-watch", "--watch", "app.ts"], true],
     // After another word, a --no-watch may be the app's: watch mode may still be on.
     [["--watch", "app.ts", "--no-watch"], true],
-    [["--watch", "--title", "x", "--no-watch", "app.ts"], true],
+    [["--watch", "--unknown-flag", "x", "--no-watch", "app.ts"], true],
+    // A Node.js flag's value is not the entry: Node.js reads the --no-watch after it.
+    [["--watch", "--title", "x", "--no-watch", "app.ts"], false],
+    [["--watch", "-r", "./setup.js", "--no-watch", "app.ts"], false],
     [["--watch-preserve-output", "app.ts"], false],
     [["--watch-kill-signal", "SIGINT", "app.ts"], false],
     [["--watchful", "app.ts"], false],

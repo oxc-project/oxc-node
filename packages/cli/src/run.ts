@@ -7,7 +7,7 @@ import { join } from "node:path";
 import process from "node:process";
 import { isatty } from "node:tty";
 
-import { nestedWatcher, nodeFiles } from "./watch/args.js";
+import { nestedWatcher, nodeFiles, takesNextWord } from "./watch/args.js";
 
 /** The signals oxnode passes on to the app. On Windows it only listens, so it outlives the app. */
 export const FORWARDED: NodeJS.Signals[] =
@@ -323,7 +323,8 @@ export function usesNodeWatch(
 ): boolean {
   let on: boolean | undefined;
   let word = false;
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
     if (arg === "--") {
       break;
     }
@@ -331,6 +332,9 @@ export function usesNodeWatch(
       on = true;
     } else if (/^--no[-_]watch(=|$)/.test(arg)) {
       if (!word) on = false;
+    } else if (!word && takesNextWord(arg, nodeVersion)) {
+      // `--title x`: x is the flag's value, not the entry.
+      i++;
     } else if (!arg.startsWith("-")) {
       word = true;
     }
