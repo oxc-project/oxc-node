@@ -587,6 +587,42 @@ describe("DirWatcher", () => {
   );
 
   test.skipIf(process.platform === "win32")(
+    "a link in the middle of a chain pointed elsewhere moves the watch",
+    async () => {
+      const root = temp();
+      const [config, shared, other] = ["config", "shared", "other"].map((d) => join(root, d));
+      for (const d of [config, shared, other]) mkdirSync(d);
+      const [a, b] = [join(shared, "a.json"), join(other, "b.json")];
+      writeFileSync(a, "1");
+      writeFileSync(b, "1");
+      const alias = join(shared, "alias.json");
+      symlinkSync("a.json", alias);
+      const link = join(config, "current.json");
+      symlinkSync("../shared/alias.json", link);
+      const fake = fakeWatch();
+      const { w, changes, debug } = start({ platform: "linux", watch: fake.watch });
+      try {
+        w.addRoot(config, Infinity);
+        expect(debug).toContain(`watch ${alias}`);
+        await until(() => fake.open(shared).length === 1, "the chain's watch");
+        rmSync(alias);
+        symlinkSync("../other/b.json", alias);
+        fake.open(shared)[0].emit("alias.json");
+        expect(changes).toEqual([link]);
+        await until(() => fake.open(other).length === 1, "the new target's watch");
+        writeFileSync(a, "22");
+        fake.open(shared)[0].emit("a.json");
+        expect(changes).toEqual([link]);
+        writeFileSync(b, "22");
+        fake.open(other)[0].emit("b.json");
+        expect(changes).toEqual([link, link]);
+      } finally {
+        w.close();
+      }
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
     "a link removed after its target was deleted lets the old target go",
     async () => {
       const root = temp();

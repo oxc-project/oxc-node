@@ -2,6 +2,7 @@ import {
   existsSync,
   lstatSync,
   readdirSync,
+  readlinkSync,
   realpathSync,
   statSync,
   unwatchFile,
@@ -40,6 +41,23 @@ function sigOf(p: string): Sig {
   } catch {
     return null;
   }
+}
+
+/** The links between a link and the file it ends at: `a -> b -> c -> file` gives `b`, `c`. */
+function linkHops(p: string): string[] {
+  const hops: string[] = [];
+  let cur = p;
+  // A loop never ends at a file; realpath has failed for it already.
+  for (let n = 0; n < 32; n++) {
+    try {
+      cur = path.resolve(path.dirname(cur), readlinkSync(cur));
+    } catch {
+      break;
+    }
+    if (!isLink(cur)) break;
+    hops.push(cur);
+  }
+  return hops;
 }
 
 /** The stat of a link itself: it changes when the link is removed or pointed elsewhere. */
@@ -94,6 +112,8 @@ interface Entry {
   sig: Sig;
   own?: "static" | "run";
   target?: string;
+  /** The keys of the links between a link and its target, watched too, as the target is. */
+  hops?: string[];
   /** For a link with a target: the link's own stat when it was followed. */
   linkSig?: Sig;
   /** It was there and is gone. */
@@ -335,13 +355,22 @@ export class DirWatcher {
     } catch {}
     const next = real && this.#key(real) !== this.#key(entry.path) ? this.#key(real) : undefined;
     entry.linkSig = next ? linkSigOf(entry.path) : undefined;
-    if (next === entry.target) return;
+    // Pointing a link in the middle of a chain elsewhere changes neither end: so watch those too.
+    const hops = next ? linkHops(entry.path).filter((h) => this.#key(h) !== next) : [];
+    const hopKeys = hops.map((h) => this.#key(h));
+    if (next === entry.target && hopKeys.join("\0") === (entry.hops ?? []).join("\0")) return;
     const link = this.#key(entry.path);
+    for (const k of entry.hops ?? []) this.#release(k, link);
     if (entry.target !== undefined) this.#release(entry.target, link);
     entry.target = next;
+    entry.hops = hopKeys;
     if (real && next && !this.#closed) {
       const target = this.#files.get(next) ?? this.#put(real, entry.path, undefined);
       (target.links ??= new Set()).add(link);
+      hops.forEach((h, i) => {
+        const hop = this.#files.get(hopKeys[i]) ?? this.#put(h, entry.path, undefined);
+        (hop.links ??= new Set()).add(link);
+      });
     }
   }
 
@@ -360,6 +389,7 @@ export class DirWatcher {
     const entry = this.#files.get(k);
     if (!entry) return;
     this.#files.delete(k);
+    for (const h of entry.hops ?? []) this.#release(h, k);
     if (entry.target !== undefined) this.#release(entry.target, k);
     this.#byDir.get(this.#key(path.dirname(entry.path)))?.delete(k);
     if (this.#o.poll !== false) unwatchFile(entry.path);
@@ -581,6 +611,14 @@ export class DirWatcher {
     // spelling (8.3 names), which is the same file.
     if (entry.own && (entry.target !== undefined || isLink(entry.path))) {
       this.#follow(entry);
+    }
+    // A link in the middle of a chain: the links through it follow it again. A copy, as following
+    // takes a link out of the set and puts it back.
+    if (entry.links && isLink(entry.path)) {
+      for (const l of Array.from(entry.links)) {
+        const through = this.#files.get(l);
+        if (through) this.#follow(through);
+      }
     }
     this.#o.onChange(entry.shown);
   }
