@@ -130,9 +130,12 @@ export function runWatch(argv: string[]): Promise<number> {
     const seen = new Set<string>();
     const runSeen = new Set<string>();
     const want = (p: string, source: Source) => {
-      if (seen.has(p) || runSeen.has(p)) return;
+      // An oxc-node report counts on its own: a package file Node.js reported (and the
+      // default ignores skip) can be a tsconfig.json oxc-node reads later.
+      const key = source === "oxc" ? `oxc:${p}` : p;
+      if (seen.has(p) || runSeen.has(key)) return;
       const run = source === "graph" || source === "oxc";
-      (run ? runSeen : seen).add(p);
+      (run ? runSeen : seen).add(key);
       const verdict = matcher.classify(p, source);
       if (verdict === "watch") watcher.add(p, run, source === "oxc");
       else debug(`skip ${p} (${verdict === "exclude" ? "exclude" : "default"})`);

@@ -198,6 +198,27 @@ ${KEEP}`,
     await o.editUntil(join(root, shared), () => paths("b"), runLine("b"));
   });
 
+  test("a package file imported as JSON first and used as a tsconfig later", async () => {
+    const paths = (dir: string) =>
+      JSON.stringify({ compilerOptions: { paths: { "@lib/*": [`../../${dir}/*`] } } });
+    const shared = "node_modules/shared-config/tsconfig.json";
+    const root = project({
+      "package.json": ESM,
+      "node_modules/shared-config/package.json": JSON.stringify({ name: "shared-config" }),
+      [shared]: paths("a"),
+      // Node.js reports the JSON import first, and it is not watched under node_modules.
+      "main.mjs": `import "shared-config/tsconfig.json" with { type: "json" };\nawait import("./sub/main.ts");\n`,
+      "sub/tsconfig.json": JSON.stringify({ extends: "shared-config/tsconfig.json" }),
+      "sub/main.ts": `import { v } from "@lib/value";\nconsole.log("RUN", v, process.pid);\n${KEEP}`,
+      "a/value.ts": value("a"),
+      "b/value.ts": value("b"),
+    });
+    const o = startOxnode(["watch", "main.mjs"], root);
+    await o.waitFor(runLine("a"));
+    await o.watched(join(root, shared));
+    await o.editUntil(join(root, shared), () => paths("b"), runLine("b"));
+  });
+
   test("the config named by --tsconfig", async () => {
     const paths = (dir: string) =>
       JSON.stringify({ compilerOptions: { paths: { "@lib/*": [`./${dir}/*`] } } });
