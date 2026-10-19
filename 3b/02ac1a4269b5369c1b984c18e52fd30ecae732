@@ -1,0 +1,29 @@
+README.md
+  s_5b25d6ae40e975::t_98e71349bc1e56 98-109
+packages/cli/src/watch/args.ts
+  s_5b25d6ae40e975::t_5cb3f1ed3431cd 81,83-84,138-149,194,307,338-340,343,348-349,352,428
+packages/cli/src/watch/command.ts
+  s_5b25d6ae40e975::t_191935a62dbe8d 293-294
+packages/cli/src/watch/help.ts
+  s_5b25d6ae40e975::t_d00b9939228cb8 24-25
+packages/integrate-vitest/__tests__/watch-args.spec.ts
+  s_5b25d6ae40e975::t_13afc7fcb318fe 43,247-250,257,263-283
+packages/integrate-vitest/__tests__/watch-cli.spec.ts
+  s_5b25d6ae40e975::t_89068b9cf4fcc7 434-454
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3b02ac1a4269b5369c1b984c18e52fd30ecae732",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}

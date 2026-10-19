@@ -1,0 +1,27 @@
+packages/cli/src/watch/command.ts
+  s_492a2a7aa2871a::t_19c41fcbc05d1b 1-282
+packages/cli/src/watch/dirs.ts
+  s_492a2a7aa2871a::t_712c1b041994e0 1-347
+packages/cli/src/watch/help.ts
+  s_492a2a7aa2871a::t_06acadda33f924 1-35
+packages/cli/src/watch/log.ts
+  s_492a2a7aa2871a::t_fb0e6cdeb1bde8 1-25
+packages/cli/src/index.ts
+  s_492a2a7aa2871a::t_7d788f60827492 9,25,64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "258cd8d2e5a76f3ecfc3e351dd826c3a26f24381",
+  "prompts": {},
+  "sessions": {
+    "s_492a2a7aa2871a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-afd553f1b8c2c896c",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+README.md
+  s_57654b381fae0c::t_15186a6986608b 110-112
+packages/cli/src/watch/command.ts
+  s_57654b381fae0c::t_28a5233777bdae 2,77-78,117-118,131,133-134,136,144-149,154-159,169,176,180-181
+packages/integrate-vitest/__tests__/watch-cli.spec.ts
+  s_d6cfe61538c3a0::t_c8ff033b3976a7 18,314,334-373,450,471,650-658
+packages/cli/src/watch/dirs.ts
+  s_d6cfe61538c3a0::t_32e7442a225ee0 85,123,125,134-138,159-165,167,169-208,217,223,290-291,299-300,315,317-319,323-333,338,387,541-545,548
+packages/integrate-vitest/__tests__/watch-units.spec.ts
+  s_d6cfe61538c3a0::t_e9883c53edfc45 612-896
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "52c783d0463e4f52d737cb0dff0cb27237ee51cd",
+  "prompts": {},
+  "sessions": {
+    "s_57654b381fae0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a7ca19b06ccb01c7a",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    },
+    "s_d6cfe61538c3a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ad7849e9763e204a1",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}

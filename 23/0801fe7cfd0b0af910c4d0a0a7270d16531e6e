@@ -1,0 +1,19 @@
+packages/core/watch-report.mjs
+  s_bb1aae237a7bc6::t_192de491bfcae0 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "230801fe7cfd0b0af910c4d0a0a7270d16531e6e",
+  "prompts": {},
+  "sessions": {
+    "s_bb1aae237a7bc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a087909ceff3cb286",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}

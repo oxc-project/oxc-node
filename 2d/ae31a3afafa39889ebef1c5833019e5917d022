@@ -1,0 +1,21 @@
+packages/integrate-vitest/__tests__/watch-report.spec.ts
+  s_bb1aae237a7bc6::t_1da68a9a4ed4b6 250-271
+src/lib.rs
+  s_bb1aae237a7bc6::t_bb6fbfdb80e7fc 2359-2390
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2dae31a3afafa39889ebef1c5833019e5917d022",
+  "prompts": {},
+  "sessions": {
+    "s_bb1aae237a7bc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a087909ceff3cb286",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
