@@ -1,0 +1,29 @@
+packages/cli/src/watch/dirs.ts
+  s_5b25d6ae40e975::t_7c06d5d4228dd6 99-100,196-198,565-566
+packages/integrate-vitest/__tests__/run-signals.spec.ts
+  s_5b25d6ae40e975::t_538362b0b1144c 177-180
+packages/integrate-vitest/__tests__/watch-args.spec.ts
+  s_5b25d6ae40e975::t_38e8442077bfba 316-346
+packages/integrate-vitest/__tests__/watch-cli.spec.ts
+  s_5b25d6ae40e975::t_dc18e874361eb2 161-181
+packages/integrate-vitest/__tests__/watch-units.spec.ts
+  s_5b25d6ae40e975::t_78a86539cd403a 659-691
+packages/cli/src/watch/args.ts
+  s_5b25d6ae40e975::t_052651654c3486 173-174,214,223,369-393,396-397,404-410,412-413
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b90d58fb8075fb057f1016c77525846330da9830",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}

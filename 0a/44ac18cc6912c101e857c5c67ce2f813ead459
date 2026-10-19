@@ -1,0 +1,53 @@
+Cargo.lock
+  s_bbf33d87440d4c::t_09a88eba2dec4f 63-68,125-133,210-215,253-261,701-709,1028,1207-1212,1268-1287,1327-1336,1366-1374,1989-1994
+Cargo.toml
+  s_bbf33d87440d4c::t_9140789698d438 26-27,60-66
+packages/core/esm.mjs
+  s_bbf33d87440d4c::t_1257bad3ab1b92 9,15,132-145,156-159,162-169,181
+packages/core/index.d.ts
+  s_5b25d6ae40e975::t_e74423c1860f26 33-41,162-167
+packages/core/index.js
+  s_bbf33d87440d4c::t_655c97f17064ab 784,792
+packages/core/oxc-node.wasi-browser.js
+  s_bbf33d87440d4c::t_c24c8ab60582ef 1446,1454
+packages/core/oxc-node.wasi.cjs
+  s_bbf33d87440d4c::t_92a4e29e44117b 1,2303,2311
+packages/core/watch-report.mjs
+  s_bbf33d87440d4c::t_9cc46e1d1be84e 1-116
+src/lib.rs
+  s_bbf33d87440d4c::t_ee708e26b142d9 5-7,41-43,568-691,2332-2333,2468-2497,3939-4113
+packages/core/package.json
+  s_bbf33d87440d4c::t_50688351da499a 25-27
+packages/core/register.mjs
+  s_bbf33d87440d4c::t_5b20e4390f44b4 4,11,18-32,185-189,361-366,374-376,379-380
+packages/core/signal-ack.mjs
+  s_bbf33d87440d4c::t_6301b610c3344f 1-87
+packages/integrate-vitest/__tests__/signal-ack.spec.ts
+  s_bbf33d87440d4c::t_a0a706d8bbf87b 1-226
+packages/integrate-vitest/__tests__/watch-report.spec.ts
+  s_bbf33d87440d4c::t_a284bc6e82c7dc 1-367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0a44ac18cc6912c101e857c5c67ce2f813ead459",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    },
+    "s_bbf33d87440d4c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a7d6834a22f690ee3",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}

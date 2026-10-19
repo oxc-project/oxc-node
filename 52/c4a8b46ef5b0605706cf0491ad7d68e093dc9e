@@ -1,0 +1,19 @@
+packages/integrate-vitest/__tests__/run-signals.spec.ts
+  s_5b25d6ae40e975::t_be5b8ff88b48a8 87-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "52c4a8b46ef5b0605706cf0491ad7d68e093dc9e",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+packages/cli/src/run.ts
+  s_5b25d6ae40e975::t_7b4e22be9c785e 150-151,164,175-176,183-184,204,268-273,279,283,294,300
+packages/cli/src/watch/command.ts
+  s_5b25d6ae40e975::t_6c93103cd24b7b 78-82,87-88
+packages/integrate-vitest/__tests__/cli-signals.spec.ts
+  s_5b25d6ae40e975::t_e30b3ae7063367 281-285,297-312
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "43b8147e38e7451fb3a03a175616715422dd9e27",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}

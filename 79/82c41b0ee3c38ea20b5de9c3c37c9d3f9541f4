@@ -1,0 +1,37 @@
+packages/cli/src/watch/messages.ts
+  s_492a2a7aa2871a::t_dcb4ca72aa15cf 1-31
+packages/integrate-vitest/tsconfig.json
+  s_492a2a7aa2871a::t_7d32341c7e76f4 7-9,11
+packages/cli/src/watch/args.ts
+  s_492a2a7aa2871a::t_5de68ba6551497 1-206
+packages/cli/src/watch/glob.ts
+  s_492a2a7aa2871a::t_15d40935db977b 1-114
+packages/cli/src/watch/kill-tree.ts
+  s_492a2a7aa2871a::t_df4e24df7b1289 1-93
+packages/cli/src/watch/machine.ts
+  s_492a2a7aa2871a::t_7ce037f861a975 1-229
+packages/integrate-vitest/__tests__/watch-args.spec.ts
+  s_492a2a7aa2871a::t_ef6ead779b6ef6 1-187
+packages/integrate-vitest/__tests__/watch-glob.spec.ts
+  s_492a2a7aa2871a::t_aac803b182a4ee 1-140
+packages/integrate-vitest/__tests__/watch-machine.spec.ts
+  s_492a2a7aa2871a::t_04c879f5e7c013 1-297
+packages/integrate-vitest/__tests__/watch-units.spec.ts
+  s_492a2a7aa2871a::t_151c0df648765d 1-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7982c41b0ee3c38ea20b5de9c3c37c9d3f9541f4",
+  "prompts": {},
+  "sessions": {
+    "s_492a2a7aa2871a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-afd553f1b8c2c896c",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
