@@ -102,6 +102,12 @@ describe("parseWatchArgs", () => {
     expect(a.nodeArgs).toEqual(["app.ts"]);
   });
 
+  test("--security-revert takes the next word, as in Node.js", () => {
+    const a = ok(["--security-revert", "CVE-2023-46809", "app.ts"]);
+    expect(a.entry).toBe("app.ts");
+    expect(a.nodeArgs).toEqual(["--security-revert", "CVE-2023-46809", "app.ts"]);
+  });
+
   test("Node.js value flags keep their value in order", () => {
     const a = ok([
       "--import",
@@ -179,6 +185,7 @@ describe("parseWatchArgs", () => {
     ["--eval=1", /needs an entry file/],
     ["-p", /needs an entry file/],
     ["--print", /needs an entry file/],
+    ["-pe", /needs an entry file/],
     ["-i", /needs an entry file/],
     ["--interactive", /needs an entry file/],
     ["--test", /oxnode --watch --test/],

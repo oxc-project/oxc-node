@@ -52,6 +52,8 @@ export const NODE_VALUE_FLAGS = new Set([
   "--report-signal",
   "--secure-heap",
   "--secure-heap-min",
+  // Hidden from `node --help`, but it takes the next word too.
+  "--security-revert",
   "--snapshot-blob",
   "--tls-cipher-list",
   "--tls-keylog",
@@ -101,6 +103,8 @@ const REJECTED: Record<string, string> = {
   "--eval": NEEDS_ENTRY,
   "-p": NEEDS_ENTRY,
   "--print": NEEDS_ENTRY,
+  // Node.js reads `-pe` as `--print --eval`.
+  "-pe": NEEDS_ENTRY,
   "-i": NEEDS_ENTRY,
   "--interactive": NEEDS_ENTRY,
   "--test": NEEDS_ENTRY,
