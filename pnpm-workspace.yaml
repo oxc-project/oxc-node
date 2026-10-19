@@ -12,8 +12,8 @@ catalog:
   vite-plus: 1.3.0
 
 overrides:
-  "@emnapi/core": ^2.0.0-alpha.6
-  "@emnapi/runtime": ^2.0.0-alpha.6
+  "@emnapi/core": 2.0.0-alpha.6
+  "@emnapi/runtime": 2.0.0-alpha.6
 
 verifyDepsBeforeRun: install
 # CI installs on the host and tests foreign arch/libc targets in containers,
