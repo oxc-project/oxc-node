@@ -1,0 +1,23 @@
+packages/cli/src/watch/dirs.ts
+  s_5b25d6ae40e975::t_0304fb623205ed 394-397
+packages/cli/src/watch/glob.ts
+  s_5b25d6ae40e975::t_aaeda33a11f2e7 109,112-113
+packages/integrate-vitest/__tests__/watch-glob.spec.ts
+  s_5b25d6ae40e975::t_20757e57525abe 132-147
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3d0a9b9dfcada9a0ea7e82f4530b39543351234a",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
