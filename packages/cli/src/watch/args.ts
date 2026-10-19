@@ -486,7 +486,8 @@ export function configFileWatch(
     if (text === undefined) continue;
     let config: unknown;
     try {
-      config = JSON.parse(text);
+      // Node.js skips a byte order mark at the start.
+      config = JSON.parse(text.replace(/^\uFEFF/, ""));
     } catch {
       continue; // Node.js reports a bad config file itself.
     }

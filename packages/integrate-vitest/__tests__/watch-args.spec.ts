@@ -198,6 +198,8 @@ describe("parseWatchArgs", () => {
   test("a Node.js config file that turns on watch mode is an error", () => {
     const files: Record<string, string> = {
       "on.json": JSON.stringify({ nodeOptions: { watch: true } }),
+      // Node.js reads a config file that starts with a byte order mark.
+      "bom.json": `\uFEFF${JSON.stringify({ nodeOptions: { watch: true } })}`,
       "path.json": JSON.stringify({ nodeOptions: { "watch-path": "src" } }),
       // From Node.js 25.4, a `watch` section turns watch mode on by being there.
       "section.json": JSON.stringify({ watch: { "watch-preserve-output": true } }),
@@ -223,6 +225,7 @@ describe("parseWatchArgs", () => {
       error: expect.stringMatching(/config file on\.json turns on --watch/),
     });
     expect(withFiles(["--config-file=path.json", "app.ts"])).toHaveProperty("error");
+    expect(withFiles(["--config-file=bom.json", "app.ts"])).toHaveProperty("error");
     expect(withFiles(["--config-file=section.json", "app.ts"])).toHaveProperty("error");
     expect(withFiles(["--config-file=section.json", "app.ts"], "25.4.0")).toHaveProperty("error");
     expect(withFiles(["--config-file=section.json", "app.ts"], "24.22.0")).not.toHaveProperty(
