@@ -205,6 +205,8 @@ export class DirWatcher {
       if (have.own !== "static") have.own = run ? "run" : "static";
       have.shown = file;
       if (keepGone) have.keepGone = true;
+      // A hop of another link's chain: its own target was that link's to watch.
+      if (have.target === undefined && isLink(file)) this.#follow(have);
       return;
     }
     if (this.#closed) return;
