@@ -270,6 +270,10 @@ describe("parseWatchArgs", () => {
       parseWatchArgs(argv, { NODE_OPTIONS }, (f) => files[f]);
     expect(withEnv(["app.ts"], "--watch --no-watch")).not.toHaveProperty("error");
     expect(withEnv(["app.ts"], "--watch-path=src --no_watch")).not.toHaveProperty("error");
+    // Node.js ignores a value on a boolean flag.
+    expect(withEnv(["app.ts"], "--watch --no-watch=true")).not.toHaveProperty("error");
+    expect(withEnv(["app.ts"], "--watch --no-watch=false")).not.toHaveProperty("error");
+    expect(withEnv(["--no-watch=false", "app.ts"], "--watch")).not.toHaveProperty("error");
     expect(withEnv(["app.ts"], "--no-watch --watch")).toEqual({
       error: expect.stringMatching(/nested/),
     });

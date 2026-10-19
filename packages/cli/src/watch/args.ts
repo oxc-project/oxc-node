@@ -137,7 +137,8 @@ export function nodeOptionsTokens(s: string): string[] {
 }
 
 // Node.js takes `_` for `-` in option names: `--watch_path`.
-const NO_WATCH = /^--no[-_]watch$/;
+// Node.js ignores a value on a boolean flag: `--no-watch=false` is `--no-watch`.
+const NO_WATCH = /^--no[-_]watch(=|$)/;
 /**
  * The last word on watch mode in NODE_OPTIONS: true for --watch or --watch-path (which implies
  * --watch), false for --no-watch. Node.js applies them in order, so the last one wins.
