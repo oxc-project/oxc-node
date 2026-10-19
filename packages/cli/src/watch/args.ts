@@ -436,12 +436,18 @@ export function configFileWatch(
   const watchOf = (config: unknown): boolean | undefined => {
     if (!isObject(config)) return undefined;
     const { nodeOptions, watch } = config;
-    const sets = [nodeOptions, watch].filter(isObject);
-    const on = (o: Record<string, unknown>) =>
-      Object.entries(o).some(([k, v]) => /^watch([-_]path)?$/.test(k) && v !== false && v != null);
-    if (sets.some(on)) return true;
+    // Within a set the last key wins, as for flags: `"watch-path": ".", "watch": false` is off.
+    const last = (o: Record<string, unknown>) => {
+      let on: boolean | undefined;
+      for (const [k, v] of Object.entries(o)) {
+        if (/^watch([-_]path)?$/.test(k) && v != null) on = v !== false;
+      }
+      return on;
+    };
+    const sets = [nodeOptions, watch].filter(isObject).map(last);
+    if (sets.includes(true)) return true;
     if (sectionTurnsOn(nodeVersion) && isObject(watch) && watch.watch !== false) return true;
-    return sets.some((o) => o.watch === false) ? false : undefined;
+    return sets.includes(false) ? false : undefined;
   };
   for (const file of configFiles) {
     const text = read(file);

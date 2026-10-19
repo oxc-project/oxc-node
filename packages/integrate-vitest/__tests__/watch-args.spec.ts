@@ -198,6 +198,9 @@ describe("parseWatchArgs", () => {
         watch: { watch: false, "watch-preserve-output": true },
       }),
       "off.json": JSON.stringify({ nodeOptions: { watch: false, "watch-preserve-output": true } }),
+      // The last key wins, as for flags.
+      "path-then-off.json": JSON.stringify({ nodeOptions: { "watch-path": ".", watch: false } }),
+      "off-then-path.json": JSON.stringify({ nodeOptions: { watch: false, "watch-path": "." } }),
       "versions.json": JSON.stringify({
         configs: [
           { nodeVersion: 25, config: { nodeOptions: { "watch-path": "src" } } },
@@ -222,6 +225,8 @@ describe("parseWatchArgs", () => {
     expect(withFiles(["--experimental_config_file=on.json", "app.ts"])).toHaveProperty("error");
     expect(withFiles(["--config-file=section-off.json", "app.ts"])).not.toHaveProperty("error");
     expect(withFiles(["--config-file=off.json", "app.ts"])).not.toHaveProperty("error");
+    expect(withFiles(["--config-file=path-then-off.json", "app.ts"])).not.toHaveProperty("error");
+    expect(withFiles(["--config-file=off-then-path.json", "app.ts"])).toHaveProperty("error");
     expect(withFiles(["--config-file=bad.json", "app.ts"])).not.toHaveProperty("error");
     expect(withFiles(["--config-file=missing.json", "app.ts"])).not.toHaveProperty("error");
     // `configs`: the entry for this major version.
