@@ -330,6 +330,8 @@ export function usesNodeWatch(
     }
     if (/^--watch([-_]path)?(=|$)/.test(arg)) {
       on = true;
+      // `--watch-path src`: src is the flag's value, not the entry.
+      if (!word && /^--watch[-_]path$/.test(arg)) i++;
     } else if (/^--no[-_]watch(=|$)/.test(arg)) {
       if (!word) on = false;
     } else if (!word && takesNextWord(arg, nodeVersion)) {

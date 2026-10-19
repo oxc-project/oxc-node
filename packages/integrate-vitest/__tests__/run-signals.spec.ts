@@ -145,6 +145,7 @@ describe("usesNodeWatch", () => {
     // A Node.js flag's value is not the entry: Node.js reads the --no-watch after it.
     [["--watch", "--title", "x", "--no-watch", "app.ts"], false],
     [["--watch", "-r", "./setup.js", "--no-watch", "app.ts"], false],
+    [["--watch-path", "src", "--no-watch", "app.ts"], false],
     [["--watch-preserve-output", "app.ts"], false],
     [["--watch-kill-signal", "SIGINT", "app.ts"], false],
     [["--watchful", "app.ts"], false],
