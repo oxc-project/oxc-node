@@ -3067,10 +3067,10 @@ impl TryAsStr for Either3<String, Uint8Array, Buffer> {
     fn try_as_str(&self) -> Result<&str> {
         match self {
             Either3::A(s) => Ok(s),
-            Either3::B(arr) => simdutf8::basic::from_utf8(arr).map_err(|_| {
+            Either3::B(arr) => simdutf8::compat::from_utf8(arr).map_err(|_| {
                 Error::new(Status::GenericFailure, "Failed to convert Uint8Array to Vec<u8>")
             }),
-            Either3::C(buf) => simdutf8::basic::from_utf8(buf).map_err(|_| {
+            Either3::C(buf) => simdutf8::compat::from_utf8(buf).map_err(|_| {
                 Error::new(Status::GenericFailure, "Failed to convert Buffer to Vec<u8>")
             }),
         }
@@ -3089,10 +3089,10 @@ impl TryAsStr for Either4<String, Uint8Array, Buffer, Null> {
     fn try_as_str(&self) -> Result<&str> {
         match self {
             Either4::A(s) => Ok(s),
-            Either4::B(arr) => simdutf8::basic::from_utf8(arr).map_err(|_| {
+            Either4::B(arr) => simdutf8::compat::from_utf8(arr).map_err(|_| {
                 Error::new(Status::GenericFailure, "Failed to convert Uint8Array to Vec<u8>")
             }),
-            Either4::C(buf) => simdutf8::basic::from_utf8(buf).map_err(|_| {
+            Either4::C(buf) => simdutf8::compat::from_utf8(buf).map_err(|_| {
                 Error::new(Status::GenericFailure, "Failed to convert Buffer to Vec<u8>")
             }),
             Either4::D(_) => {
