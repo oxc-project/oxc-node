@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import {
+  linkSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -704,6 +705,34 @@ describe("DirWatcher", () => {
         writeFileSync(target, "22");
         targetWatch.emit("a.json");
         expect(changes).toHaveLength(seen);
+      } finally {
+        w.close();
+      }
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "a link pointed at another hard link of its target restarts and follows it",
+    async () => {
+      const root = temp();
+      const [config, real] = [join(root, "config"), join(root, "real")];
+      mkdirSync(config);
+      mkdirSync(real);
+      const [a, b] = [join(real, "a.json"), join(real, "b.json")];
+      writeFileSync(a, "1");
+      linkSync(a, b);
+      const link = join(config, "current.json");
+      symlinkSync("../real/a.json", link);
+      const fake = fakeWatch();
+      const { w, changes, debug } = start({ platform: "linux", watch: fake.watch });
+      try {
+        w.add(link);
+        await until(() => fake.open(real).length === 1, "the target's watch");
+        rmSync(link);
+        symlinkSync("../real/b.json", link);
+        fake.open(config)[0].emit("current.json");
+        expect(changes).toEqual([link]);
+        expect(debug).toContain(`watch ${b}`);
       } finally {
         w.close();
       }

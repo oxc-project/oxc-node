@@ -603,10 +603,16 @@ export class DirWatcher {
     const entry = this.#files.get(k)!;
     const next = sigOf(entry.path);
     if (!changed(entry.sig, next, event)) {
-      // A link to a deleted file stats as missing, whether the link is still there, gone, or
-      // pointed at another missing file. So look at the link itself, or its old target stays.
-      if (next === null && entry.target !== undefined) {
-        if (changed(entry.linkSig ?? null, linkSigOf(entry.path), false)) this.#follow(entry);
+      // A link stats as its target, so look at the link itself: it may point at another file
+      // with the same stat (a hard link of it), or, its target deleted, be gone or pointed at
+      // another missing file. Either way its old target must not stay.
+      if (entry.target !== undefined) {
+        if (changed(entry.linkSig ?? null, linkSigOf(entry.path), false)) {
+          const before = entry.target;
+          this.#follow(entry);
+          // Node.js loads it from the new path now, and resolves its imports from there.
+          if (next !== null && entry.target !== before) this.#o.onChange(entry.shown);
+        }
       }
       return;
     }
