@@ -146,6 +146,33 @@ describe("usesNodeWatch", () => {
     [["--watchful", "app.ts"], false],
     [[], false],
   ])("%j → %s", (args, expected) => {
-    expect(usesNodeWatch(args)).toBe(expected);
+    expect(usesNodeWatch(args, {})).toBe(expected);
+  });
+
+  test("watch mode from NODE_OPTIONS, an env file or the config file", () => {
+    const files: Record<string, string> = {
+      "on.json": JSON.stringify({ nodeOptions: { watch: true } }),
+      "off.json": "{}",
+      "watch.env": "NODE_OPTIONS=--watch\n",
+      "no.env": "NODE_OPTIONS=--no-watch\n",
+    };
+    const uses = (args: string[], env: NodeJS.ProcessEnv = {}, version = "26.12.0") =>
+      usesNodeWatch(args, env, (f) => files[f], version);
+    expect(uses(["app.ts"], { NODE_OPTIONS: "--watch" })).toBe(true);
+    expect(uses(["app.ts"], { NODE_OPTIONS: "--watch --no-watch" })).toBe(false);
+    expect(uses(["--env-file=watch.env", "app.ts"])).toBe(true);
+    expect(uses(["--env-file", "watch.env", "app.ts"])).toBe(true);
+    expect(uses(["--experimental-config-file=on.json", "app.ts"])).toBe(true);
+    expect(uses(["--experimental-config-file=off.json", "app.ts"])).toBe(false);
+    // Node.js 22 takes the next word as the config file.
+    expect(uses(["--experimental-config-file", "on.json", "app.ts"], {}, "22.18.0")).toBe(true);
+    // The same order as `oxnode watch`: the env file beats the config file from 24.16.
+    expect(uses(["--env-file=no.env", "--experimental-config-file=on.json", "app.ts"])).toBe(false);
+    expect(
+      uses(["--env-file=no.env", "--experimental-config-file=on.json", "app.ts"], {}, "24.15.0"),
+    ).toBe(true);
+    // A flag on the command line beats them all.
+    expect(uses(["--no-watch", "--experimental-config-file=on.json", "app.ts"])).toBe(false);
+    expect(uses(["app.ts"], {})).toBe(false);
   });
 });

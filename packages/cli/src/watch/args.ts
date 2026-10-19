@@ -200,8 +200,7 @@ export function parseWatchArgs(
     notes: [],
   };
 
-  // Each config flag, and whether it names a file rather than asking for the default one.
-  const configs: { file: string; named: boolean }[] = [];
+  const configs: ConfigFlag[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--") {
@@ -331,24 +330,69 @@ export function parseWatchArgs(
     ) {
       out.envFiles.push(nodeValue);
     }
-    // `--experimental-config-file=` with nothing after it names no file.
-    if (configFlag && nodeValue !== "") {
-      const file = nodeName === "--experimental-default-config-file" ? undefined : nodeValue;
-      configs.push({ file: file ?? "node.config.json", named: file !== undefined });
-    }
+    if (configFlag) addConfig(configs, nodeName, nodeValue);
   }
 
   if (!out.entry && !out.help) {
     return { error: "missing <entry>" };
   }
-  // From 24.19 and 26.1 the last config flag wins. Before, the first file named wins, and the
-  // default one counts only when none is named.
+  out.configFiles = pickConfig(configs, nodeVersion);
+  const nested = nestedWatcher(out, env, read, nodeVersion);
+  return nested ? { error: nested } : out;
+}
+
+/** A config flag, and whether it names a file rather than asking for the default one. */
+type ConfigFlag = { file: string; named: boolean };
+
+function addConfig(configs: ConfigFlag[], nodeName: string, nodeValue: string | undefined) {
+  // `--experimental-config-file=` with nothing after it names no file.
+  if (nodeValue === "") return;
+  const file = nodeName === "--experimental-default-config-file" ? undefined : nodeValue;
+  configs.push({ file: file ?? "node.config.json", named: file !== undefined });
+}
+
+/**
+ * The one config file Node.js reads. From 24.19 and 26.1 the last config flag wins. Before, the
+ * first file named wins, and the default one counts only when none is named.
+ */
+function pickConfig(configs: ConfigFlag[], nodeVersion: string): string[] {
   const config = bareConfigFlag(nodeVersion)
     ? configs.at(-1)
     : (configs.find((c) => c.named) ?? configs[0]);
-  if (config) out.configFiles.push(config.file);
-  const nested = nestedWatcher(out, env, read, nodeVersion);
-  return nested ? { error: nested } : out;
+  return config ? [config.file] : [];
+}
+
+/**
+ * The env files and the config file in `argv`, for `oxnode` with no watch command, which does
+ * not find the entry: every arg up to `--` is read, so an app arg may count too.
+ */
+export function nodeFiles(
+  argv: string[],
+  nodeVersion = NODE_VERSION,
+): Pick<WatchArgs, "envFiles" | "configFiles"> {
+  const envFiles: string[] = [];
+  const configs: ConfigFlag[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--") break;
+    if (!arg.startsWith("--")) continue;
+    const eq = arg.indexOf("=");
+    const name = `--${(eq === -1 ? arg : arg.slice(0, eq)).slice(2).replaceAll("_", "-")}`;
+    let value = eq === -1 ? undefined : arg.slice(eq + 1);
+    const envFile = name === "--env-file" || name === "--env-file-if-exists";
+    const takesValue =
+      envFile || (name === "--experimental-config-file" && !bareConfigFlag(nodeVersion));
+    if (value === undefined && takesValue && i + 1 < argv.length) value = argv[++i];
+    if (envFile && value !== undefined) envFiles.push(value);
+    if (
+      name === "--experimental-config-file" ||
+      name === "--config-file" ||
+      name === "--experimental-default-config-file"
+    ) {
+      addConfig(configs, name, value);
+    }
+  }
+  return { envFiles, configFiles: pickConfig(configs, nodeVersion) };
 }
 
 /**

@@ -7,6 +7,8 @@ import { join } from "node:path";
 import process from "node:process";
 import { isatty } from "node:tty";
 
+import { nestedWatcher, nodeFiles } from "./watch/args.js";
+
 /** The signals oxnode passes on to the app. On Windows it only listens, so it outlives the app. */
 export const FORWARDED: NodeJS.Signals[] =
   process.platform === "win32" ? ["SIGINT", "SIGBREAK", "SIGHUP"] : ["SIGINT", "SIGTERM", "SIGHUP"];
@@ -310,10 +312,16 @@ export function runChild(cmd: string, args: string[], o: { nodeWatch: boolean })
  * needs every Node.js flag that takes a value (`--unhandled-rejections strict`). An app arg
  * named `--watch` only turns SIGHUP into SIGTERM, which ends the app as well. The last flag
  * wins, as in Node.js, but a `--no-watch` after any other word may be the app's, so it does not
- * turn watch mode off.
+ * turn watch mode off. With no flag, NODE_OPTIONS (from the env or an env file) and the config
+ * file decide, as `oxnode watch` reads them.
  */
-export function usesNodeWatch(args: string[]): boolean {
-  let on = false;
+export function usesNodeWatch(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+  read?: (file: string) => string | undefined,
+  nodeVersion?: string,
+): boolean {
+  let on: boolean | undefined;
   let word = false;
   for (const arg of args) {
     if (arg === "--") {
@@ -327,5 +335,7 @@ export function usesNodeWatch(args: string[]): boolean {
       word = true;
     }
   }
-  return on;
+  if (on !== undefined) return on;
+  const files = { ...nodeFiles(args, nodeVersion), noWatch: false };
+  return nestedWatcher(files, env, read, nodeVersion) !== undefined;
 }
