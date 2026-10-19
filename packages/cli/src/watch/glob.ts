@@ -90,6 +90,11 @@ export function makeMatcher(opts: {
 }): Matcher {
   const win = opts.platform === "win32";
   const native = win ? path.win32 : path.posix;
+  // A glob ending in `/` names folders: `src/*/` is everything below them, as `src/*/**`.
+  const dirGlob = (p: string) =>
+    GLOB_CHARS.test(p) && (win ? /[\\/]$/ : /\/$/).test(p) ? `${p}**` : p;
+  const include = opts.include.map(dirGlob);
+  const exclude = opts.exclude.map(dirGlob);
   const isDir = opts.isDir ?? isDirOnDisk;
   // Globs use `/`. Only Windows turns `\` into `/`: elsewhere it is a glob escape.
   // Windows paths are case-insensitive, and `matchesGlob` is not.
@@ -113,7 +118,7 @@ export function makeMatcher(opts: {
     return /^([a-z]:)?\/+$/i.test(abs) ? abs : abs.replace(/\/+$/, "");
   };
 
-  const globs = [...opts.include, ...opts.exclude].filter((p) => GLOB_CHARS.test(p));
+  const globs = [...include, ...exclude].filter((p) => GLOB_CHARS.test(p));
   const matchesGlob = path.posix.matchesGlob as ((p: string, g: string) => boolean) | undefined;
   if (globs.length && typeof matchesGlob !== "function") {
     throw new Error(`--include and --exclude globs need Node.js 22.5 or later (path.matchesGlob)`);
@@ -131,8 +136,8 @@ export function makeMatcher(opts: {
     return (n: string) => matchesGlob!(path.posix.relative(cwd, n), g);
   };
 
-  const excludes = opts.exclude.map((p) => (GLOB_CHARS.test(p) ? glob(p) : literal(absolute(p))));
-  const treeExcludes = opts.exclude.filter((p) => /[\\/]\*\*$/.test(p)).map(glob);
+  const excludes = exclude.map((p) => (GLOB_CHARS.test(p) ? glob(p) : literal(absolute(p))));
+  const treeExcludes = exclude.filter((p) => /[\\/]\*\*$/.test(p)).map(glob);
   const includes: ((n: string) => boolean)[] = [];
   // The parts of each include glob below its base, to tell when one names a folder that walks
   // skip by default: `packages/**/node_modules/pkg/**`, `**/.storybook/*.ts`. Each holds only
@@ -140,7 +145,7 @@ export function makeMatcher(opts: {
   const named: { base: string; parts: string[] }[] = [];
   const roots: { base: string; depth: number }[] = [];
   const literals: string[] = [];
-  for (const pattern of opts.include) {
+  for (const pattern of include) {
     if (!GLOB_CHARS.test(pattern)) {
       const abs = native.resolve(opts.cwd, pattern);
       if (isDir(abs)) {

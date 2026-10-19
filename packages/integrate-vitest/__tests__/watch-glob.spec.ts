@@ -145,6 +145,23 @@ describe("makeMatcher", () => {
     expect(win.classify("C:\\proj\\dist\\a.js", "graph")).toBe("exclude");
   });
 
+  test("a glob ending in a slash names folders and everything below them", () => {
+    const m = matcher(["config/*/"], ["src/*/", "**/dist/"]);
+    expect(m.classify("/proj/src/x/a.ts", "graph")).toBe("exclude");
+    expect(m.classify("/proj/src/a.ts", "graph")).toBe("watch");
+    expect(m.classify("/proj/pkg/dist/a.js", "graph")).toBe("exclude");
+    expect(m.pruneDir("/proj/pkg/dist")).toBe(true);
+    expect(m.classify("/proj/config/dev/a.json", "walk")).toBe("watch");
+    const win = makeMatcher({
+      cwd: "C:\\proj",
+      include: [],
+      exclude: ["src\\*\\"],
+      platform: "win32",
+      isDir: () => false,
+    });
+    expect(win.classify("C:\\proj\\src\\x\\a.ts", "graph")).toBe("exclude");
+  });
+
   test("pruneDir keeps a node_modules or dot folder that an include names below its base", () => {
     const pkg = matcher(["packages/**/node_modules/pkg/**"]);
     expect(pkg.pruneDir("/proj/packages/a/node_modules")).toBe(false);
