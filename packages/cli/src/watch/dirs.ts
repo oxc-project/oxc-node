@@ -96,8 +96,10 @@ interface Entry {
   target?: string;
   /** For a link with a target: the link's own stat when it was followed. */
   linkSig?: Sig;
-  /** It was there and is gone: a run-owned one stays for the next run, until it is back. */
+  /** It was there and is gone. */
   gone?: boolean;
+  /** Gone, it stays for the next run until it is back: a run that does not find it cannot say. */
+  keepGone?: boolean;
   links?: Set<string>;
 }
 
@@ -172,18 +174,22 @@ export class DirWatcher {
 
   /**
    * Watch one file, which may not exist yet. `run`: only the current run's imports want it, so
-   * `dropRun` drops it. A link's target is watched for as long as the link points to it.
+   * `dropRun` drops it. `keepGone`: once deleted, it stays until it is back, for a file the next
+   * run looks for but cannot report (a discovered tsconfig.json). A link's target is watched for
+   * as long as the link points to it.
    */
-  add(file: string, run = false): void {
+  add(file: string, run = false, keepGone = false): void {
     const have = this.#files.get(this.#key(file));
     if (have) {
       // Wanted itself now, not only as a link's target: kept whatever the links do.
       if (have.own !== "static") have.own = run ? "run" : "static";
       have.shown = file;
+      if (keepGone) have.keepGone = true;
       return;
     }
     if (this.#closed) return;
     const entry = this.#put(file, file, run ? "run" : "static");
+    if (keepGone) entry.keepGone = true;
     if (isLink(file)) this.#follow(entry);
   }
 
@@ -194,8 +200,9 @@ export class DirWatcher {
     for (const [k, f] of this.#files) {
       if (f.own !== "run") continue;
       // The next run may not report a file it did not find (a deleted tsconfig.json is looked for,
-      // not read), so creating it again must still restart.
-      if (f.gone) continue;
+      // not read), so creating it again must still restart. A deleted import is reported again
+      // by the failed resolve, while the app still imports it.
+      if (f.gone && f.keepGone) continue;
       f.own = undefined;
       const [link] = f.links ?? [];
       if (link !== undefined) {

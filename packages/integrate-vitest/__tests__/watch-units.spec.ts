@@ -656,34 +656,43 @@ describe("DirWatcher", () => {
   });
 
   describe("dropRun", () => {
-    test("a file that was there and is gone stays for the next run, until it is back", async () => {
+    test("a deleted file oxc-node reported stays for the next run, until it is back", async () => {
       const root = temp();
-      const [tsconfig, never] = [join(root, "tsconfig.json"), join(root, "never.ts")];
+      const [tsconfig, never, old] = ["tsconfig.json", "never.ts", "old.ts"].map((n) =>
+        join(root, n),
+      );
       writeFileSync(tsconfig, "{}");
+      writeFileSync(old, "1");
       const fake = fakeWatch();
       const { w, changes } = start({ platform: "linux", watch: fake.watch });
       const emit = (name: string) => fake.open(root)[0]?.emit(name);
       try {
-        w.add(tsconfig, true);
+        w.add(tsconfig, true, true);
         // A path a failed resolve looked for: never there, so it goes with the run.
-        w.add(never, true);
+        w.add(never, true, true);
+        // An import: a run that still imports it reports it again, so it goes with the run.
+        w.add(old, true);
         await until(() => fake.open(root).length === 1, "the folder's watch");
         rmSync(tsconfig);
         emit("tsconfig.json");
-        expect(changes).toEqual([tsconfig]);
+        rmSync(old);
+        emit("old.ts");
+        expect(changes).toEqual([tsconfig, old]);
         // The new run does not report it: discovery only looks for it.
         w.dropRun();
         writeFileSync(tsconfig, "{}");
         emit("tsconfig.json");
-        expect(changes).toEqual([tsconfig, tsconfig]);
+        expect(changes).toEqual([tsconfig, old, tsconfig]);
         writeFileSync(never, "1");
         emit("never.ts");
-        expect(changes).toEqual([tsconfig, tsconfig]);
+        writeFileSync(old, "2");
+        emit("old.ts");
+        expect(changes).toEqual([tsconfig, old, tsconfig]);
         // Back, and not reported again: the run after drops it.
         w.dropRun();
         writeFileSync(tsconfig, "{ }");
         emit("tsconfig.json");
-        expect(changes).toEqual([tsconfig, tsconfig]);
+        expect(changes).toEqual([tsconfig, old, tsconfig]);
       } finally {
         w.close();
       }

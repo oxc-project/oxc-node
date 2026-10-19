@@ -134,7 +134,7 @@ export function runWatch(argv: string[]): Promise<number> {
       const run = source === "graph" || source === "oxc";
       (run ? runSeen : seen).add(p);
       const verdict = matcher.classify(p, source);
-      if (verdict === "watch") watcher.add(p, run);
+      if (verdict === "watch") watcher.add(p, run, source === "oxc");
       else debug(`skip ${p} (${verdict === "exclude" ? "exclude" : "default"})`);
       if (verdict === "exclude") return;
       // Node.js reports real paths, but not under --preserve-symlinks, where a linked
