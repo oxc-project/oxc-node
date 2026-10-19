@@ -95,17 +95,18 @@ on the next change.
 
 ### What restarts
 
-| A change to                                         | `oxnode watch`             | `oxnode --watch`                  |
-| --------------------------------------------------- | -------------------------- | --------------------------------- |
-| a file the app imports or requires                  | yes                        | yes                               |
-| `tsconfig.json` and every file it `extends`         | yes                        | yes                               |
-| a file that did not exist yet (`x.ts` for `./x.js`) | yes                        | yes, except Linux with Node 22/24 |
-| a module loaded in a worker thread                  | Node 24+                   | Node 24+                          |
-| an `--env-file` file                                | yes                        | yes                               |
-| the `--tsconfig` file                               | yes                        | (no such flag)                    |
-| a file matching `--include`                         | yes, even if created later | use `--watch-path`                |
-| a file in `node_modules`                            | only with `--include`      | Node's rules                      |
-| a file matching `--exclude`                         | no                         | (no such flag)                    |
+| A change to                                          | `oxnode watch`             | `oxnode --watch`                  |
+| ---------------------------------------------------- | -------------------------- | --------------------------------- |
+| a file the app imports or requires                   | yes                        | yes                               |
+| `tsconfig.json` and every file it `extends`          | yes                        | yes                               |
+| a file that did not exist yet (`x.ts` for `./x.js`)  | yes                        | yes, except Linux with Node 22/24 |
+| a module loaded in a worker thread                   | Node 24+                   | Node 24+                          |
+| an `--env-file` file                                 | yes                        | yes                               |
+| a Node.js config file (`--experimental-config-file`) | yes                        | no                                |
+| the `--tsconfig` file                                | yes                        | (no such flag)                    |
+| a file matching `--include`                          | yes, even if created later | use `--watch-path`                |
+| a file in `node_modules`                             | only with `--include`      | Node's rules                      |
+| a file matching `--exclude`                          | no                         | (no such flag)                    |
 
 Globs are relative to the current folder. An imported file counts only while
 the app imports it: before each rerun, oxnode forgets what the last run

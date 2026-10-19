@@ -431,6 +431,27 @@ ${KEEP}`;
     await o.editUntil(join(root, ".env"), () => "GREETING=two\n", runLine("two"));
   });
 
+  test("a Node.js config file edit, and one that fixes a missing file", async () => {
+    const root = project({
+      "package.json": ESM,
+      "cfg.json": JSON.stringify({ $schema: "one" }),
+      "main.ts": `import { readFileSync } from "node:fs";
+console.log("RUN", JSON.parse(readFileSync("cfg.json", "utf8")).$schema, process.pid);
+${KEEP}`,
+    });
+    const cfg = join(root, "cfg.json");
+    // Present at the start: Node.js 22 and 24 read the flag after the script too, so a
+    // missing one stops oxnode itself.
+    const o = startOxnode(["watch", "--experimental-config-file=cfg.json", "main.ts"], root);
+    await o.waitFor(runLine("one"));
+    await o.watched(cfg);
+    await o.editUntil(cfg, () => JSON.stringify({ $schema: "two" }), runLine("two"));
+    // Gone: the next run fails, and creating it again starts the app.
+    rmSync(cfg);
+    await o.waitDebug(/Cannot read configuration from cfg\.json/);
+    await o.editUntil(cfg, () => JSON.stringify({ $schema: "three" }), runLine("three"));
+  });
+
   // Node.js 22 reports nothing from worker threads.
   test.skipIf(MAJOR < 24)("an edit to a file a worker imports", async () => {
     const root = project({

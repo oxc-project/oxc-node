@@ -78,11 +78,10 @@ export interface WatchArgs {
   nodeArgs: string[];
   entry: string;
   envFiles: string[];
-  /**
-   * Node.js config files (`--experimental-config-file`, `--config-file`), checked for watch mode.
-   * None after `--no-watch`, which beats them.
-   */
+  /** Node.js config files (`--experimental-config-file`, `--config-file`), checked for watch mode. */
   configFiles: string[];
+  /** `--no-watch` before the entry, which beats NODE_OPTIONS and the config files. */
+  noWatch: boolean;
   notes: string[];
 }
 
@@ -135,9 +134,19 @@ export function nodeOptionsTokens(s: string): string[] {
 }
 
 // Node.js takes `_` for `-` in option names: `--watch_path`.
-const startsWatcher = (nodeOptions: string | undefined) =>
-  nodeOptionsTokens(nodeOptions ?? "").some((t) => /^--watch([-_]path)?(=|$)/.test(t));
 const NO_WATCH = /^--no[-_]watch$/;
+/**
+ * The last word on watch mode in NODE_OPTIONS: true for --watch or --watch-path (which implies
+ * --watch), false for --no-watch. Node.js applies them in order, so the last one wins.
+ */
+function watchFlag(nodeOptions: string | undefined): boolean | undefined {
+  let on: boolean | undefined;
+  for (const t of nodeOptionsTokens(nodeOptions ?? "")) {
+    if (/^--watch([-_]path)?(=|$)/.test(t)) on = true;
+    else if (NO_WATCH.test(t)) on = false;
+  }
+  return on;
+}
 const NESTED = "NODE_OPTIONS contains --watch, which would start a nested watcher";
 
 const readEnvFile = (file: string): string | undefined => {
@@ -168,7 +177,6 @@ export function parseWatchArgs(
   // The child runs on this Node.js, so its flags are read as this version reads them.
   nodeVersion = NODE_VERSION,
 ): WatchArgs | { error: string } {
-  if (startsWatcher(env.NODE_OPTIONS)) return { error: NESTED };
   const polling = env.CHOKIDAR_USEPOLLING === "1" || env.CHOKIDAR_USEPOLLING === "true";
   const out: WatchArgs = {
     include: [],
@@ -183,10 +191,10 @@ export function parseWatchArgs(
     entry: "",
     envFiles: [],
     configFiles: [],
+    noWatch: false,
     notes: [],
   };
 
-  let noWatch = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--") {
@@ -296,7 +304,7 @@ export function parseWatchArgs(
     }
 
     out.nodeArgs.push(arg);
-    if (NO_WATCH.test(nodeName)) noWatch = true;
+    if (NO_WATCH.test(nodeName)) out.noWatch = true;
     let nodeValue = inline;
     const configFlag =
       nodeName === "--experimental-config-file" ||
@@ -322,26 +330,26 @@ export function parseWatchArgs(
   if (!out.entry && !out.help) {
     return { error: "missing <entry>" };
   }
-  if (noWatch) out.configFiles = [];
   const nested = nestedWatcher(out, env, read, nodeVersion);
   return nested ? { error: nested } : out;
 }
 
 /**
- * Why the child would start a watcher of its own, from what can change between starts: the
- * env files and the config files. Checked before each start.
+ * Why the child would start a watcher of its own. The command line beats NODE_OPTIONS (from the
+ * env, else the env files), which beats the config files. Checked before each start too, as the
+ * files may change.
  */
 export function nestedWatcher(
-  args: Pick<WatchArgs, "envFiles" | "configFiles">,
+  args: Pick<WatchArgs, "envFiles" | "configFiles" | "noWatch">,
   env: NodeJS.ProcessEnv,
   read: (file: string) => string | undefined = readEnvFile,
   nodeVersion = NODE_VERSION,
 ): string | undefined {
+  if (args.noWatch) return undefined;
+  if (watchFlag(env.NODE_OPTIONS)) return NESTED;
   const nested = envFileNestedWatcher(env, args.envFiles, read);
   if (nested) return nested;
-  // NODE_OPTIONS beats the config file.
-  const nodeOptions = childNodeOptions(env, args.envFiles, read);
-  if (nodeOptionsTokens(nodeOptions ?? "").some((t) => NO_WATCH.test(t))) return undefined;
+  if (watchFlag(childNodeOptions(env, args.envFiles, read)) === false) return undefined;
   return configFileNestedWatcher(args.configFiles, read, nodeVersion);
 }
 
@@ -417,7 +425,7 @@ export function envFileNestedWatcher(
   read: (file: string) => string | undefined = readEnvFile,
 ): string | undefined {
   if (env.NODE_OPTIONS !== undefined) return undefined;
-  return startsWatcher(childNodeOptions(env, envFiles, read))
+  return watchFlag(childNodeOptions(env, envFiles, read))
     ? `${NESTED} (from --env-file)`
     : undefined;
 }

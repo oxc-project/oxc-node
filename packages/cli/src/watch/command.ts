@@ -290,6 +290,8 @@ export function runWatch(argv: string[]): Promise<number> {
 
     want(path.resolve(cwd, args.entry), "literal");
     for (const file of args.envFiles) want(path.resolve(cwd, file), "literal");
+    // Node.js does not watch these, but a fixed or edited one should apply.
+    for (const file of args.configFiles) want(path.resolve(cwd, file), "literal");
     if (args.tsconfig) want(path.resolve(cwd, args.tsconfig), "literal");
     for (const file of matcher.literals()) want(file, "literal");
     for (const root of matcher.roots()) watcher.addRoot(root.base, root.depth);

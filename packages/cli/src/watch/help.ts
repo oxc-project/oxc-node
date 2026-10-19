@@ -21,7 +21,8 @@ Node.js options go before <entry> (use --flag=value); everything after <entry> g
 Globs are relative to the current folder. node_modules is not watched unless --include names it.
 
 Watched: every file the app imports or requires (worker threads on Node 24+), the tsconfig files
-oxc-node read (with "extends"), files the resolver looked for and did not find, --env-file files.
+oxc-node read (with "extends"), files the resolver looked for and did not find, --env-file files,
+Node.js config files (--experimental-config-file).
 
 Keys:  Return        rerun now (press again while stopping to force kill)
        Ctrl+C        stop (press again to force kill)

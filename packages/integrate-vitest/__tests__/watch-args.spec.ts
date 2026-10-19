@@ -40,6 +40,7 @@ describe("parseWatchArgs", () => {
       entry: "app.ts",
       envFiles: [],
       configFiles: [],
+      noWatch: false,
       notes: [],
     });
   });
@@ -243,17 +244,41 @@ describe("parseWatchArgs", () => {
     const withEnv = (argv: string[], env: NodeJS.ProcessEnv = {}) =>
       parseWatchArgs(argv, env, read, "26.12.0");
     const cfg = "--config-file=on.json";
-    expect(withEnv([cfg, "--no-watch", "app.ts"])).toMatchObject({ configFiles: [] });
+    expect(withEnv([cfg, "--no-watch", "app.ts"])).toMatchObject({
+      configFiles: ["on.json"],
+      noWatch: true,
+    });
     expect(withEnv(["--no_watch", cfg, "app.ts"])).not.toHaveProperty("error");
     expect(withEnv([cfg, "app.ts"], { NODE_OPTIONS: "--no-watch" })).not.toHaveProperty("error");
     expect(withEnv(["--env-file=.env", cfg, "app.ts"])).not.toHaveProperty("error");
     // Only before the entry: after it, the words are the app's.
     expect(withEnv([cfg, "app.ts", "--no-watch"])).toHaveProperty("error");
     // Before each start: an env file that drops --no-watch lets the config file count again.
-    const args = { envFiles: [".env"], configFiles: ["on.json"] };
+    const args = { envFiles: [".env"], configFiles: ["on.json"], noWatch: false };
     expect(nestedWatcher(args, {}, read, "26.12.0")).toBeUndefined();
     files[".env"] = "A=1\n";
     expect(nestedWatcher(args, {}, read, "26.12.0")).toMatch(/config file on\.json/);
+  });
+
+  test("the last watch flag wins, and the command line beats NODE_OPTIONS", () => {
+    const files: Record<string, string> = {};
+    const withEnv = (argv: string[], NODE_OPTIONS?: string) =>
+      parseWatchArgs(argv, { NODE_OPTIONS }, (f) => files[f]);
+    expect(withEnv(["app.ts"], "--watch --no-watch")).not.toHaveProperty("error");
+    expect(withEnv(["app.ts"], "--watch-path=src --no_watch")).not.toHaveProperty("error");
+    expect(withEnv(["app.ts"], "--no-watch --watch")).toEqual({
+      error: expect.stringMatching(/nested/),
+    });
+    expect(withEnv(["app.ts"], "--no-watch --watch-path=src")).toHaveProperty("error");
+    expect(withEnv(["--no-watch", "app.ts"], "--watch")).not.toHaveProperty("error");
+    expect(withEnv(["app.ts", "--no-watch"], "--watch")).toHaveProperty("error");
+    // NODE_OPTIONS from an env file, read again before each start.
+    const args = { envFiles: [".env"], configFiles: [], noWatch: false };
+    files[".env"] = "NODE_OPTIONS=--watch --no-watch\n";
+    expect(withEnv(["--env-file=.env", "app.ts"])).not.toHaveProperty("error");
+    files[".env"] = "NODE_OPTIONS=--no-watch --watch\n";
+    expect(nestedWatcher(args, {}, (f) => files[f])).toMatch(/from --env-file/);
+    expect(nestedWatcher({ ...args, noWatch: true }, {}, (f) => files[f])).toBeUndefined();
   });
 
   test("a bare config-file flag is read as the Node.js version reads it", () => {
