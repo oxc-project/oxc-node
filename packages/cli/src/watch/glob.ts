@@ -106,9 +106,11 @@ export function makeMatcher(opts: {
         : /^[A-Za-z]:(?![\\/])/.test(pattern)
           ? native.resolve(opts.cwd, pattern)
           : pattern;
+  // Without a trailing `/`, so `--exclude dist/` matches `dist/a.js`; a root keeps its own.
   const absolute = (pattern: string) => {
     const p = norm(rooted(pattern));
-    return native.isAbsolute(rooted(pattern)) ? p : path.posix.join(cwd, p);
+    const abs = native.isAbsolute(rooted(pattern)) ? p : path.posix.join(cwd, p);
+    return /^([a-z]:)?\/+$/i.test(abs) ? abs : abs.replace(/\/+$/, "");
   };
 
   const globs = [...opts.include, ...opts.exclude].filter((p) => GLOB_CHARS.test(p));

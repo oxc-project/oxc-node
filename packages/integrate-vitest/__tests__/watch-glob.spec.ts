@@ -129,6 +129,22 @@ describe("makeMatcher", () => {
     expect(m.classify("/proj/generated-not/a.ts", "graph")).toBe("watch");
   });
 
+  test("an exclude with a trailing slash still excludes the folder", () => {
+    const m = matcher([], ["dist/", "/proj/out//"]);
+    expect(m.classify("/proj/dist/a.js", "graph")).toBe("exclude");
+    expect(m.pruneDir("/proj/dist")).toBe(true);
+    expect(m.classify("/proj/out/a.js", "graph")).toBe("exclude");
+    expect(m.classify("/proj/dist-not/a.js", "graph")).toBe("watch");
+    const win = makeMatcher({
+      cwd: "C:\\proj",
+      include: [],
+      exclude: ["dist\\"],
+      platform: "win32",
+      isDir: () => false,
+    });
+    expect(win.classify("C:\\proj\\dist\\a.js", "graph")).toBe("exclude");
+  });
+
   test("pruneDir keeps a node_modules or dot folder that an include names below its base", () => {
     const pkg = matcher(["packages/**/node_modules/pkg/**"]);
     expect(pkg.pruneDir("/proj/packages/a/node_modules")).toBe(false);

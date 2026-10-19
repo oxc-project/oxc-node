@@ -391,7 +391,10 @@ export class DirWatcher {
     this.#files.delete(k);
     for (const h of entry.hops ?? []) this.#release(h, k);
     if (entry.target !== undefined) this.#release(entry.target, k);
-    this.#byDir.get(this.#key(path.dirname(entry.path)))?.delete(k);
+    const dk = this.#key(path.dirname(entry.path));
+    const set = this.#byDir.get(dk);
+    set?.delete(k);
+    if (set?.size === 0) this.#byDir.delete(dk);
     if (this.#o.poll !== false) unwatchFile(entry.path);
     else this.#scheduleSync();
   }
