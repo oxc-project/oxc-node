@@ -281,6 +281,34 @@ describe("parseWatchArgs", () => {
     expect(nestedWatcher({ ...args, noWatch: true }, {}, (f) => files[f])).toBeUndefined();
   });
 
+  test("only the config file Node.js reads counts", () => {
+    const files: Record<string, string> = {
+      "off.json": "{}",
+      "on.json": JSON.stringify({ nodeOptions: { watch: true } }),
+      "node.config.json": "{}",
+    };
+    const withFiles = (argv: string[], version: string) =>
+      parseWatchArgs(argv, {}, (f) => files[f], version);
+    const [off, on] = ["--experimental-config-file=off.json", "--experimental-config-file=on.json"];
+    const deflt = "--experimental-default-config-file";
+    // From 24.19 and 26.1: the last flag.
+    expect(withFiles([off, on, "app.ts"], "24.22.0")).toHaveProperty("error");
+    expect(withFiles([on, off, "app.ts"], "26.12.0")).toMatchObject({ configFiles: ["off.json"] });
+    expect(withFiles([on, deflt, "app.ts"], "24.22.0")).toMatchObject({
+      configFiles: ["node.config.json"],
+    });
+    // Before: the first file named, and the default one only when none is named.
+    expect(withFiles([off, on, "app.ts"], "24.12.0")).toMatchObject({ configFiles: ["off.json"] });
+    expect(withFiles([deflt, on, "app.ts"], "22.18.0")).toHaveProperty("error");
+    expect(withFiles([deflt, "app.ts"], "22.18.0")).toMatchObject({
+      configFiles: ["node.config.json"],
+    });
+    // `=` with nothing after it names no file.
+    expect(withFiles(["--experimental-config-file=", "app.ts"], "26.12.0")).toMatchObject({
+      configFiles: [],
+    });
+  });
+
   test("a bare config-file flag is read as the Node.js version reads it", () => {
     const files: Record<string, string> = { "node.config.json": "{}", "cfg.json": "{}" };
     const withFiles = (argv: string[], version: string) =>

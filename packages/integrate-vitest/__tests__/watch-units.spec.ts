@@ -586,6 +586,44 @@ describe("DirWatcher", () => {
     },
   );
 
+  test.skipIf(process.platform === "win32")(
+    "a link removed after its target was deleted lets the old target go",
+    async () => {
+      const root = temp();
+      const [config, shared] = [join(root, "config"), join(root, "shared")];
+      mkdirSync(config);
+      mkdirSync(shared);
+      const target = join(shared, "a.json");
+      writeFileSync(target, "1");
+      const link = join(config, "current.json");
+      symlinkSync("../shared/a.json", link);
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "linux", watch: fake.watch });
+      try {
+        w.addRoot(config, Infinity);
+        await until(() => fake.open(shared).length === 1, "the target's watch");
+        rmSync(target);
+        fake.open(shared)[0].emit("a.json");
+        expect(changes).toEqual([link]);
+        // Still there, the broken link keeps its target: recreating it is a change.
+        writeFileSync(target, "2");
+        fake.open(shared)[0].emit("a.json");
+        expect(changes).toEqual([link, link]);
+        rmSync(target);
+        fake.open(shared)[0].emit("a.json");
+        // Now the link goes too; it stats as missing before and after.
+        rmSync(link);
+        fake.open(config)[0].emit("current.json");
+        const seen = changes.length;
+        writeFileSync(target, "3");
+        fake.open(shared)[0]?.emit("a.json");
+        expect(changes).toHaveLength(seen);
+      } finally {
+        w.close();
+      }
+    },
+  );
+
   test("a folder swapped by rename gets a new watch, found by its inode", async () => {
     const root = temp();
     const gen = join(root, "gen");

@@ -134,6 +134,13 @@ describe("usesNodeWatch", () => {
     // An app arg: SIGTERM ends the app just as SIGHUP would.
     [["app.ts", "--watch"], true],
     [["--", "app.ts", "--watch"], false],
+    // The last flag wins, as in Node.js.
+    [["--watch", "--no-watch", "app.ts"], false],
+    [["--watch-path=src", "--no_watch", "app.ts"], false],
+    [["--no-watch", "--watch", "app.ts"], true],
+    // After another word, a --no-watch may be the app's: watch mode may still be on.
+    [["--watch", "app.ts", "--no-watch"], true],
+    [["--watch", "--title", "x", "--no-watch", "app.ts"], true],
     [["--watch-preserve-output", "app.ts"], false],
     [["--watch-kill-signal", "SIGINT", "app.ts"], false],
     [["--watchful", "app.ts"], false],

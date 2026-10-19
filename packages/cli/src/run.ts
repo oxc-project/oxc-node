@@ -308,16 +308,24 @@ export function runChild(cmd: string, args: string[], o: { nodeWatch: boolean })
 /**
  * True when Node.js' own watch mode may be on. Every arg is checked, as finding the entry
  * needs every Node.js flag that takes a value (`--unhandled-rejections strict`). An app arg
- * named `--watch` only turns SIGHUP into SIGTERM, which ends the app as well.
+ * named `--watch` only turns SIGHUP into SIGTERM, which ends the app as well. The last flag
+ * wins, as in Node.js, but a `--no-watch` after any other word may be the app's, so it does not
+ * turn watch mode off.
  */
 export function usesNodeWatch(args: string[]): boolean {
+  let on = false;
+  let word = false;
   for (const arg of args) {
     if (arg === "--") {
-      return false;
+      break;
     }
     if (/^--watch([-_]path)?(=|$)/.test(arg)) {
-      return true;
+      on = true;
+    } else if (/^--no[-_]watch$/.test(arg)) {
+      if (!word) on = false;
+    } else if (!arg.startsWith("-")) {
+      word = true;
     }
   }
-  return false;
+  return on;
 }

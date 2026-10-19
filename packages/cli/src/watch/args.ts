@@ -78,7 +78,10 @@ export interface WatchArgs {
   nodeArgs: string[];
   entry: string;
   envFiles: string[];
-  /** Node.js config files (`--experimental-config-file`, `--config-file`), checked for watch mode. */
+  /**
+   * The Node.js config file (`--experimental-config-file`, `--config-file`) the child reads, if
+   * any: Node.js reads one. Checked for watch mode, and watched.
+   */
   configFiles: string[];
   /** `--no-watch` before the entry, which beats NODE_OPTIONS and the config files. */
   noWatch: boolean;
@@ -195,6 +198,8 @@ export function parseWatchArgs(
     notes: [],
   };
 
+  // Each config flag, and whether it names a file rather than asking for the default one.
+  const configs: { file: string; named: boolean }[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--") {
@@ -324,12 +329,22 @@ export function parseWatchArgs(
     ) {
       out.envFiles.push(nodeValue);
     }
-    if (configFlag) out.configFiles.push(nodeValue || "node.config.json");
+    // `--experimental-config-file=` with nothing after it names no file.
+    if (configFlag && nodeValue !== "") {
+      const file = nodeName === "--experimental-default-config-file" ? undefined : nodeValue;
+      configs.push({ file: file ?? "node.config.json", named: file !== undefined });
+    }
   }
 
   if (!out.entry && !out.help) {
     return { error: "missing <entry>" };
   }
+  // From 24.19 and 26.1 the last config flag wins. Before, the first file named wins, and the
+  // default one counts only when none is named.
+  const config = bareConfigFlag(nodeVersion)
+    ? configs.at(-1)
+    : (configs.find((c) => c.named) ?? configs[0]);
+  if (config) out.configFiles.push(config.file);
   const nested = nestedWatcher(out, env, read, nodeVersion);
   return nested ? { error: nested } : out;
 }

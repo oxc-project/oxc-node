@@ -42,6 +42,16 @@ function sigOf(p: string): Sig {
   }
 }
 
+/** The stat of a link itself: it changes when the link is removed or pointed elsewhere. */
+function linkSigOf(p: string): Sig {
+  try {
+    const s = lstatSync(p, { bigint: true });
+    return { ino: s.ino, size: s.size, mtimeNs: s.mtimeNs, ctimeNs: s.ctimeNs };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Whether a file changed, from its stat before and after. `event`: an event named it, rather
  * than a look made without one.
@@ -84,6 +94,8 @@ interface Entry {
   sig: Sig;
   own?: "static" | "run";
   target?: string;
+  /** For a link with a target: the link's own stat when it was followed. */
+  linkSig?: Sig;
   links?: Set<string>;
 }
 
@@ -310,6 +322,7 @@ export class DirWatcher {
       real = realpathSync.native(entry.path);
     } catch {}
     const next = real && this.#key(real) !== this.#key(entry.path) ? this.#key(real) : undefined;
+    entry.linkSig = next ? linkSigOf(entry.path) : undefined;
     if (next === entry.target) return;
     const link = this.#key(entry.path);
     if (entry.target !== undefined) this.#release(entry.target, link);
@@ -536,7 +549,14 @@ export class DirWatcher {
   #check(k: string, event = true) {
     const entry = this.#files.get(k)!;
     const next = sigOf(entry.path);
-    if (!changed(entry.sig, next, event)) return;
+    if (!changed(entry.sig, next, event)) {
+      // A link to a deleted file stats as missing, whether the link is still there, gone, or
+      // pointed at another missing file. So look at the link itself, or its old target stays.
+      if (next === null && entry.target !== undefined) {
+        if (changed(entry.linkSig ?? null, linkSigOf(entry.path), false)) this.#follow(entry);
+      }
+      return;
+    }
     entry.sig = next;
     // A link's stat follows it: so a look without an event does not see this change again.
     for (const l of entry.links ?? []) {
