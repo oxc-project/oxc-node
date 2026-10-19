@@ -346,7 +346,8 @@ export function parseWatchArgs(
     return { error: "missing <entry>" };
   }
   out.configFiles = pickConfig(configs, nodeVersion);
-  const nested = nestedWatcher(out, env, read, nodeVersion);
+  // --help starts no child, so there is no watcher to nest.
+  const nested = out.help ? undefined : nestedWatcher(out, env, read, nodeVersion);
   return nested ? { error: nested } : out;
 }
 

@@ -287,6 +287,7 @@ describe("parseWatchArgs", () => {
     expect(withEnv(["app.ts"], "--no-watch --watch-path=src")).toHaveProperty("error");
     expect(withEnv(["--no-watch", "app.ts"], "--watch")).not.toHaveProperty("error");
     expect(withEnv(["app.ts", "--no-watch"], "--watch")).toHaveProperty("error");
+    expect(withEnv(["--help"], "--watch")).toMatchObject({ help: true });
     // NODE_OPTIONS from an env file, read again before each start.
     const args = { envFiles: [".env"], configFiles: [], noWatch: false };
     files[".env"] = "NODE_OPTIONS=--watch --no-watch\n";
