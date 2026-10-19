@@ -145,6 +145,19 @@ describe("makeMatcher", () => {
     expect(win.classify("C:\\proj\\dist\\a.js", "graph")).toBe("exclude");
   });
 
+  test("a literal exclude under a UNC working folder", () => {
+    const unc = makeMatcher({
+      cwd: "\\\\server\\share\\proj",
+      include: [],
+      exclude: ["dist", "/skip.json"],
+      platform: "win32",
+      isDir: () => false,
+    });
+    expect(unc.classify("\\\\server\\share\\proj\\dist\\a.js", "graph")).toBe("exclude");
+    expect(unc.classify("\\\\server\\share\\skip.json", "graph")).toBe("exclude");
+    expect(unc.classify("\\\\server\\share\\proj\\a.js", "graph")).toBe("watch");
+  });
+
   test("a glob ending in a slash names folders and everything below them", () => {
     const m = matcher(["config/*/"], ["src/*/", "**/dist/"]);
     expect(m.classify("/proj/src/x/a.ts", "graph")).toBe("exclude");

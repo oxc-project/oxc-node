@@ -112,9 +112,13 @@ export function makeMatcher(opts: {
           ? native.resolve(opts.cwd, pattern)
           : pattern;
   // Without a trailing `/`, so `--exclude dist/` matches `dist/a.js`; a root keeps its own.
+  // On Windows, resolved as a Windows path: a posix join turns a UNC `//server` into `/server`.
   const absolute = (pattern: string) => {
-    const p = norm(rooted(pattern));
-    const abs = native.isAbsolute(rooted(pattern)) ? p : path.posix.join(cwd, p);
+    const abs = win
+      ? norm(native.resolve(opts.cwd, rooted(pattern)))
+      : path.posix.isAbsolute(pattern)
+        ? pattern
+        : path.posix.join(cwd, pattern);
     return /^([a-z]:)?\/+$/i.test(abs) ? abs : abs.replace(/\/+$/, "");
   };
 
