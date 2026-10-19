@@ -3,7 +3,6 @@ import { describe, expect, test } from "vitest";
 
 import {
   configFileNestedWatcher,
-  envFileNestedWatcher,
   nestedWatcher,
   nodeOptionsTokens,
   parseWatchArgs,
@@ -328,13 +327,52 @@ describe("parseWatchArgs", () => {
     }
   });
 
-  test("envFileNestedWatcher reads the env files again on each call", () => {
+  test("nestedWatcher reads the env files again on each call", () => {
     const files: Record<string, string> = { ".env": "A=1\n" };
     const read = (f: string) => files[f];
-    expect(envFileNestedWatcher({}, [".env"], read)).toBeUndefined();
+    const args = { envFiles: [".env"], configFiles: [], noWatch: false };
+    expect(nestedWatcher(args, {}, read)).toBeUndefined();
     files[".env"] = "NODE_OPTIONS=--watch-path=src\n";
-    expect(envFileNestedWatcher({}, [".env"], read)).toMatch(/nested watcher/);
-    expect(envFileNestedWatcher({ NODE_OPTIONS: "" }, [".env"], read)).toBeUndefined();
+    expect(nestedWatcher(args, {}, read)).toMatch(/nested watcher \(from --env-file\)/);
+    expect(nestedWatcher(args, { NODE_OPTIONS: "" }, read)).toBeUndefined();
+  });
+
+  test("the config file and NODE_OPTIONS from an env file, in the order of the Node.js version", () => {
+    const files: Record<string, string> = {
+      "on.json": JSON.stringify({ nodeOptions: { watch: true } }),
+      "off.json": JSON.stringify({ nodeOptions: { watch: false } }),
+      "section-off.json": JSON.stringify({ watch: { watch: false } }),
+      "none.json": "{}",
+      "no.env": "NODE_OPTIONS=--no-watch\n",
+      "yes.env": "NODE_OPTIONS=--watch\n",
+    };
+    const check = (env: string, config: string, version: string) =>
+      nestedWatcher(
+        { envFiles: [env], configFiles: [config], noWatch: false },
+        {},
+        (f) => files[f],
+        version,
+      );
+    // From 24.16 and 26.1, the env file wins.
+    expect(check("no.env", "on.json", "24.22.0")).toBeUndefined();
+    expect(check("yes.env", "off.json", "26.12.0")).toMatch(/from --env-file/);
+    expect(check("yes.env", "none.json", "26.12.0")).toMatch(/from --env-file/);
+    // Before, the config file wins when it says anything.
+    expect(check("no.env", "on.json", "24.15.0")).toMatch(/config file on\.json/);
+    expect(check("no.env", "on.json", "25.9.0")).toMatch(/config file on\.json/);
+    expect(check("yes.env", "off.json", "24.15.0")).toBeUndefined();
+    expect(check("yes.env", "section-off.json", "26.0.0")).toBeUndefined();
+    expect(check("yes.env", "none.json", "24.15.0")).toMatch(/from --env-file/);
+    // NODE_OPTIONS in the env beats both, on every version.
+    const env = (NODE_OPTIONS: string, version: string) =>
+      nestedWatcher(
+        { envFiles: ["yes.env"], configFiles: ["on.json"], noWatch: false },
+        { NODE_OPTIONS },
+        (f) => files[f],
+        version,
+      );
+    expect(env("--no-watch", "24.15.0")).toBeUndefined();
+    expect(env("--no-watch", "26.12.0")).toBeUndefined();
   });
 
   test("NODE_OPTIONS is split as Node.js splits it", () => {

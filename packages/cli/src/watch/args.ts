@@ -170,6 +170,8 @@ const atLeast = (version: string, ...mins: [number, number][]) => {
 };
 /** Node.js 24.19 and 26.1 read a bare `--experimental-config-file` as `node.config.json`. */
 const bareConfigFlag = (version: string) => atLeast(version, [24, 19], [26, 1]);
+/** Node.js 24.16 and 26.1 apply NODE_OPTIONS from an env file over the config file. */
+const dotenvBeatsConfig = (version: string) => atLeast(version, [24, 16], [26, 1]);
 /** Node.js 25.4 turns a flag on when the config file has a section named after it. */
 const sectionTurnsOn = (version: string) => atLeast(version, [25, 4], [26, 0]);
 
@@ -350,9 +352,9 @@ export function parseWatchArgs(
 }
 
 /**
- * Why the child would start a watcher of its own. The command line beats NODE_OPTIONS (from the
- * env, else the env files), which beats the config files. Checked before each start too, as the
- * files may change.
+ * Why the child would start a watcher of its own. The command line beats NODE_OPTIONS, which
+ * beats the config file. NODE_OPTIONS from an env file beats the config file from 24.16 and 26.1;
+ * before, the config file wins. Checked before each start too, as the files may change.
  */
 export function nestedWatcher(
   args: Pick<WatchArgs, "envFiles" | "configFiles" | "noWatch">,
@@ -361,41 +363,41 @@ export function nestedWatcher(
   nodeVersion = NODE_VERSION,
 ): string | undefined {
   if (args.noWatch) return undefined;
-  if (watchFlag(env.NODE_OPTIONS)) return NESTED;
-  const nested = envFileNestedWatcher(env, args.envFiles, read);
-  if (nested) return nested;
-  if (watchFlag(childNodeOptions(env, args.envFiles, read)) === false) return undefined;
-  return configFileNestedWatcher(args.configFiles, read, nodeVersion);
+  const fromEnv = watchFlag(env.NODE_OPTIONS);
+  if (fromEnv !== undefined) return fromEnv ? NESTED : undefined;
+  const fromFile =
+    env.NODE_OPTIONS === undefined
+      ? watchFlag(childNodeOptions(env, args.envFiles, read))
+      : undefined;
+  const config = configFileWatch(args.configFiles, read, nodeVersion);
+  const fileWins = dotenvBeatsConfig(nodeVersion) ? fromFile !== undefined : config === undefined;
+  if (fileWins) return fromFile ? `${NESTED} (from --env-file)` : undefined;
+  return config?.on ? configNested(config.file) : undefined;
 }
 
 /**
- * A Node.js config file applies `nodeOptions` as flags, and from 25.4 a `watch` section turns on
- * --watch by being there (unless it holds `"watch": false`). With `configs`, Node.js takes the
- * first entry for its major version. Either starts a nested watcher.
+ * What the Node.js config file says about watch mode: on, off, or nothing (undefined). It applies
+ * `nodeOptions` and the `watch` section as flags, and from 25.4 a `watch` section turns on --watch
+ * by being there (unless it holds `"watch": false`). With `configs`, Node.js takes the first entry
+ * for its major version.
  */
-export function configFileNestedWatcher(
+export function configFileWatch(
   configFiles: string[],
   read: (file: string) => string | undefined = readEnvFile,
   nodeVersion = NODE_VERSION,
-): string | undefined {
+): { file: string; on: boolean } | undefined {
   const nodeMajor = majorOf(nodeVersion);
   const isObject = (v: unknown): v is Record<string, unknown> =>
     typeof v === "object" && v !== null && !Array.isArray(v);
-  const watchKey = (key: string) => /^watch([-_]path)?$/.test(key);
-  const turnsOn = (config: unknown) => {
-    if (!isObject(config)) return false;
+  const watchOf = (config: unknown): boolean | undefined => {
+    if (!isObject(config)) return undefined;
     const { nodeOptions, watch } = config;
-    if (
-      sectionTurnsOn(nodeVersion) &&
-      isObject(watch) &&
-      !Object.entries(watch).some(([k, v]) => k === "watch" && v === false)
-    ) {
-      return true;
-    }
-    return (
-      isObject(nodeOptions) &&
-      Object.entries(nodeOptions).some(([k, v]) => watchKey(k) && v !== false && v != null)
-    );
+    const sets = [nodeOptions, watch].filter(isObject);
+    const on = (o: Record<string, unknown>) =>
+      Object.entries(o).some(([k, v]) => /^watch([-_]path)?$/.test(k) && v !== false && v != null);
+    if (sets.some(on)) return true;
+    if (sectionTurnsOn(nodeVersion) && isObject(watch) && watch.watch !== false) return true;
+    return sets.some((o) => o.watch === false) ? false : undefined;
   };
   for (const file of configFiles) {
     const text = read(file);
@@ -410,11 +412,23 @@ export function configFileNestedWatcher(
       const entry = config.configs.find((c) => isObject(c) && c.nodeVersion === nodeMajor);
       config = isObject(entry) ? entry.config : undefined;
     }
-    if (turnsOn(config)) {
-      return `the Node.js config file ${file} turns on --watch, which would start a nested watcher`;
-    }
+    const on = watchOf(config);
+    if (on !== undefined) return { file, on };
   }
   return undefined;
+}
+
+const configNested = (file: string) =>
+  `the Node.js config file ${file} turns on --watch, which would start a nested watcher`;
+
+/** Why the config file alone would start a nested watcher. */
+export function configFileNestedWatcher(
+  configFiles: string[],
+  read: (file: string) => string | undefined = readEnvFile,
+  nodeVersion = NODE_VERSION,
+): string | undefined {
+  const config = configFileWatch(configFiles, read, nodeVersion);
+  return config?.on ? configNested(config.file) : undefined;
 }
 
 /** NODE_OPTIONS as the child gets it: from --env-file unless it is set already; the last file wins. */
@@ -431,18 +445,6 @@ function childNodeOptions(
     if (value !== undefined) fromFiles = value;
   }
   return fromFiles;
-}
-
-/** NODE_OPTIONS from --env-file that turns on --watch. The files are watched and may change. */
-export function envFileNestedWatcher(
-  env: NodeJS.ProcessEnv,
-  envFiles: string[],
-  read: (file: string) => string | undefined = readEnvFile,
-): string | undefined {
-  if (env.NODE_OPTIONS !== undefined) return undefined;
-  return watchFlag(childNodeOptions(env, envFiles, read))
-    ? `${NESTED} (from --env-file)`
-    : undefined;
 }
 
 /** The child env for `--tsconfig`: oxc-node reads TS_NODE_PROJECT before OXC_TSCONFIG_PATH. */
