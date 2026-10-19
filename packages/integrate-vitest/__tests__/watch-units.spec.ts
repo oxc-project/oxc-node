@@ -653,6 +653,64 @@ describe("DirWatcher", () => {
   );
 
   test.skipIf(process.platform === "win32")(
+    "a run's target dropped through its link still counts a change before the next run",
+    async () => {
+      const root = temp();
+      const [links, real] = ["links", "real"].map((d) => join(root, d));
+      for (const d of [links, real]) mkdirSync(d);
+      const target = join(real, "a.json");
+      writeFileSync(target, "1");
+      const link = join(links, "a.json");
+      symlinkSync("../real/a.json", link);
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "linux", watch: fake.watch });
+      try {
+        w.add(target, true);
+        w.add(link, true);
+        w.dropRun();
+        writeFileSync(target, "22");
+        w.add(target, true);
+        await until(() => changes.length > 0, "the change made between runs");
+        expect(changes).toEqual([target]);
+      } finally {
+        w.close();
+      }
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "a link in a chain replaced by a file lets the old target go",
+    async () => {
+      const root = temp();
+      const [config, shared, real] = ["config", "shared", "real"].map((d) => join(root, d));
+      for (const d of [config, shared, real]) mkdirSync(d);
+      const target = join(real, "a.json");
+      writeFileSync(target, "1");
+      const alias = join(shared, "alias.json");
+      symlinkSync("../real/a.json", alias);
+      const current = join(config, "current.json");
+      symlinkSync("../shared/alias.json", current);
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "linux", watch: fake.watch });
+      try {
+        w.add(current);
+        await until(() => fake.open(real).length === 1, "the target's watch");
+        const [targetWatch] = fake.open(real);
+        rmSync(alias);
+        fake.open(shared)[0].emit("alias.json");
+        writeFileSync(alias, "{}");
+        fake.open(shared)[0].emit("alias.json");
+        const seen = changes.length;
+        writeFileSync(target, "22");
+        targetWatch.emit("a.json");
+        expect(changes).toHaveLength(seen);
+      } finally {
+        w.close();
+      }
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
     "a link removed after its target was deleted lets the old target go",
     async () => {
       const root = temp();

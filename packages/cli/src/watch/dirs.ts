@@ -172,6 +172,8 @@ export class DirWatcher {
   #dropped: string[] = [];
   // Their stats then, so a change made before the new run reports them again is not lost.
   #droppedSigs = new Map<string, Sig>();
+  // Set while dropRun runs: what it removes, also a target released through a dropped link.
+  #dropping: { sigs: Map<string, Sig>; dirs: Set<string> } | undefined;
   #failed = new Set<string>();
   #warned = new Set<string>();
   #syncTimer: NodeJS.Timeout | undefined;
@@ -219,6 +221,7 @@ export class DirWatcher {
   dropRun(): void {
     const dirs = new Set<string>();
     const sigs = new Map<string, Sig>();
+    this.#dropping = { sigs, dirs };
     for (const [k, f] of this.#files) {
       if (f.own !== "run") continue;
       // The next run may not report a file it did not find (a deleted tsconfig.json is looked for,
@@ -231,10 +234,9 @@ export class DirWatcher {
         f.shown = this.#files.get(link)?.path ?? f.shown;
         continue;
       }
-      sigs.set(k, f.sig);
       this.#remove(k);
-      dirs.add(path.dirname(f.path));
     }
+    this.#dropping = undefined;
     this.#droppedSigs = sigs;
     // The folders dropped the time before may be unneeded now.
     if (this.#dropped.length > 0 && this.#o.poll === false) this.#scheduleSync();
@@ -391,6 +393,10 @@ export class DirWatcher {
     const entry = this.#files.get(k);
     if (!entry) return;
     this.#files.delete(k);
+    if (this.#dropping) {
+      this.#dropping.sigs.set(k, entry.sig);
+      this.#dropping.dirs.add(path.dirname(entry.path));
+    }
     for (const h of entry.hops ?? []) this.#release(h, k);
     if (entry.target !== undefined) this.#release(entry.target, k);
     const dk = this.#key(path.dirname(entry.path));
@@ -617,12 +623,14 @@ export class DirWatcher {
     if (entry.own && (entry.target !== undefined || isLink(entry.path))) {
       this.#follow(entry);
     }
-    // A link in the middle of a chain: the links through it follow it again. A copy, as following
-    // takes a link out of the set and puts it back.
-    if (entry.links && isLink(entry.path)) {
+    // A link in the middle of a chain: the links through it follow it again, also when it is
+    // now a file. Not while it is gone, so that it coming back still restarts. A copy, as
+    // following takes a link out of the set and puts it back.
+    if (entry.links) {
+      const link = isLink(entry.path);
       for (const l of Array.from(entry.links)) {
         const through = this.#files.get(l);
-        if (through) this.#follow(through);
+        if (through && (link || (next && through.hops?.includes(k)))) this.#follow(through);
       }
     }
     this.#o.onChange(entry.shown);
