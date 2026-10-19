@@ -1,0 +1,23 @@
+package.json
+  s_5b25d6ae40e975::t_5bd4f34f77ad16 13,20
+pnpm-lock.yaml
+  s_5b25d6ae40e975::t_fa82ba08e71522 175-176,183,204,899-900,1169-1170
+pnpm-workspace.yaml
+  s_5b25d6ae40e975::t_76a0c04dbd4a57 15-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4be6a2d20bdc9f85fd66175194c71ea66ce9a4ba",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
