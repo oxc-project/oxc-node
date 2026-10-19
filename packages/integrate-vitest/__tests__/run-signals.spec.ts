@@ -174,5 +174,9 @@ describe("usesNodeWatch", () => {
     // A flag on the command line beats them all.
     expect(uses(["--no-watch", "--experimental-config-file=on.json", "app.ts"])).toBe(false);
     expect(uses(["app.ts"], {})).toBe(false);
+    // Before 26.12 a config flag after `--` counts as well; an env file there does not.
+    expect(uses(["--", "app.ts", "--experimental-config-file=on.json"], {}, "24.22.0")).toBe(true);
+    expect(uses(["--", "app.ts", "--experimental-config-file=on.json"], {}, "26.12.0")).toBe(false);
+    expect(uses(["--", "app.ts", "--env-file=watch.env"])).toBe(false);
   });
 });

@@ -158,6 +158,27 @@ ${KEEP}`,
     );
   });
 
+  test("a deleted tsconfig.json that comes back", async () => {
+    const paths = (dir: string) =>
+      JSON.stringify({ compilerOptions: { paths: { "@lib/*": [`./${dir}/*`] } } });
+    const root = project({
+      "package.json": ESM,
+      "tsconfig.json": paths("a"),
+      "main.ts": `let v = "none";\ntry { ({ v } = await import("@lib/value")); } catch {}\nconsole.log("RUN", v, process.pid);\n${KEEP}`,
+      "a/value.ts": value("a"),
+      "b/value.ts": value("b"),
+    });
+    const tsconfig = join(root, "tsconfig.json");
+    const o = startOxnode(["watch", "main.ts"], root);
+    await o.waitFor(runLine("a"));
+    await o.watched(tsconfig);
+    const from = o.mark();
+    rmSync(tsconfig);
+    await o.waitFor(runLine("none"), 20_000, from);
+    // The run without it only looked for it, and reported nothing.
+    await o.editUntil(tsconfig, () => paths("b"), runLine("b"));
+  });
+
   test("a tsconfig extended from a package in node_modules", async () => {
     const paths = (dir: string) =>
       JSON.stringify({ compilerOptions: { paths: { "@lib/*": [`../../${dir}/*`] } } });

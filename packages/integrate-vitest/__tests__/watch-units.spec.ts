@@ -656,6 +656,39 @@ describe("DirWatcher", () => {
   });
 
   describe("dropRun", () => {
+    test("a file that was there and is gone stays for the next run, until it is back", async () => {
+      const root = temp();
+      const [tsconfig, never] = [join(root, "tsconfig.json"), join(root, "never.ts")];
+      writeFileSync(tsconfig, "{}");
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "linux", watch: fake.watch });
+      const emit = (name: string) => fake.open(root)[0]?.emit(name);
+      try {
+        w.add(tsconfig, true);
+        // A path a failed resolve looked for: never there, so it goes with the run.
+        w.add(never, true);
+        await until(() => fake.open(root).length === 1, "the folder's watch");
+        rmSync(tsconfig);
+        emit("tsconfig.json");
+        expect(changes).toEqual([tsconfig]);
+        // The new run does not report it: discovery only looks for it.
+        w.dropRun();
+        writeFileSync(tsconfig, "{}");
+        emit("tsconfig.json");
+        expect(changes).toEqual([tsconfig, tsconfig]);
+        writeFileSync(never, "1");
+        emit("never.ts");
+        expect(changes).toEqual([tsconfig, tsconfig]);
+        // Back, and not reported again: the run after drops it.
+        w.dropRun();
+        writeFileSync(tsconfig, "{ }");
+        emit("tsconfig.json");
+        expect(changes).toEqual([tsconfig, tsconfig]);
+      } finally {
+        w.close();
+      }
+    });
+
     test("a file changed between the drop and the new run's report is a change", async () => {
       const root = temp();
       const [dep, same] = [join(root, "dep.ts"), join(root, "same.ts")];

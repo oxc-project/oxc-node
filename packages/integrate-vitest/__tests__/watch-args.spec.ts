@@ -313,6 +313,37 @@ describe("parseWatchArgs", () => {
     });
   });
 
+  test("before 26.12, a config flag after the entry counts too", () => {
+    const files: Record<string, string> = {
+      "on.json": JSON.stringify({ nodeOptions: { watch: true } }),
+      "cfg.json": "{}",
+    };
+    const withFiles = (argv: string[], version: string) =>
+      parseWatchArgs(argv, {}, (f) => files[f], version);
+    expect(withFiles(["app.ts", "--experimental-config-file=cfg.json"], "24.22.0")).toMatchObject({
+      entry: "app.ts",
+      configFiles: ["cfg.json"],
+    });
+    expect(withFiles(["app.ts", "--experimental-config-file=on.json"], "22.18.0")).toHaveProperty(
+      "error",
+    );
+    expect(
+      withFiles(["--", "app.ts", "--experimental-config-file=cfg.json"], "25.9.0"),
+    ).toMatchObject({
+      configFiles: ["cfg.json"],
+    });
+    // Node.js 22 takes the next word there too.
+    expect(
+      withFiles(["app.ts", "--experimental-config-file", "cfg.json"], "22.18.0"),
+    ).toMatchObject({
+      configFiles: ["cfg.json"],
+    });
+    // From 26.12, only flags before the entry.
+    expect(withFiles(["app.ts", "--experimental-config-file=on.json"], "26.12.0")).toMatchObject({
+      configFiles: [],
+    });
+  });
+
   test("a bare config-file flag is read as the Node.js version reads it", () => {
     const files: Record<string, string> = { "node.config.json": "{}", "cfg.json": "{}" };
     const withFiles = (argv: string[], version: string) =>

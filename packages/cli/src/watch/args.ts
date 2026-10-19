@@ -170,6 +170,8 @@ const atLeast = (version: string, ...mins: [number, number][]) => {
 };
 /** Node.js 24.19 and 26.1 read a bare `--experimental-config-file` as `node.config.json`. */
 const bareConfigFlag = (version: string) => atLeast(version, [24, 19], [26, 1]);
+/** Before 26.12, Node.js reads a config flag anywhere in argv: after the entry and `--` too. */
+const configFlagsAnywhere = (version: string) => !atLeast(version, [26, 12]);
 /** Node.js 24.16 and 26.1 apply NODE_OPTIONS from an env file over the config file. */
 const dotenvBeatsConfig = (version: string) => atLeast(version, [24, 16], [26, 1]);
 /** Node.js 25.4 turns a flag on when the config file has a section named after it. */
@@ -209,6 +211,7 @@ export function parseWatchArgs(
         // Keep `--`, so Node.js also takes an entry starting with `-` as a file.
         out.nodeArgs.push(...argv.slice(i));
       }
+      if (configFlagsAnywhere(nodeVersion)) scanConfigs(argv.slice(i + 1), nodeVersion, configs);
       break;
     }
     if (arg === "-") {
@@ -217,6 +220,7 @@ export function parseWatchArgs(
     if (!arg.startsWith("-")) {
       out.entry = arg;
       out.nodeArgs.push(...argv.slice(i));
+      if (configFlagsAnywhere(nodeVersion)) scanConfigs(argv.slice(i + 1), nodeVersion, configs);
       break;
     }
 
@@ -362,36 +366,51 @@ function pickConfig(configs: ConfigFlag[], nodeVersion: string): string[] {
   return config ? [config.file] : [];
 }
 
+/** Normalized long flag name and inline value: `--watch_path=x` is `--watch-path`, `x`. */
+function splitFlag(arg: string): [string, string | undefined] {
+  const eq = arg.indexOf("=");
+  const name = `--${(eq === -1 ? arg : arg.slice(0, eq)).slice(2).replaceAll("_", "-")}`;
+  return [name, eq === -1 ? undefined : arg.slice(eq + 1)];
+}
+
+const isConfigFlag = (name: string) =>
+  name === "--experimental-config-file" ||
+  name === "--config-file" ||
+  name === "--experimental-default-config-file";
+
+/** Add the config flags in `args`, read as `nodeVersion` reads them. */
+function scanConfigs(args: string[], nodeVersion: string, configs: ConfigFlag[]) {
+  for (let i = 0; i < args.length; i++) {
+    if (!args[i].startsWith("--")) continue;
+    const [name, inline] = splitFlag(args[i]);
+    if (!isConfigFlag(name)) continue;
+    let value = inline;
+    const takesValue = name === "--experimental-config-file" && !bareConfigFlag(nodeVersion);
+    if (value === undefined && takesValue && i + 1 < args.length) value = args[++i];
+    addConfig(configs, name, value);
+  }
+}
+
 /**
  * The env files and the config file in `argv`, for `oxnode` with no watch command, which does
- * not find the entry: every arg up to `--` is read, so an app arg may count too.
+ * not find the entry: every arg up to `--` is read, so an app arg may count too. Config flags
+ * after `--` count where Node.js reads them.
  */
 export function nodeFiles(
   argv: string[],
   nodeVersion = NODE_VERSION,
 ): Pick<WatchArgs, "envFiles" | "configFiles"> {
   const envFiles: string[] = [];
-  const configs: ConfigFlag[] = [];
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === "--") break;
-    if (!arg.startsWith("--")) continue;
-    const eq = arg.indexOf("=");
-    const name = `--${(eq === -1 ? arg : arg.slice(0, eq)).slice(2).replaceAll("_", "-")}`;
-    let value = eq === -1 ? undefined : arg.slice(eq + 1);
-    const envFile = name === "--env-file" || name === "--env-file-if-exists";
-    const takesValue =
-      envFile || (name === "--experimental-config-file" && !bareConfigFlag(nodeVersion));
-    if (value === undefined && takesValue && i + 1 < argv.length) value = argv[++i];
-    if (envFile && value !== undefined) envFiles.push(value);
-    if (
-      name === "--experimental-config-file" ||
-      name === "--config-file" ||
-      name === "--experimental-default-config-file"
-    ) {
-      addConfig(configs, name, value);
-    }
+  const end = argv.indexOf("--") === -1 ? argv.length : argv.indexOf("--");
+  for (let i = 0; i < end; i++) {
+    if (!argv[i].startsWith("--")) continue;
+    const [name, inline] = splitFlag(argv[i]);
+    if (name !== "--env-file" && name !== "--env-file-if-exists") continue;
+    const value = inline ?? (i + 1 < end ? argv[++i] : undefined);
+    if (value !== undefined) envFiles.push(value);
   }
+  const configs: ConfigFlag[] = [];
+  scanConfigs(configFlagsAnywhere(nodeVersion) ? argv : argv.slice(0, end), nodeVersion, configs);
   return { envFiles, configFiles: pickConfig(configs, nodeVersion) };
 }
 

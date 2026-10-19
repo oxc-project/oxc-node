@@ -96,6 +96,8 @@ interface Entry {
   target?: string;
   /** For a link with a target: the link's own stat when it was followed. */
   linkSig?: Sig;
+  /** It was there and is gone: a run-owned one stays for the next run, until it is back. */
+  gone?: boolean;
   links?: Set<string>;
 }
 
@@ -191,6 +193,9 @@ export class DirWatcher {
     const sigs = new Map<string, Sig>();
     for (const [k, f] of this.#files) {
       if (f.own !== "run") continue;
+      // The next run may not report a file it did not find (a deleted tsconfig.json is looked for,
+      // not read), so creating it again must still restart.
+      if (f.gone) continue;
       f.own = undefined;
       const [link] = f.links ?? [];
       if (link !== undefined) {
@@ -557,6 +562,8 @@ export class DirWatcher {
       }
       return;
     }
+    if (entry.sig && !next) entry.gone = true;
+    else if (next) entry.gone = false;
     entry.sig = next;
     // A link's stat follows it: so a look without an event does not see this change again.
     for (const l of entry.links ?? []) {
