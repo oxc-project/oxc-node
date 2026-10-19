@@ -1,0 +1,19 @@
+src/lib.rs
+  s_5b25d6ae40e975::t_67026045c47c2a 517,1335-1362,1373,1379,3045,3070,3073,3092,3095,3639-3663
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3fdb3c1d482746b6ef81a1d29278d0f752929eb8",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
