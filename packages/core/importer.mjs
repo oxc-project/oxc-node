@@ -179,8 +179,12 @@ class Graph {
    * `require()`d (`esm`), which wants a namespace back.
    */
   require(target, importer, esm) {
-    if (target.builtin || target.url) {
-      const exports = requireSelf(target.builtin ?? target.url);
+    if (target.url) {
+      // `require` loads no URL that is not a file; the error names the requiring file.
+      throw notFound(target.url, importer.url, true);
+    }
+    if (target.builtin) {
+      const exports = requireSelf(target.builtin);
       return esm ? namespaceOf(exports) : exports;
     }
     const { path } = target;
