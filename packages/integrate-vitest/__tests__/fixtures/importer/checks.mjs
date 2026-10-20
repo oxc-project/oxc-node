@@ -156,7 +156,7 @@ export async function runChecks({ host, parentId, adapter, before, emit = (r) =>
     fs.rmSync(dir, { recursive: true, force: true });
     fs.mkdirSync(dir);
     for (const f of ['root.ts', 'dep.ts'])
-      fs.writeFileSync(path.join(dir, f), fs.readFileSync(path.join(PROJECT, 'cache-template', f), 'utf8').replace('__KEY__', dir));
+      fs.writeFileSync(path.join(dir, f), fs.readFileSync(path.join(PROJECT, 'cache-template', f), 'utf8').replace('__KEY__', JSON.stringify(dir)));
     return dir;
   };
   const editDep = (dir) => {
