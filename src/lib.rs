@@ -2227,31 +2227,42 @@ pub fn create_resolve<'env>(
     #[cfg(not(windows))]
     let is_absolute_path = file_specifier.starts_with("file://");
 
-    // The importing file itself, when the parent URL is a file URL. Discovery
-    // needs the file rather than its directory, because `TsconfigDiscovery::Auto`
-    // matches a config's `files` / `include` / `exclude` against the file path.
-    let parent_file =
+    // The path of the parent URL, a file or a directory.
+    let parent =
         match context.parent_url.as_deref() {
             Some(parent) => Some(file_url_to_path(parent).ok_or_else(|| {
                 Error::new(Status::GenericFailure, "Parent URL is not a file URL")
             })?),
             None => None,
         };
-    let parent_file = parent_file.as_deref();
+    let parent = parent.as_deref();
+    // A parent URL that ends in `/` is the directory to resolve from, not a file:
+    // Node.js resolves `--import` preloads from `pathToFileURL(cwd + "/")`, which
+    // is `file:///` when the working directory is `/` (issue #862).
+    let parent_is_directory = context.parent_url.as_deref().is_some_and(|parent| {
+        let path = url_path(parent);
+        path.ends_with('/') || path.ends_with('\\')
+    });
+    // The importing file itself, when the parent URL is a file's. Discovery
+    // needs the file rather than its directory, because `TsconfigDiscovery::Auto`
+    // matches a config's `files` / `include` / `exclude` against the file path.
+    // A directory parent has no file to discover from, as the entry point has not.
+    let parent_file = parent.filter(|_| !parent_is_directory);
 
     // An importer inside `node_modules` keeps the package order; the entry point
     // and every file outside it resolve TypeScript first.
     let in_node_modules =
         |path: &Path| path.to_str().is_some_and(|path| path.contains(NODE_MODULES_PATH));
-    let order = if parent_file.is_some_and(in_node_modules) {
+    let order = if parent.is_some_and(in_node_modules) {
         ExtensionOrder::Package
     } else {
         ExtensionOrder::Source
     };
     // Node.js keeps a symlinked path under `--preserve-symlinks`, and the entry
-    // point's under `--preserve-symlinks-main` (issue #845).
+    // point's under `--preserve-symlinks-main` (issue #845). Only the entry point
+    // has no parent URL: a preload's parent is the working directory.
     let preserve = preserve_symlinks(env);
-    let symlinks = !if parent_file.is_none() {
+    let symlinks = !if parent.is_none() {
         preserve.preserve_symlinks_main
     } else {
         preserve.preserve_symlinks
@@ -2259,7 +2270,8 @@ pub fn create_resolve<'env>(
     let resolver = resolver_for_conditions(base_resolver, &context.conditions, order, symlinks);
     let resolver = resolver.as_ref();
 
-    let directory = match parent_file {
+    let directory = match parent {
+        Some(directory) if parent_is_directory => directory,
         Some(parent_file) => parent_file
             .parent()
             .ok_or_else(|| Error::new(Status::GenericFailure, "Parent URL is not a file URL"))?,
@@ -2397,7 +2409,7 @@ pub fn create_resolve<'env>(
     // failure while watching pays for the second run.
     if watching()
         && failed
-        && !parent_file.is_some_and(in_node_modules)
+        && !parent.is_some_and(in_node_modules)
         && let Some((directory, resolver_specifier)) = &request
     {
         // The config the failed resolve used.
