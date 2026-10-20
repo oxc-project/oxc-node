@@ -1,0 +1,29 @@
+packages/core/importer.mjs
+  s_5b25d6ae40e975::t_e6f3003d49391e 442,603-609
+packages/integrate-vitest/__tests__/fixtures/importer/probes.mjs
+  s_5b25d6ae40e975::t_98d5c757b160f7 101-103,138-141
+packages/integrate-vitest/__tests__/fixtures/importer/probes/hidden-export.cts
+  s_5b25d6ae40e975::t_803d705cf9942d 1-3
+packages/integrate-vitest/__tests__/fixtures/importer/probes/hidden-import.ts
+  s_5b25d6ae40e975::t_9ba5b5006b7fd0 1-3
+packages/integrate-vitest/__tests__/fixtures/importer/probes/resolve-paths.cts
+  s_5b25d6ae40e975::t_74564784ff0828 8-9
+packages/integrate-vitest/__tests__/importer.spec.ts
+  s_5b25d6ae40e975::t_f7286e3f913136 84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "a29d0751760fd22c77347d5dec86b3cb7358fc66",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
