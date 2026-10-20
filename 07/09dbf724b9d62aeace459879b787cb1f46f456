@@ -1,0 +1,19 @@
+packages/core/reexport-oxc-runtime.mjs
+  s_5b25d6ae40e975::t_fcac27e52f4025 38-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0709dbf724b9d62aeace459879b787cb1f46f456",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
