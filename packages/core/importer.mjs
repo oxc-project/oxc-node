@@ -424,6 +424,8 @@ class Graph {
       const target = resolve(specifier);
       return target.builtin ?? target.path;
     };
+    // The folders Node.js would look in, which no resolver of ours changes.
+    require.resolve.paths = (request) => createRequire(record.path).resolve.paths(request);
     require.cache = Module._cache;
     require.extensions = Module._extensions;
     return require;

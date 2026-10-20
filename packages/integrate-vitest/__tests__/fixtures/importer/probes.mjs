@@ -91,6 +91,12 @@ await probe("require-evaluating-tla-is-async-module-error", async () => {
   await pending;
   return [code === "ERR_REQUIRE_ASYNC_MODULE", code];
 });
+await probe("require-resolve-paths", async () => {
+  const m = await imp.import("./resolve-paths.cts", { default: true });
+  const expected = createRequire(path.join(DIR, "resolve-paths.cts")).resolve.paths("some-package");
+  const ok = JSON.stringify(m.paths) === JSON.stringify(expected) && m.builtin === null;
+  return [ok, `${m.paths?.[0]} ${m.builtin}`];
+});
 await probe("cycle", async () => {
   const a = await imp.import("./cyc-a.ts");
   const b = await imp.import("./cyc-b.ts");
