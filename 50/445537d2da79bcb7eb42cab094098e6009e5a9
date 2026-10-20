@@ -1,0 +1,27 @@
+packages/integrate-vitest/__tests__/fixtures/importer/probes.mjs
+  s_5b25d6ae40e975::t_3315f0fb0962ef 78-81
+packages/integrate-vitest/__tests__/fixtures/importer/probes/default-ns-dep.ts
+  s_5b25d6ae40e975::t_f0e8a1e1d55237 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/default-ns.ts
+  s_5b25d6ae40e975::t_c1229844f6b688 1-2
+packages/integrate-vitest/__tests__/importer.spec.ts
+  s_5b25d6ae40e975::t_48a09858d0e981 79
+src/lib.rs
+  s_5b25d6ae40e975::t_5f846e5a51adcf 18,21-23,2199,2269-2291,4613-4621
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "50445537d2da79bcb7eb42cab094098e6009e5a9",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
