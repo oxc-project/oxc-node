@@ -46,6 +46,14 @@ const packageJsonExports = {
   "./register.mjs": {
     import: "./register.mjs",
   },
+  "./signal-ack": {
+    types: "./signal-ack.d.mts",
+    import: "./signal-ack.mjs",
+  },
+  "./watch-report": {
+    types: "./watch-report.d.mts",
+    import: "./watch-report.mjs",
+  },
   ...oxcRuntimePackageJson.exports,
 };
 

@@ -2,9 +2,11 @@
 // reports over IPC as `{ "watch:import": [url] }`. Node.js reports the modules
 // it loads; this reports what only oxc-node knows: the tsconfig files it read
 // and the paths a failed resolve looked for (issue #450).
+//
+// Public as `@oxc-node/core/watch-report`, for a loader of its own built on the
+// binding (issue #871). It loads no binding: `take` is the caller's
+// `takeWatchDependencies`. The protocol is in the README, "Embedding the watcher".
 import { isMainThread, MessageChannel, receiveMessageOnPort } from "node:worker_threads";
-
-import { takeWatchDependencies } from "./index.js";
 
 const WATCH_CHANNEL = "@oxc-node/core:watch-deps";
 
@@ -55,9 +57,12 @@ export function watchSink() {
  * whole array in one `try`, so one bad entry would drop the rest. `oxnode watch`
  * reads the `oxc-node` key to tell these from what Node.js reports (a tsconfig
  * in `node_modules` counts, an imported file there does not); Node.js ignores it.
+ *
+ * @param {(message: { "watch:import": string[], "oxc-node": true }) => void} sink
+ * @param {() => string[]} take the binding's `takeWatchDependencies`
  */
-export function flush(sink) {
-  for (const url of takeWatchDependencies()) {
+export function flush(sink, take) {
+  for (const url of take()) {
     sink({ "watch:import": [url], "oxc-node": true });
   }
 }
@@ -65,30 +70,30 @@ export function flush(sink) {
 /**
  * `fn`, flushing after each call whether it returns, throws or returns a promise.
  * A failed resolve records its candidates and then throws, which is exactly the
- * case that has to be reported.
+ * case that has to be reported. `sink` and `take` are as for `flush`.
  */
-export function withFlush(fn, sink) {
+export function withFlush(fn, sink, take) {
   return function (...args) {
     let result;
     try {
       result = fn.apply(this, args);
     } catch (error) {
-      flush(sink);
+      flush(sink, take);
       throw error;
     }
     if (result && typeof result.then === "function") {
       return result.then(
         (value) => {
-          flush(sink);
+          flush(sink, take);
           return value;
         },
         (error) => {
-          flush(sink);
+          flush(sink, take);
           throw error;
         },
       );
     }
-    flush(sink);
+    flush(sink, take);
     return result;
   };
 }
@@ -96,9 +101,10 @@ export function withFlush(fn, sink) {
 /**
  * For `module.register()`: the hooks run on a thread of their own with no
  * `process.send`, so they post into the returned port and the thread that
- * registered them forwards to `sink`.
+ * registered them forwards to `sink`. `take` is as for `flush`: what this thread's
+ * binding recorded is drained here too, before the process ends.
  */
-export function createRelay(sink) {
+export function createRelay(sink, take) {
   const { port1, port2 } = new MessageChannel();
   // Delivers what a failed `import()` the app catches recorded.
   port1.on("message", sink);
@@ -110,7 +116,7 @@ export function createRelay(sink) {
     while ((received = receiveMessageOnPort(port1))) {
       sink(received.message);
     }
-    flush(sink);
+    flush(sink, take);
   };
   process.on("uncaughtExceptionMonitor", drain);
   process.on("exit", drain);

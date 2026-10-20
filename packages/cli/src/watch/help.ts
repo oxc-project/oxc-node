@@ -1,6 +1,29 @@
-export const USAGE = `Usage: oxnode watch [options] [node options] [--] <entry> [script args...]`;
+/** How the watcher is named in what it prints, for oxnode or a tool that embeds it. */
+export interface WatchNames {
+  /** The command as typed: `oxnode watch`. */
+  name: string;
+  /** The tag on log lines: `[oxnode]`. */
+  label: string;
+  /** Node.js' own watch mode under this tool, or null when it has none to point to. */
+  nodeWatch: string | null;
+}
 
-export const HELP = `${USAGE}
+export const DEFAULT_NAMES: WatchNames = {
+  name: "oxnode watch",
+  label: "oxnode",
+  nodeWatch: "oxnode --watch",
+};
+
+/** The names for `name`. Only oxnode's own name points to `oxnode --watch`. */
+export function namesFor(name = DEFAULT_NAMES.name): WatchNames {
+  if (name === DEFAULT_NAMES.name) return DEFAULT_NAMES;
+  return { name, label: name.split(" ")[0], nodeWatch: null };
+}
+
+export const usage = (n: WatchNames = DEFAULT_NAMES) =>
+  `Usage: ${n.name} [options] [node options] [--] <entry> [script args...]`;
+
+export const help = (n: WatchNames = DEFAULT_NAMES) => `${usage(n)}
 
 Run <entry> with oxc-node and run it again when a file it uses changes.
 
@@ -28,9 +51,7 @@ Keys:  Return        rerun now (press again while stopping to force kill)
        Ctrl+C        stop (press again to force kill)
 
 Examples:
-  oxnode watch ./src/server.ts
-  oxnode watch --include "./config/*.json" --exclude "src/**/*.test.ts" ./src/server.ts --port 3000
-  oxnode watch --inspect --clear-screen=false ./src/index.ts
-
-\`oxnode --watch <entry>\` still runs Node.js' own watch mode.
-`;
+  ${n.name} ./src/server.ts
+  ${n.name} --include "./config/*.json" --exclude "src/**/*.test.ts" ./src/server.ts --port 3000
+  ${n.name} --inspect --clear-screen=false ./src/index.ts
+${n.nodeWatch ? `\n\`${n.nodeWatch} <entry>\` still runs Node.js' own watch mode.\n` : ""}`;

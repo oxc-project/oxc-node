@@ -13,6 +13,7 @@ import {
   getTsconfigPath,
   initTracing,
   load as oxcLoad,
+  takeWatchDependencies,
   transformsDep,
 } from "./index.js";
 import { installSignalAck } from "./signal-ack.mjs";
@@ -185,7 +186,7 @@ addHook(
     } finally {
       // A transform reads the tsconfig of the file it compiles.
       if (watch) {
-        flush(watch);
+        flush(watch, takeWatchDependencies);
       }
     }
     let transformed = output.source();
@@ -361,7 +362,10 @@ if (canRegisterSyncHooks()) {
   // A hook records what it read or looked for, and then reports it.
   registerHooks(
     watch
-      ? { load: withFlush(load, watch), resolve: withFlush(resolve, watch) }
+      ? {
+          load: withFlush(load, watch, takeWatchDependencies),
+          resolve: withFlush(resolve, watch, takeWatchDependencies),
+        }
       : { load, resolve },
   );
 } else {
@@ -373,7 +377,7 @@ if (canRegisterSyncHooks()) {
   // because the worker's env may be an older snapshot of process.env.
   // `setTsconfigPath` rides the same snapshot. That thread has no
   // `process.send`, so its watch reports come back through `watchPort`.
-  const watchPort = watch ? createRelay(watch) : undefined;
+  const watchPort = watch ? createRelay(watch, takeWatchDependencies) : undefined;
   register("@oxc-node/core/esm", {
     parentURL: import.meta.url,
     data: { tsconfigPath: getTsconfigPath(), transformDeps: freezeTransformDeps(), watchPort },

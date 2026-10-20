@@ -3,6 +3,8 @@ import { constants } from "node:os";
 import { resolve } from "node:path";
 import { parseEnv } from "node:util";
 
+import { DEFAULT_NAMES, type WatchNames } from "./help.js";
+
 /**
  * Node.js options that take their value as the next token: those `node --help` shows as
  * `--name=...` on Node.js 22, 24 and 26, less test, bench and build-only ones.
@@ -95,20 +97,24 @@ const DEFAULT_POLL_MS = 300;
 const MAX_TIMER_MS = 2 ** 31 - 1;
 const MAX_POLL_MS = Math.floor(MAX_TIMER_MS / 10);
 
-const NEEDS_ENTRY = `oxnode watch needs an entry file; for tests use \`oxnode --watch --test\``;
-const REJECTED: Record<string, string> = {
+const needsEntry = (n: WatchNames) =>
+  n.nodeWatch
+    ? `${n.name} needs an entry file; for tests use \`${n.nodeWatch} --test\``
+    : `${n.name} needs an entry file`;
+// What each rejected flag is told; null for "needs an entry file".
+const REJECTED: Record<string, string | null> = {
   "--watch": "use --include",
   "--watch-path": "use --include",
-  "-e": NEEDS_ENTRY,
-  "--eval": NEEDS_ENTRY,
-  "-p": NEEDS_ENTRY,
-  "--print": NEEDS_ENTRY,
+  "-e": null,
+  "--eval": null,
+  "-p": null,
+  "--print": null,
   // Node.js reads `-pe` as `--print --eval`.
-  "-pe": NEEDS_ENTRY,
-  "-i": NEEDS_ENTRY,
-  "--interactive": NEEDS_ENTRY,
-  "--test": NEEDS_ENTRY,
-  "--run": NEEDS_ENTRY,
+  "-pe": null,
+  "-i": null,
+  "--interactive": null,
+  "--test": null,
+  "--run": null,
 };
 
 function parseBool(name: string, value: string | undefined): boolean | { error: string } {
@@ -188,6 +194,8 @@ export function parseWatchArgs(
   read: (file: string) => string | undefined = readEnvFile,
   // The child runs on this Node.js, so its flags are read as this version reads them.
   nodeVersion = NODE_VERSION,
+  // The command in the errors, for a tool that embeds the watcher.
+  names: WatchNames = DEFAULT_NAMES,
 ): WatchArgs | { error: string } {
   const polling = env.CHOKIDAR_USEPOLLING === "1" || env.CHOKIDAR_USEPOLLING === "true";
   const out: WatchArgs = {
@@ -220,7 +228,7 @@ export function parseWatchArgs(
       break;
     }
     if (arg === "-") {
-      return { error: `- (stdin): ${NEEDS_ENTRY}` };
+      return { error: `- (stdin): ${needsEntry(names)}` };
     }
     if (!arg.startsWith("-")) {
       out.entry = arg;
@@ -315,7 +323,8 @@ export function parseWatchArgs(
     }
 
     if (Object.hasOwn(REJECTED, nodeName)) {
-      return { error: `${name} is not supported by oxnode watch: ${REJECTED[nodeName]}` };
+      const why = REJECTED[nodeName] ?? needsEntry(names);
+      return { error: `${name} is not supported by ${names.name}: ${why}` };
     }
 
     out.nodeArgs.push(arg);

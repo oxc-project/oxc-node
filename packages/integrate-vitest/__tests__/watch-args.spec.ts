@@ -9,6 +9,7 @@ import {
   tsconfigEnv,
   type WatchArgs,
 } from "../../cli/src/watch/args.js";
+import { namesFor } from "../../cli/src/watch/help.js";
 
 const parse = (argv: string[], env: NodeJS.ProcessEnv = {}) => parseWatchArgs(argv, env);
 
@@ -506,5 +507,28 @@ describe("parseWatchArgs", () => {
     expect(ok(["app.ts"], { CHOKIDAR_USEPOLLING: "1" }).poll).toBe(300);
     expect(ok(["app.ts"], { CHOKIDAR_USEPOLLING: "true" }).poll).toBe(300);
     expect(ok(["app.ts"], { CHOKIDAR_USEPOLLING: "0" }).poll).toBe(false);
+  });
+});
+
+describe("the names in the errors (issue #871)", () => {
+  const vpx = namesFor("vpx watch");
+  const errOf = (argv: string[], names = vpx) => {
+    const r = parseWatchArgs(argv, {}, () => undefined, "24.0.0", names);
+    return "error" in r ? r.error : "";
+  };
+
+  test("oxnode's own errors are as before", () => {
+    expect(errOf(["--eval", "x"], namesFor())).toBe(
+      "--eval is not supported by oxnode watch: oxnode watch needs an entry file; " +
+        "for tests use `oxnode --watch --test`",
+    );
+  });
+
+  test("an embedder's name, with no hint about oxnode --watch", () => {
+    expect(errOf(["--eval", "x"])).toBe(
+      "--eval is not supported by vpx watch: vpx watch needs an entry file",
+    );
+    expect(errOf(["-"])).toBe("- (stdin): vpx watch needs an entry file");
+    expect(errOf(["--watch", "a.ts"])).toBe("--watch is not supported by vpx watch: use --include");
   });
 });

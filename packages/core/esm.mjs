@@ -11,6 +11,7 @@ import {
   load as oxcLoad,
   setTransformDeps,
   setTsconfigPath,
+  takeWatchDependencies,
 } from "./index.js";
 import { withFlush } from "./watch-report.mjs";
 
@@ -163,7 +164,10 @@ function initialize(data) {
   if (port) {
     port.unref();
     const sink = (message) => port.postMessage(message);
-    watchHooks = { resolve: withFlush(resolve, sink), load: withFlush(load, sink) };
+    watchHooks = {
+      resolve: withFlush(resolve, sink, takeWatchDependencies),
+      load: withFlush(load, sink, takeWatchDependencies),
+    };
     // A WASI copy has a recorder of its own; on native this repeats the main thread.
     enableWatchReport();
   }
