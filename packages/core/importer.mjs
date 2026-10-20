@@ -70,10 +70,9 @@ export function createImporter(parentId, options = {}) {
       } catch (error) {
         throw mapStack(error, runner.sourceMaps);
       }
-      if (opts.default) {
-        return namespace?.default ?? namespace;
-      }
-      return interopDefault ? interop(namespace) : namespace;
+      // As jiti: `default` is read through the interop, when it is on.
+      const result = interopDefault ? interop(namespace) : namespace;
+      return opts.default ? (result?.default ?? result) : result;
     },
 
     resolve(id, opts = {}) {
@@ -318,16 +317,24 @@ class Graph {
   /** Runs an ES module; `sync` code has no `await` on its imports and runs at once. */
   runModule(record, code, sync) {
     const { path, url, namespace } = record;
+    // `__filename`, `__dirname` and `require` are there for ES modules too, as jiti has
+    // them, for configs such as `path.resolve(__dirname, "src")`. They come from an outer
+    // function, so that a module declaring its own (`const require = createRequire(...)`)
+    // shadows them instead of failing as a redeclaration.
     const run = compile(
       path,
-      `(${sync ? "" : "async "}function (__vite_ssr_exports__, __vite_ssr_import_meta__, ` +
+      "(function (__filename, __dirname, require) { return " +
+        `${sync ? "" : "async "}function (__vite_ssr_exports__, __vite_ssr_import_meta__, ` +
         `__vite_ssr_import__, __vite_ssr_dynamic_import__, __vite_ssr_exportAll__) {'use strict';`,
       code,
       this.sourceMaps.get(path),
+      "\n}})",
     );
     const ssrImport = sync
-      ? (specifier) =>
-          this.require(this.resolve(specifier, url, this.conditions, false), record, true)
+      ? (specifier) => {
+          const target = this.resolve(specifier, url, this.conditions, false);
+          return this.interop(target, this.require(target, record, true));
+        }
       : async (specifier) => {
           const target = this.resolve(specifier, url, this.conditions, false);
           // A module that statically imports one with top-level await is async too.
@@ -345,7 +352,7 @@ class Graph {
           if (dependency ? dependency.async : target.path && isAsyncModule(target.path)) {
             record.async = true;
           }
-          return imported;
+          return this.interop(target, imported);
         };
     // Local exports are defined first and win. A name two sources give different
     // values is left out, as Node.js leaves out a name two modules export as different
@@ -372,7 +379,7 @@ class Graph {
         }
       }
     };
-    return run.call(
+    return run(path, dirname(path), this.makeRequire(record)).call(
       undefined,
       namespace,
       this.importMeta(record),
@@ -432,8 +439,24 @@ class Graph {
   }
 
   dynamicImport(record) {
-    return async (specifier) =>
-      this.import(this.resolve(String(specifier), record.url, this.conditions, false), record);
+    return async (specifier) => {
+      const target = this.resolve(String(specifier), record.url, this.conditions, false);
+      return this.interop(target, await this.import(target, record));
+    };
+  }
+
+  /**
+   * What an import inside a runner file sees of a CommonJS module: Babel's and tsc's
+   * output marks itself with `__esModule`, and its default export is then
+   * `exports.default`, as in jiti's transformed files (and Babel's and Vite's). The
+   * module `importer.import()` returns stays as Node.js gives it, as in jiti.
+   */
+  interop(target, namespace) {
+    if (target.builtin) {
+      return namespace;
+    }
+    const record = this.cache.get(target.path);
+    return record && record.kind !== "cjs" ? namespace : esModuleInterop(namespace);
   }
 
   importMeta(record) {
@@ -459,12 +482,12 @@ class Graph {
   }
 }
 
-function compile(path, head, code, sourceMap) {
+function compile(path, head, code, sourceMap, tail = "\n})") {
   if (sourceMap) {
     // The function head shares the first line with the code.
     sourceMap.head = head.length;
   }
-  return vm.runInThisContext(`${head}${code}\n})`, { filename: path, importModuleDynamically });
+  return vm.runInThisContext(`${head}${code}${tail}`, { filename: path, importModuleDynamically });
 }
 
 // Dependencies Node.js runs itself: a JavaScript file in `node_modules` the transform
@@ -527,6 +550,37 @@ function namespaceOf(exports) {
   namespace.default = exports;
   addNamedExports(namespace, exports);
   return namespace;
+}
+
+// `exports.default` for CommonJS output that says it was an ES module (`__esModule`),
+// else `module.exports`.
+function commonJsDefault(exports) {
+  return exports !== null &&
+    (typeof exports === "object" || typeof exports === "function") &&
+    exports.__esModule
+    ? exports.default
+    : exports;
+}
+
+// The namespace of a CommonJS module, whose default is `module.exports`, with
+// `commonJsDefault` as its default.
+const interopNamespaces = new WeakMap();
+function esModuleInterop(namespace) {
+  const exports = namespace.default;
+  if (commonJsDefault(exports) === exports) {
+    return namespace;
+  }
+  let wrapped = interopNamespaces.get(namespace);
+  if (!wrapped) {
+    wrapped = makeNamespace();
+    Object.defineProperty(wrapped, "default", {
+      enumerable: true,
+      get: () => commonJsDefault(exports),
+    });
+    addNamedExports(wrapped, namespace);
+    interopNamespaces.set(namespace, wrapped);
+  }
+  return wrapped;
 }
 
 function addNamedExports(namespace, exports) {

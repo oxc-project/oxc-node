@@ -98,6 +98,38 @@ await probe("require-resolve-paths", async () => {
   const ok = JSON.stringify(m.paths) === JSON.stringify(expected) && m.builtin === null;
   return [ok, `${m.paths?.[0]} ${m.builtin}`];
 });
+// Babel/tsc CommonJS (`__esModule`): imports inside a runner file get `exports.default`;
+// the module `import()` returns stays as Node.js gives it, and `default: true` unwraps a
+// function default only, as in jiti.
+await probe("esmodule-commonjs-interop", async () => {
+  const fromProject = createImporter(path.join(DIR, "..", "project", "cjs-interop", "x.ts"));
+  const m = await fromProject.import("./static.ts");
+  const top = await fromProject.import("babel-object", { default: true });
+  const plugin = await fromProject.import("babel-fn", { default: true });
+  const got = [
+    JSON.stringify(m.fromDefault),
+    JSON.stringify(m.fromNamespace),
+    m.helper,
+    JSON.stringify(await m.lazy()),
+    JSON.stringify(top),
+    typeof plugin === "function" ? plugin() : typeof plugin,
+  ].join(" ");
+  const want = '{"content":["a"]} {"content":["a"]} 1 {"content":["a"]} {"default":{"content":["a"]},"helper":1} plugin';
+  return [got === want, got];
+});
+// `__dirname`, `__filename` and `require` in an ES module, as jiti has them; a module
+// declaring its own still works.
+await probe("commonjs-variables-in-es-module", async () => {
+  const fromProject = createImporter(path.join(DIR, "..", "project", "cjs-interop", "x.ts"));
+  const vars = await fromProject.import("./cjs-vars.ts", { default: true });
+  const own = await fromProject.import("./own-vars.ts", { default: true });
+  const got = JSON.stringify([vars, own]);
+  const want = JSON.stringify([
+    { dir: "cjs-interop", file: "cjs-vars.ts", required: 42 },
+    { own: "function", dir: "cjs-interop" },
+  ]);
+  return [got === want, got];
+});
 await probe("cycle", async () => {
   const a = await imp.import("./cyc-a.ts");
   const b = await imp.import("./cyc-b.ts");

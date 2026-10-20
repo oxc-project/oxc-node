@@ -367,6 +367,9 @@ installed in the process: no loader hooks, no `require.extensions`, nothing in
   again, which picks up edits; files Node loads stay in Node's own cache.
 - `interopDefault` copies jiti: the properties of the default export can be read
   from the module too.
+- As in jiti, `__dirname`, `__filename` and `require` work in ES module files too,
+  and an import of CommonJS that Babel or `tsc` compiled from an ES module
+  (`__esModule`) gets its `exports.default` as the default export.
 - A module that failed to load is tried again on the next `import()`. A missing
   module fails with `ERR_MODULE_NOT_FOUND`, or `MODULE_NOT_FOUND` from
   `require()`, and a path a package does not export with

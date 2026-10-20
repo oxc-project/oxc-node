@@ -79,6 +79,8 @@ test("the importer probes pass", () => {
     "default-and-namespace-import",
     "require-evaluating-tla-is-async-module-error",
     "require-resolve-paths",
+    "esmodule-commonjs-interop",
+    "commonjs-variables-in-es-module",
     "cycle",
     "parallel-cycle",
     "live-binding",
