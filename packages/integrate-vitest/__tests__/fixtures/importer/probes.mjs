@@ -179,7 +179,10 @@ await probe("export-star-ambiguous", async () => {
 // Node.js gives a URL for a path that names no file, as it does for `./nope.js`.
 await probe("import-meta-resolve-missing", async () => {
   const m = await imp.import("./meta-missing.ts");
-  return [m.missing === new URL("nope.js", m.self).href, m.missing];
+  const ok =
+    m.missing === new URL("nope.js", m.self).href &&
+    m.missingUrl === "file:///definitely/missing.ts";
+  return [ok, `${m.missing} ${m.missingUrl}`];
 });
 // A directory parent uses the `tsconfig.json` in it, as a file in it does.
 await probe("directory-parent-paths", async () => {

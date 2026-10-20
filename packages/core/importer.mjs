@@ -839,8 +839,11 @@ function notFound(specifier, parentURL, required) {
     return error;
   }
   // A path is shown resolved, and its URL is kept on the error, as Node.js keeps it.
-  const url =
-    isPath(specifier) && parentURL.startsWith("file:") ? new URL(specifier, parentURL) : undefined;
+  const url = specifier.startsWith("file:")
+    ? new URL(specifier)
+    : isPath(specifier) && parentURL.startsWith("file:")
+      ? new URL(specifier, parentURL)
+      : undefined;
   const shown = url?.protocol === "file:" ? fileURLToPath(url) : specifier;
   const error = new Error(`Cannot find module '${shown}' imported from ${parent}`);
   error.code = "ERR_MODULE_NOT_FOUND";
