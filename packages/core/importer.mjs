@@ -304,7 +304,8 @@ class Graph {
           const target = this.resolve(specifier, url, this.conditions, false);
           const imported = await this.import(target, record);
           // A module that statically imports one with top-level await is async too.
-          if (this.cache.get(target.path)?.async) {
+          const dependency = target.path && this.cache.get(target.path);
+          if (dependency ? dependency.async : target.path && isAsyncModule(target.path)) {
             record.async = true;
           }
           return imported;
@@ -796,6 +797,17 @@ function isPath(specifier) {
 
 function pathOf(url) {
   return url.startsWith("file:") ? fileURLToPath(url) : url;
+}
+
+// Whether a module Node.js loaded has top-level await in its graph. It is loaded
+// already, so `require()` only looks it up, and Node.js tells.
+function isAsyncModule(path) {
+  try {
+    requireSelf(path);
+    return false;
+  } catch (error) {
+    return error?.code === "ERR_REQUIRE_ASYNC_MODULE";
+  }
 }
 
 function requireAsyncModule(path, importer) {

@@ -67,6 +67,14 @@ await probe("require-cached-tla-is-async-module-error", async () => {
   const codes = [requireLater("./tla-dep.mts"), requireLater("./tla-parent.ts")];
   return [codes.every((code) => code === "ERR_REQUIRE_ASYNC_MODULE"), codes.join(" ")];
 });
+// The top-level await is in a node_modules package that Node.js loads itself.
+await probe("require-cached-native-tla-is-async-module-error", async () => {
+  const fromProject = createImporter(path.join(DIR, "..", "project", "tla-native", "x.ts"));
+  await fromProject.import("./parent.mts");
+  const requireLater = await fromProject.import("./req-later.cts", { default: true });
+  const code = requireLater("./parent.mts");
+  return [code === "ERR_REQUIRE_ASYNC_MODULE", code];
+});
 await probe("cycle", async () => {
   const a = await imp.import("./cyc-a.ts");
   const b = await imp.import("./cyc-b.ts");

@@ -75,6 +75,7 @@ test("the importer probes pass", () => {
     "cts-requires-esm-graph",
     "require-tla-is-async-module-error",
     "require-cached-tla-is-async-module-error",
+    "require-cached-native-tla-is-async-module-error",
     "cycle",
     "parallel-cycle",
     "live-binding",
