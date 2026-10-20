@@ -1,0 +1,23 @@
+packages/core/importer.mjs
+  s_5b25d6ae40e975::t_768fab9252943e 842-846
+packages/integrate-vitest/__tests__/fixtures/importer/probes.mjs
+  s_5b25d6ae40e975::t_096538e89f26fc 182-185
+packages/integrate-vitest/__tests__/fixtures/importer/probes/meta-missing.ts
+  s_5b25d6ae40e975::t_02a4d2bedf2105 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cf02f91df340804e8506677cd5ddd8bfd41abd2c",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
