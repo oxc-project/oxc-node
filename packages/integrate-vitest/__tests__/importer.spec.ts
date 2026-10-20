@@ -91,6 +91,7 @@ test("the importer probes pass", () => {
     "failed-module-retried",
     "hashbang",
     "memory-module-cache-false",
+    "memory-module-cache-false-new-files",
     "no-leak",
   ]);
 });

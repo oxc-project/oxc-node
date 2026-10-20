@@ -1,8 +1,9 @@
 // Usage: node --expose-gc probes.mjs <path to @oxc-node/core/importer>
 // Behaviour beyond the parity checks: stack lines, require() of ES modules, cycles,
 // live bindings, `export *`, retries, memory and leaks. One JSON line per probe.
-import { realpathSync } from "node:fs";
+import fs, { realpathSync } from "node:fs";
 import Module, { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -196,6 +197,31 @@ await probe("memory-module-cache-false", async () => {
   globalThis.gc();
   const kb = (process.memoryUsage().heapUsed - before) / 200 / 1024;
   return [kb < 16, `${kb.toFixed(1)} KB per import`];
+});
+// Every import a new file: nothing of a finished graph, its source maps included, stays.
+await probe("memory-module-cache-false-new-files", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oxc-node-importer-files-"));
+  try {
+    const body = Array.from({ length: 1200 }, (_, i) => `export const v${i}: number = ${i};`).join("\n");
+    const files = Array.from({ length: 220 }, (_, i) => {
+      const file = path.join(dir, `m${i}.ts`);
+      fs.writeFileSync(file, body);
+      return file;
+    });
+    const fresh = createImporter(path.join(dir, "host.mjs"), { moduleCache: false });
+    // A plain `gc()` leaves garbage unswept in `heapUsed`; the last-resort one does not.
+    const collect = () => globalThis.gc({ type: "major", execution: "sync", flavor: "last-resort" });
+    for (const file of files.slice(0, 20)) await fresh.import(file);
+    collect();
+    const before = process.memoryUsage().heapUsed;
+    for (const file of files.slice(20)) await fresh.import(file);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    collect();
+    const kb = (process.memoryUsage().heapUsed - before) / 200 / 1024;
+    return [kb < 2, `${kb.toFixed(1)} KB per file`];
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 await probe("no-leak", async () => {
   const cached = Object.keys(Module._cache).filter((key) => key.startsWith(realpathSync(DIR)));

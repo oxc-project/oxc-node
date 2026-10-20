@@ -34,8 +34,9 @@ const importModuleDynamically = vm.constants?.USE_MAIN_CONTEXT_DEFAULT_LOADER;
 
 // `moduleCache: true` shares one module map per process, as jiti shares `require.cache`.
 const sharedCache = new Map();
-// The source map of each file the runner evaluated last, to map stack traces.
-const sourceMaps = new Map();
+// Per module map: the source map of each file it ran, to map stack traces. They go
+// with the module map, so a `moduleCache: false` graph takes its maps along when it goes.
+const sourceMapsOfCache = new WeakMap();
 
 /**
  * @param {string | URL} parentId
@@ -65,7 +66,7 @@ export function createImporter(parentId, options = {}) {
       try {
         namespace = await runner.import(target, null);
       } catch (error) {
-        throw mapStack(error);
+        throw mapStack(error, runner.sourceMaps);
       }
       if (opts.default) {
         return namespace?.default ?? namespace;
@@ -92,6 +93,12 @@ class Graph {
   constructor(cache, conditions) {
     this.cache = cache;
     this.conditions = conditions;
+    let sourceMaps = sourceMapsOfCache.get(cache);
+    if (!sourceMaps) {
+      sourceMaps = new Map();
+      sourceMapsOfCache.set(cache, sourceMaps);
+    }
+    this.sourceMaps = sourceMaps;
   }
 
   /**
@@ -283,7 +290,10 @@ class Graph {
   transform(record, sync) {
     const output = transformModuleRunner(record.path, readFileSync(record.path), sync);
     if (output.map) {
-      sourceMaps.set(record.path, { mappings: JSON.parse(output.map).mappings, lines: undefined });
+      this.sourceMaps.set(record.path, {
+        mappings: JSON.parse(output.map).mappings,
+        lines: undefined,
+      });
     }
     return output;
   }
@@ -296,6 +306,7 @@ class Graph {
       `(${sync ? "" : "async "}function (__vite_ssr_exports__, __vite_ssr_import_meta__, ` +
         `__vite_ssr_import__, __vite_ssr_dynamic_import__, __vite_ssr_exportAll__) {'use strict';`,
       code,
+      this.sourceMaps.get(path),
     );
     const ssrImport = sync
       ? (specifier) =>
@@ -364,6 +375,7 @@ class Graph {
       "(function (exports, require, module, __filename, __dirname, " +
         "__vite_ssr_import_meta__, __vite_ssr_dynamic_import__) {",
       code,
+      this.sourceMaps.get(path),
     );
     run.call(
       module.exports,
@@ -419,8 +431,7 @@ class Graph {
   }
 }
 
-function compile(path, head, code) {
-  const sourceMap = sourceMaps.get(path);
+function compile(path, head, code, sourceMap) {
   if (sourceMap) {
     // The function head shares the first line with the code.
     sourceMap.head = head.length;
@@ -612,7 +623,7 @@ const mappedErrors = new WeakSet();
  * Points the stack frames of runner files at their source, with the source maps of the
  * transform. Only errors that leave `import()` get this: no global hook is installed.
  */
-function mapStack(error) {
+function mapStack(error, sourceMaps) {
   if (error === null || typeof error !== "object" || mappedErrors.has(error)) {
     return error;
   }
@@ -627,7 +638,7 @@ function mapStack(error) {
     return error;
   }
   const mapped = stack.replace(STACK_FRAME, (frame, head, file, line, column, tail) => {
-    const position = sourcePosition(file, Number(line) - 1, Number(column) - 1);
+    const position = sourcePosition(sourceMaps.get(file), Number(line) - 1, Number(column) - 1);
     return position ? `${head}${file}:${position[0] + 1}:${position[1] + 1}${tail}` : frame;
   });
   if (mapped !== stack) {
@@ -640,8 +651,7 @@ function mapStack(error) {
   return error;
 }
 
-function sourcePosition(file, line, column) {
-  const sourceMap = sourceMaps.get(file);
+function sourcePosition(sourceMap, line, column) {
   if (!sourceMap) {
     return undefined;
   }
