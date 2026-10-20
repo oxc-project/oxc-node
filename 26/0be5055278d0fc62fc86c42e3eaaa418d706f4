@@ -1,0 +1,61 @@
+README.md
+  s_5b25d6ae40e975::t_c0c8df89aa2b81 202-281
+packages/cli/package.json
+  s_5b25d6ae40e975::t_1c32c408ffab84 25-26,29-35
+packages/cli/rolldown.config.js
+  s_5b25d6ae40e975::t_b4691ae5af61b8 4-5
+packages/cli/src/index.ts
+  s_5b25d6ae40e975::t_489c1a2fb0eba3 9,57-73
+packages/cli/src/watch/args.ts
+  s_5b25d6ae40e975::t_e2f886e7f13d28 6-7,100-105,108-111,113-117,197-198,231,326-327
+packages/cli/src/watch/command.ts
+  s_5b25d6ae40e975::t_c1bdb898b24dbf 11,13,17,19-36,39-46,49,54,59-73,84,118
+packages/cli/src/watch/help.ts
+  s_5b25d6ae40e975::t_1eb047f91f5d75 1-26,54-57
+packages/cli/src/watch/index.ts
+  s_5b25d6ae40e975::t_2c45b4b65913cc 1-3
+packages/cli/src/watch/log.ts
+  s_5b25d6ae40e975::t_55559197ec8021 8-19,22-24
+packages/cli/watch.d.ts
+  s_5b25d6ae40e975::t_26f51282c84928 1-27
+packages/core/esm.mjs
+  s_5b25d6ae40e975::t_9c1873744008c0 14,167-170
+packages/core/package.json
+  s_5b25d6ae40e975::t_82f1ab9fe703a4 27,30,1106-1113
+packages/core/reexport-oxc-runtime.mjs
+  s_5b25d6ae40e975::t_172a592300e9da 49-56
+packages/core/register.mjs
+  s_5b25d6ae40e975::t_a3c8bc7191d184 16,189,365-368,380
+packages/core/signal-ack.d.mts
+  s_5b25d6ae40e975::t_24d70ee6a36d43 1-7
+packages/core/signal-ack.mjs
+  s_5b25d6ae40e975::t_9049a04f52a1f5 6-8
+packages/core/watch-report.d.mts
+  s_5b25d6ae40e975::t_25d01dedede86a 1-36
+packages/core/watch-report.mjs
+  s_5b25d6ae40e975::t_8745969142d18c 5-8,60-62,64-65,73,75,81,87,91,96,104-105,107,119
+packages/integrate-vitest/__tests__/helpers/watch.ts
+  s_5b25d6ae40e975::t_8ef1adfb0fc2a5 23,36-37,39,48-56,147,154,156,236
+packages/integrate-vitest/__tests__/watch-args.spec.ts
+  s_5b25d6ae40e975::t_aa683beb8405c5 12,512-534
+packages/integrate-vitest/__tests__/watch-embed.spec.ts
+  s_5b25d6ae40e975::t_a2ccc20c294f33 1-248
+packages/integrate-vitest/__tests__/watch-units.spec.ts
+  s_5b25d6ae40e975::t_c4ec2066a090cb 17,21-22,1169-1208
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "260be5055278d0fc62fc86c42e3eaaa418d706f4",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
