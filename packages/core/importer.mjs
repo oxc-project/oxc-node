@@ -29,6 +29,7 @@ const REQUIRE_ASYNC_MODULE_MESSAGE =
 const RESOLVE_OPTIONS = { getCurrentDirectory: () => process.cwd() };
 
 const requireSelf = createRequire(import.meta.url);
+const HAS_IMPORT_META_MAIN = "main" in import.meta;
 // `import()` inside `eval` or `new Function` in a runner file uses Node.js' own loader.
 const importModuleDynamically = vm.constants?.USE_MAIN_CONTEXT_DEFAULT_LOADER;
 
@@ -478,6 +479,8 @@ class Graph {
   importMeta(record) {
     const { path, url } = record;
     return {
+      // An imported module is never the entry, where Node.js has `main`.
+      ...(HAS_IMPORT_META_MAIN && { main: false }),
       url,
       filename: path,
       dirname: dirname(path),

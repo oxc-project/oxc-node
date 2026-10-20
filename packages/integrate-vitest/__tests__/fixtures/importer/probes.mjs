@@ -188,8 +188,11 @@ await probe("import-meta-resolve-missing", async () => {
   const m = await imp.import("./meta-missing.ts");
   const ok =
     m.missing === new URL("nope.js", m.self).href &&
-    m.missingUrl === "file:///definitely/missing.ts";
-  return [ok, `${m.missing} ${m.missingUrl}`];
+    m.missingUrl === "file:///definitely/missing.ts" &&
+    // An imported module, where Node.js has `import.meta.main`.
+    m.main === ("main" in import.meta ? false : undefined) &&
+    m.hasMain === "main" in import.meta;
+  return [ok, `${m.missing} ${m.missingUrl} main:${m.main} own:${m.hasMain}`];
 });
 // A directory parent uses the `tsconfig.json` in it, as a file in it does.
 await probe("directory-parent-paths", async () => {
