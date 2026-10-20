@@ -1,0 +1,41 @@
+README.md
+  s_5b25d6ae40e975::t_fc6a21ce4be742 370-372
+packages/core/importer.mjs
+  s_5b25d6ae40e975::t_6ba285cf0179ab 73-75,320-323,326-327,331,334-337,355,382,442-459,485,490,555-585
+packages/integrate-vitest/__tests__/fixtures/importer/probes.mjs
+  s_5b25d6ae40e975::t_34c08aedfef441 101-132
+packages/integrate-vitest/__tests__/fixtures/importer/project/cjs-interop/cjs-vars.ts
+  s_5b25d6ae40e975::t_25d3f79c1135c3 1-7
+packages/integrate-vitest/__tests__/fixtures/importer/project/cjs-interop/own-vars.ts
+  s_5b25d6ae40e975::t_cd86c30459b115 1-9
+packages/integrate-vitest/__tests__/fixtures/importer/project/cjs-interop/static.ts
+  s_5b25d6ae40e975::t_1a851151b9c9ac 1-7
+packages/integrate-vitest/__tests__/fixtures/importer/project/cjs-interop/value.cts
+  s_5b25d6ae40e975::t_50fef7461579b7 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/babel-fn/index.js
+  s_5b25d6ae40e975::t_24203ba195f9a3 1-5
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/babel-fn/package.json
+  s_5b25d6ae40e975::t_c580592d7e5b87 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/babel-object/index.js
+  s_5b25d6ae40e975::t_97ff38173e46e1 1-4
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/babel-object/package.json
+  s_5b25d6ae40e975::t_fec40033325a55 1
+packages/integrate-vitest/__tests__/importer.spec.ts
+  s_5b25d6ae40e975::t_02e283aa83ed7c 82-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e9f0e4e8e319fe823515ee4385fc41f057613dcf",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
