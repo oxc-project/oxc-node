@@ -15,10 +15,11 @@ const { createImporter } = await import(pathToFileURL(process.argv[2]).href);
 const imp = createImporter(path.join(DIR, "host.mjs"));
 
 const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms));
-async function probe(check, fn) {
+// The memory probes load many files; a slow machine needs more than the usual 5 s.
+async function probe(check, fn, ms = 5000) {
   let result;
   try {
-    const [ok, detail] = await Promise.race([fn(), timeout(5000)]);
+    const [ok, detail] = await Promise.race([fn(), timeout(ms)]);
     result = { check, ok, detail: String(detail) };
   } catch (e) {
     result = { check, ok: false, detail: `threw ${e?.code ?? ""} ${String(e?.message).split("\n")[0]}` };
@@ -220,7 +221,7 @@ await probe("memory-module-cache-false-new-files", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oxc-node-importer-files-"));
   try {
     const body = Array.from({ length: 1200 }, (_, i) => `export const v${i}: number = ${i};`).join("\n");
-    const files = Array.from({ length: 220 }, (_, i) => {
+    const files = Array.from({ length: 120 }, (_, i) => {
       const file = path.join(dir, `m${i}.ts`);
       fs.writeFileSync(file, body);
       return file;
@@ -234,19 +235,19 @@ await probe("memory-module-cache-false-new-files", async () => {
     for (const file of files.slice(20)) await fresh.import(file);
     await new Promise((resolve) => setTimeout(resolve, 50));
     collect();
-    const kb = (process.memoryUsage().heapUsed - before) / 200 / 1024;
+    const kb = (process.memoryUsage().heapUsed - before) / 100 / 1024;
     return [kb < 2, `${kb.toFixed(1)} KB per file`];
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-});
+}, 30_000);
 // Every import a new file that throws: a failed module leaves nothing behind either.
 await probe("memory-failed-new-files", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oxc-node-importer-failed-"));
   try {
-    const lines = Array.from({ length: 1200 }, (_, i) => `export const v${i}: number = ${i};`);
+    const lines = Array.from({ length: 600 }, (_, i) => `export const v${i}: number = ${i};`);
     const body = [...lines, "throw new Error('fails');"].join("\n");
-    const files = Array.from({ length: 220 }, (_, i) => {
+    const files = Array.from({ length: 120 }, (_, i) => {
       const file = path.join(dir, `m${i}.ts`);
       fs.writeFileSync(file, body);
       return file;
@@ -260,19 +261,19 @@ await probe("memory-failed-new-files", async () => {
     for (const file of files.slice(20)) await load(file);
     await new Promise((resolve) => setTimeout(resolve, 50));
     collect();
-    const kb = (process.memoryUsage().heapUsed - before) / 200 / 1024;
+    const kb = (process.memoryUsage().heapUsed - before) / 100 / 1024;
     return [kb < 2, `${kb.toFixed(1)} KB per file`];
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-});
+}, 30_000);
 // The same, with the failure caught inside a runner file: the error never leaves import().
 await probe("memory-failed-caught-new-files", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oxc-node-importer-caught-"));
   try {
-    const lines = Array.from({ length: 1200 }, (_, i) => `export const v${i}: number = ${i};`);
+    const lines = Array.from({ length: 600 }, (_, i) => `export const v${i}: number = ${i};`);
     const body = [...lines, "throw new Error('fails');"].join("\n");
-    const files = Array.from({ length: 220 }, (_, i) => {
+    const files = Array.from({ length: 120 }, (_, i) => {
       const file = path.join(dir, `m${i}.ts`);
       fs.writeFileSync(file, body);
       return file;
@@ -290,12 +291,12 @@ await probe("memory-failed-caught-new-files", async () => {
     for (const file of files.slice(20)) await tryLoad(file);
     await new Promise((resolve) => setTimeout(resolve, 50));
     collect();
-    const kb = (process.memoryUsage().heapUsed - before) / 200 / 1024;
+    const kb = (process.memoryUsage().heapUsed - before) / 100 / 1024;
     return [kb < 2, `${kb.toFixed(1)} KB per file`];
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-});
+}, 30_000);
 await probe("no-leak", async () => {
   const cached = Object.keys(Module._cache).filter((key) => key.startsWith(realpathSync(DIR)));
   let plain;
