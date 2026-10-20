@@ -1,0 +1,29 @@
+packages/core/importer.mjs
+  s_5b25d6ae40e975::t_c045d208ef04fc 846-847,852-853,880-881,883,891-896,906
+packages/integrate-vitest/__tests__/fixtures/importer/probes.mjs
+  s_5b25d6ae40e975::t_31944f066103ad 247-262
+packages/integrate-vitest/__tests__/fixtures/importer/probes/hash-missing.cts
+  s_5b25d6ae40e975::t_201ff444ef114b 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/hash-missing.ts
+  s_5b25d6ae40e975::t_856d7155542be1 1-3
+packages/integrate-vitest/__tests__/fixtures/importer/probes/package.json
+  s_5b25d6ae40e975::t_a100e7758bdd0f 1
+packages/integrate-vitest/__tests__/importer.spec.ts
+  s_5b25d6ae40e975::t_03c76a3c14112f 95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "61c82e38900494064cbfca01da9b6d5115e5c85a",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
