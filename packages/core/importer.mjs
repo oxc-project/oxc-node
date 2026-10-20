@@ -103,7 +103,7 @@ class Graph {
   }
 
   /**
-   * @returns {{ builtin: string } | { path: string, native?: boolean }}
+   * @returns {{ builtin: string } | { url: string } | { path: string, native?: boolean }}
    */
   resolve(specifier, parentURL, conditions, required) {
     if (isBuiltin(specifier)) {
@@ -124,18 +124,21 @@ class Graph {
       return { builtin: resolved.url };
     }
     if (resolved.url.startsWith("file:")) {
-      const path = fileURLToPath(resolved.url);
-      if (statSync(path, { throwIfNoEntry: false })?.isFile()) {
+      const path = filePath(resolved.url);
+      if (path && statSync(path, { throwIfNoEntry: false })?.isFile()) {
         return { path };
       }
+    } else if (/^[a-z][a-z\d+.-]+:/i.test(resolved.url)) {
+      // Another URL, such as `data:`, is Node.js' to load or to reject.
+      return { url: resolved.url };
     }
     throw notExported(specifier, parentURL, required) ?? notFound(specifier, parentURL, required);
   }
 
   /** `import` of a resolved target, from `importer` (a record, or `null` at the top). */
   async import(target, importer) {
-    if (target.builtin) {
-      return import(target.builtin);
+    if (target.builtin || target.url) {
+      return import(target.builtin ?? target.url);
     }
     const { path } = target;
     if (target.native || isNative(path)) {
@@ -172,8 +175,8 @@ class Graph {
    * `require()`d (`esm`), which wants a namespace back.
    */
   require(target, importer, esm) {
-    if (target.builtin) {
-      const exports = requireSelf(target.builtin);
+    if (target.builtin || target.url) {
+      const exports = requireSelf(target.builtin ?? target.url);
       return esm ? namespaceOf(exports) : exports;
     }
     const { path } = target;
@@ -433,7 +436,7 @@ class Graph {
         return createRequire(record.path).resolve(specifier, options);
       }
       const target = resolve(specifier);
-      return target.builtin ?? target.path;
+      return target.builtin ?? target.url ?? target.path;
     };
     // The folders Node.js would look in, which no resolver of ours changes.
     require.resolve.paths = (request) => createRequire(record.path).resolve.paths(request);
@@ -457,7 +460,7 @@ class Graph {
    * module `importer.import()` returns stays as Node.js gives it, as in jiti.
    */
   interop(target, namespace) {
-    if (target.builtin) {
+    if (!target.path) {
       return namespace;
     }
     const record = this.cache.get(target.path);
@@ -814,7 +817,20 @@ function specifierOf(id) {
   return isAbsolute(id) && !id.startsWith("/") ? pathToFileURL(id).href : id;
 }
 
+// The path of a `file:` URL, or `undefined` for one that has none here, such as
+// `file:///a` on Windows, without a drive.
+function filePath(url) {
+  try {
+    return fileURLToPath(url);
+  } catch {
+    return undefined;
+  }
+}
+
 function urlOf(target) {
+  if (target.url) {
+    return target.url;
+  }
   if (target.builtin) {
     return target.builtin.startsWith("node:") ? target.builtin : `node:${target.builtin}`;
   }
@@ -844,7 +860,7 @@ function notFound(specifier, parentURL, required) {
     : isPath(specifier) && parentURL.startsWith("file:")
       ? new URL(specifier, parentURL)
       : undefined;
-  const shown = url?.protocol === "file:" ? fileURLToPath(url) : specifier;
+  const shown = (url?.protocol === "file:" && filePath(url)) || specifier;
   const error = new Error(`Cannot find module '${shown}' imported from ${parent}`);
   error.code = "ERR_MODULE_NOT_FOUND";
   if (url) {

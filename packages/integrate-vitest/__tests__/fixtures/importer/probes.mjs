@@ -139,6 +139,13 @@ await probe("commonjs-hidden-named-export", async () => {
   const got = JSON.stringify(await imp.import("./hidden-import.ts", { default: true }));
   return [got === "[1,2]", got];
 });
+// A URL that is no file, such as `data:`, is Node.js' to load.
+await probe("data-url", async () => {
+  const m = await imp.import("./data-url.ts");
+  const top = await imp.import("data:text/javascript,export default 5", { default: true });
+  const got = `${await m.viaData()} ${m.resolved} ${top} ${imp.resolve("data:text/javascript,1")}`;
+  return [got === "7 data:text/javascript,1 5 data:text/javascript,1", got];
+});
 await probe("cycle", async () => {
   const a = await imp.import("./cyc-a.ts");
   const b = await imp.import("./cyc-b.ts");

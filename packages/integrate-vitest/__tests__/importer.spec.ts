@@ -82,6 +82,7 @@ test("the importer probes pass", () => {
     "esmodule-commonjs-interop",
     "commonjs-variables-in-es-module",
     "commonjs-hidden-named-export",
+    "data-url",
     "cycle",
     "parallel-cycle",
     "live-binding",
