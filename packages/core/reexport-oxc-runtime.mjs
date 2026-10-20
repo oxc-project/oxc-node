@@ -35,6 +35,11 @@ const packageJsonExports = {
   "./esm.mjs": {
     import: "./esm.mjs",
   },
+  "./importer": {
+    types: "./importer.d.mts",
+    import: "./importer.mjs",
+    default: "./importer.mjs",
+  },
   "./register": {
     import: "./register.mjs",
   },

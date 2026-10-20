@@ -23,6 +23,7 @@ type checker, and it does not write build output to disk.
 - `tsconfig.json` path aliases and TypeScript-aware import resolution
 - Imports such as `./file.js` resolving to `./file.ts` or `./file.tsx`
 - Source-mapped stack traces
+- Importing TypeScript from a tool, without hooks (`@oxc-node/core/importer`)
 - Node features and flags such as watch mode, the test runner, and the
   inspector
 
@@ -315,6 +316,91 @@ A `.cts` file is CommonJS, so it cannot use ES module syntax (`import`, `export`
 or `import.meta`): oxc does not compile it to CommonJS the way `tsc` and `tsx` do,
 and the loader reports an error instead. Rename such a file to `.mts`, or write it
 with `import x = require()` and `export =`. Type-only imports and exports are fine.
+
+## Importing TypeScript from a tool
+
+A tool that loads a user's config file, such as `eslint.config.ts`, can import
+TypeScript without registering the hooks for the whole process.
+`@oxc-node/core/importer` has the shape of [jiti](https://github.com/unjs/jiti)
+v2:
+
+```js
+import { createImporter } from "@oxc-node/core/importer";
+
+const importer = createImporter(import.meta.url);
+const config = await importer.import("./eslint.config.ts", { default: true });
+```
+
+From CommonJS, `require("@oxc-node/core/importer")` works on Node.js 22.12 and
+later.
+
+- `createImporter(parentId, options)` makes an importer that resolves from
+  `parentId`, a file path or a `file:` URL. A path that ends in `/` is a
+  directory, and its own `tsconfig.json` applies. The options are `moduleCache` and
+  `interopDefault`, both `true` by default.
+- `importer.import(id, options)` imports a module and returns a promise. With
+  `default: true` it returns the default export, or the whole module when the
+  default export is missing, `null` or `undefined` (`mod.default ?? mod`, as in jiti). `parentURL` resolves from another file, `conditions` replaces the export
+  conditions (`["node", "import"]`), and `try: true` returns `undefined` when the
+  module is not found or its package does not export it.
+- `importer.resolve(id, options)` returns a `file:` URL, or a `node:` id for a
+  built-in module. It takes `parentURL`, `conditions` and `try` too.
+
+The importer runs modules itself instead of through Node's loader, so nothing is
+installed in the process: no loader hooks, no `require.extensions`, nothing in
+`require.cache`, and `process.sourceMapsEnabled` stays as it is. Your own
+`import()` and `require()` calls keep working as before. Inside the importer:
+
+- Files are transformed as the loader transforms them, with the same
+  `tsconfig.json` lookup: path aliases, enums, legacy decorators, JSX,
+  extensionless imports, JSON, `.mts`/`.cts`, top-level await.
+- A file is an ES module when its extension or `package.json` says so, or when it
+  uses `import`, `export`, `import.meta` or top-level await. Other files run as
+  CommonJS, even when `tsconfig.json` sets an ES `module`.
+- A CommonJS file can `require()` an ES module file, as on newer Node.js. A
+  module with top-level await throws `ERR_REQUIRE_ASYNC_MODULE` instead.
+- Built-in modules, `@oxc-node/core` helpers and JavaScript files in
+  `node_modules` are loaded by Node itself. TypeScript files in `node_modules`
+  run in the importer.
+- With `moduleCache: true`, every importer in the process shares one module map,
+  so each file runs once. With `false`, every `import()` call runs your files
+  again, which picks up edits; files Node loads stay in Node's own cache.
+- `interopDefault` copies jiti: the properties of the default export can be read
+  from the module too.
+- As in jiti, `__dirname`, `__filename` and `require` work in ES module files too,
+  and an import of CommonJS that Babel or `tsc` compiled from an ES module
+  (`__esModule`) gets its `exports.default` as the default export.
+- A module that failed to load is tried again on the next `import()`. A missing
+  module fails with `ERR_MODULE_NOT_FOUND`, or `MODULE_NOT_FOUND` from
+  `require()`, and a path a package does not export with
+  `ERR_PACKAGE_PATH_NOT_EXPORTED`.
+- Each line of the output keeps the line number of its source where it can, so
+  stack traces point at the right TypeScript line. An error that escapes `import()` also has
+  its columns mapped back through the source map.
+
+Differences from jiti:
+
+- There is only the async `import()`. jiti's synchronous `jiti()` call and options
+  such as `alias`, `fsCache` and `transformOptions` are not there; the transform
+  is configured through `tsconfig.json`, as for the loader.
+- The returned module is a plain object, not a real module namespace object.
+- `import()` inside `eval` or `new Function` falls back to Node's own loader,
+  which does not transform TypeScript. Node may print an experimental warning the
+  first time.
+
+A tool that reloads a config after it changes, such as a migration tool or a
+linter in watch mode:
+
+```js
+import { pathToFileURL } from "node:url";
+import { createImporter } from "@oxc-node/core/importer";
+
+export async function loadConfig(file) {
+  const url = pathToFileURL(file);
+  const importer = createImporter(url, { moduleCache: false });
+  return importer.import(url, { default: true });
+}
+```
 
 [ci-badge]: https://github.com/oxc-project/oxc-node/actions/workflows/CI.yml/badge.svg?branch=main
 [ci-url]: https://github.com/oxc-project/oxc-node/actions/workflows/CI.yml

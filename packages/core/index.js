@@ -792,4 +792,5 @@ module.exports.setTsconfigPath = nativeBinding.setTsconfigPath
 module.exports.takeWatchDependencies = nativeBinding.takeWatchDependencies
 module.exports.transform = nativeBinding.transform
 module.exports.transformAsync = nativeBinding.transformAsync
+module.exports.transformModuleRunner = nativeBinding.transformModuleRunner
 module.exports.transformsDep = nativeBinding.transformsDep

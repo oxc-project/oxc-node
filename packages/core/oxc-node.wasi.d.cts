@@ -110,6 +110,24 @@ export interface LoadFnOutput {
   responseURL?: string;
 }
 
+/** The code `transformModuleRunner` hands to `@oxc-node/core/importer`. */
+export interface ModuleRunnerOutput {
+  code: string;
+  /** The source map as a JSON string */
+  map?: string;
+  /**
+   * The file is an ES module. Its imports, exports and `import.meta` are calls into
+   * the runner (`__vite_ssr_import__` and friends); a CommonJS file keeps `require`,
+   * `module` and `exports`, and only its `import()` calls into the runner.
+   */
+  esm: boolean;
+  /**
+   * The ES module awaits at its top level, so `require()` of it is
+   * `ERR_REQUIRE_ASYNC_MODULE`.
+   */
+  topLevelAwait: boolean;
+}
+
 export interface OxcResolveOptions {
   getCurrentDirectory?: () => string;
 }
@@ -180,6 +198,27 @@ export declare function transformAsync(
   path: string,
   source: string | Uint8Array | Buffer,
 ): Promise<unknown>;
+
+/**
+ * The transform `@oxc-node/core/importer` runs files with: the one the load hook
+ * applies, with the same tsconfig discovery, followed by oxc's module runner transform,
+ * which turns `import`/`export` into calls the importer evaluates itself.
+ *
+ * A file is an ES module as Node.js decides it: by a `.mts`/`.mjs` extension or a
+ * `"type": "module"` package, else by its syntax (`import`, `export`, `import.meta` or
+ * top-level await). tsconfig's `module` does not make a file without module syntax an
+ * ES module here, as the resolver's format does, so `module.exports = ...` keeps
+ * working in a package without `"type"`.
+ *
+ * `sync` emits static imports without `await`, for `require()` of an ES module without
+ * top-level await. Each line of the output starts on the line of the source it came
+ * from.
+ */
+export declare function transformModuleRunner(
+  path: string,
+  source: string | Uint8Array,
+  sync?: boolean | undefined | null,
+): ModuleRunnerOutput;
 
 /**
  * Whether the mode in effect transforms a `node_modules` file at `path`, for

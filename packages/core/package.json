@@ -19,6 +19,8 @@
   "files": [
     "browser.js",
     "esm.mjs",
+    "importer.d.mts",
+    "importer.mjs",
     "index.d.ts",
     "index.js",
     "register.mjs",
@@ -40,6 +42,11 @@
     },
     "./esm.mjs": {
       "import": "./esm.mjs"
+    },
+    "./importer": {
+      "types": "./importer.d.mts",
+      "import": "./importer.mjs",
+      "default": "./importer.mjs"
     },
     "./helpers/AwaitValue": [
       {

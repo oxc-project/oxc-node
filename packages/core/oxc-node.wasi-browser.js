@@ -1454,4 +1454,5 @@ export const setTsconfigPath = __napiModule.exports.setTsconfigPath
 export const takeWatchDependencies = __napiModule.exports.takeWatchDependencies
 export const transform = __napiModule.exports.transform
 export const transformAsync = __napiModule.exports.transformAsync
+export const transformModuleRunner = __napiModule.exports.transformModuleRunner
 export const transformsDep = __napiModule.exports.transformsDep
