@@ -143,8 +143,16 @@ await probe("commonjs-hidden-named-export", async () => {
 await probe("data-url", async () => {
   const m = await imp.import("./data-url.ts");
   const top = await imp.import("data:text/javascript,export default 5", { default: true });
-  const got = `${await m.viaData()} ${m.resolved} ${top} ${imp.resolve("data:text/javascript,1")}`;
-  return [got === "7 data:text/javascript,1 5 data:text/javascript,1", got];
+  const got = [
+    await m.viaData(),
+    m.resolved,
+    top,
+    imp.resolve("data:text/javascript,1"),
+    await m.viaJson(),
+    m.resolvedUrl,
+  ].join(" ");
+  const want = "7 data:text/javascript,1 5 data:text/javascript,1 1 data:text/javascript,2";
+  return [got === want, got];
 });
 await probe("cycle", async () => {
   const a = await imp.import("./cyc-a.ts");

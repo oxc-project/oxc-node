@@ -136,14 +136,17 @@ class Graph {
     throw notExported(specifier, parentURL, required) ?? notFound(specifier, parentURL, required);
   }
 
-  /** `import` of a resolved target, from `importer` (a record, or `null` at the top). */
-  async import(target, importer) {
+  /**
+   * `import` of a resolved target, from `importer` (a record, or `null` at the top).
+   * `options`, a dynamic import's second argument, goes to Node.js with what it loads.
+   */
+  async import(target, importer, options) {
     if (target.builtin || target.url) {
-      return import(target.builtin ?? target.url);
+      return import(target.builtin ?? target.url, options);
     }
     const { path } = target;
     if (target.native || isNative(path)) {
-      return import(pathToFileURL(path).href);
+      return import(pathToFileURL(path).href, options);
     }
     let record = this.cache.get(path);
     if (record) {
@@ -448,9 +451,9 @@ class Graph {
   }
 
   dynamicImport(record) {
-    return async (specifier) => {
+    return async (specifier, options) => {
       const target = this.resolve(String(specifier), record.url, this.conditions, false);
-      return this.interop(target, await this.import(target, record));
+      return this.interop(target, await this.import(target, record, options));
     };
   }
 
@@ -487,7 +490,7 @@ class Graph {
       resolve: (specifier, parent) => {
         try {
           return urlOf(
-            this.resolve(specifier, parent ? String(parent) : url, this.conditions, false),
+            this.resolve(String(specifier), parent ? String(parent) : url, this.conditions, false),
           );
         } catch (error) {
           // As Node.js does: a path that names no file still has a URL.
