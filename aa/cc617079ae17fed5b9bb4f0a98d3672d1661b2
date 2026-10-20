@@ -1,0 +1,225 @@
+Cargo.toml
+  s_c680e569fb0dcb::t_f403aeeb25d5fd 26-27
+README.md
+  s_6bc2e05bc67c25::t_d8d8903d997da3 26,320-401
+packages/core/importer.d.mts
+  s_6bc2e05bc67c25::t_a569acbf760656 1-50
+packages/core/importer.mjs
+  s_6bc2e05bc67c25::t_03ff7c5b29175f 1-759
+packages/core/index.d.ts
+  s_6bc2e05bc67c25::t_d3e5e5fd69bd10 102-119,190-206
+packages/core/index.js
+  s_6bc2e05bc67c25::t_f0e152996af1d7 795
+packages/core/oxc-node.wasi-browser.js
+  s_6bc2e05bc67c25::t_28fbb134763c37 1457
+packages/core/oxc-node.wasi.cjs
+  s_6bc2e05bc67c25::t_04efee4f338264 1,2314
+packages/core/oxc-node.wasi.d.cts
+  s_6bc2e05bc67c25::t_d83f5848b5ecaa 113-130,202-222
+packages/core/package.json
+  s_c680e569fb0dcb::t_f54cc81f1a1f6f 22-23,46-50
+packages/integrate-vitest/__tests__/fixtures/importer/checks.mjs
+  s_c680e569fb0dcb::t_be808f5f8dc817 1-289
+packages/integrate-vitest/__tests__/fixtures/importer/elsewhere/cjs/enum-after.ts
+  s_c680e569fb0dcb::t_74b3e28d12ac61 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/elsewhere/cjs/enum-before.ts
+  s_c680e569fb0dcb::t_6948694f1aa7ff 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/elsewhere/cjs/package.json
+  s_c680e569fb0dcb::t_7f863efdad541b 1
+packages/integrate-vitest/__tests__/fixtures/importer/elsewhere/enum-after.ts
+  s_c680e569fb0dcb::t_8e678dde1bcc08 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/elsewhere/enum-before.ts
+  s_c680e569fb0dcb::t_ce13121d11f7ac 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/elsewhere/ext-after.ts
+  s_c680e569fb0dcb::t_00357dab02d192 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/elsewhere/ext-before.ts
+  s_c680e569fb0dcb::t_7e40b95582b56b 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/elsewhere/ext-target.ts
+  s_c680e569fb0dcb::t_4c5161d41afc42 1
+packages/integrate-vitest/__tests__/fixtures/importer/elsewhere/package.json
+  s_c680e569fb0dcb::t_1c4f3939cccb50 1
+packages/integrate-vitest/__tests__/fixtures/importer/host.cjs
+  s_c680e569fb0dcb::t_18b000a3f40f38 1-18
+packages/integrate-vitest/__tests__/fixtures/importer/host.mjs
+  s_c680e569fb0dcb::t_8476cf55ccae0c 1-14
+packages/integrate-vitest/__tests__/fixtures/importer/probes.mjs
+  s_6bc2e05bc67c25::t_e2c9380cd4c4ef 1-182
+packages/integrate-vitest/__tests__/fixtures/importer/probes/cyc-a.ts
+  s_c680e569fb0dcb::t_875a07ee5f8d37 1-3
+packages/integrate-vitest/__tests__/fixtures/importer/probes/cyc-b.ts
+  s_c680e569fb0dcb::t_169a0601b24789 1-3
+packages/integrate-vitest/__tests__/fixtures/importer/probes/data.json
+  s_c680e569fb0dcb::t_9016e3b549ca91 1
+packages/integrate-vitest/__tests__/fixtures/importer/probes/def.ts
+  s_c680e569fb0dcb::t_b5f31cc74c6396 1
+packages/integrate-vitest/__tests__/fixtures/importer/probes/esm-dep.ts
+  s_c680e569fb0dcb::t_1995156fb2bc1d 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/evalimp.ts
+  s_c680e569fb0dcb::t_d97146b9a349b7 1
+packages/integrate-vitest/__tests__/fixtures/importer/probes/fails-once.ts
+  s_c680e569fb0dcb::t_8e8b504461d525 1-6
+packages/integrate-vitest/__tests__/fixtures/importer/probes/hashbang.ts
+  s_c680e569fb0dcb::t_caa02aa7843ceb 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/helper.cts
+  s_c680e569fb0dcb::t_c67966be9864e4 1
+packages/integrate-vitest/__tests__/fixtures/importer/probes/lazy-enum.ts
+  s_c680e569fb0dcb::t_21c9eed860ef60 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/lazy-ext.ts
+  s_c680e569fb0dcb::t_38790be235217c 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/lazy-host.ts
+  s_c680e569fb0dcb::t_c0c2a5fe4e407e 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/live.ts
+  s_c680e569fb0dcb::t_0f1805b03d8939 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/meta-missing.ts
+  s_6bc2e05bc67c25::t_93030a7f8909e8 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/ns.ts
+  s_c680e569fb0dcb::t_47856c7c52894e 1
+packages/integrate-vitest/__tests__/fixtures/importer/probes/package.json
+  s_c680e569fb0dcb::t_59303982457476 1
+packages/integrate-vitest/__tests__/fixtures/importer/probes/reexport.ts
+  s_c680e569fb0dcb::t_e20ad3a8e92de8 1-3
+packages/integrate-vitest/__tests__/fixtures/importer/probes/req-chain.cts
+  s_c680e569fb0dcb::t_5a0dd7c3b5000c 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/req-esm.cts
+  s_c680e569fb0dcb::t_adee5a96790cbd 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/req-tla.cts
+  s_c680e569fb0dcb::t_dfff1341328a36 1-3
+packages/integrate-vitest/__tests__/fixtures/importer/probes/small.ts
+  s_c680e569fb0dcb::t_935113efb4a10a 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/star-a.ts
+  s_6bc2e05bc67c25::t_43f051468f7e96 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/star-ambiguous.ts
+  s_6bc2e05bc67c25::t_3c2155fe956037 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/star-b.ts
+  s_6bc2e05bc67c25::t_5e483251777c43 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/star-diamond.ts
+  s_6bc2e05bc67c25::t_1bba000687aeaf 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/star-named.ts
+  s_6bc2e05bc67c25::t_9791cc88322240 1
+packages/integrate-vitest/__tests__/fixtures/importer/probes/sync-esm.ts
+  s_c680e569fb0dcb::t_1310a26f556581 1-5
+packages/integrate-vitest/__tests__/fixtures/importer/probes/thrower.ts
+  s_c680e569fb0dcb::t_6d030d3f156245 1-8
+packages/integrate-vitest/__tests__/fixtures/importer/probes/tla.mts
+  s_c680e569fb0dcb::t_956d9917d86895 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/top-throw.ts
+  s_c680e569fb0dcb::t_50e1c527cec593 1-6
+packages/integrate-vitest/__tests__/fixtures/importer/probes/tsconfig.json
+  s_6bc2e05bc67c25::t_7fa71139f99444 1-9
+packages/integrate-vitest/__tests__/fixtures/importer/project/cache-template/dep.ts
+  s_c680e569fb0dcb::t_19649961d1f967 1-6
+packages/integrate-vitest/__tests__/fixtures/importer/project/cache-template/root.ts
+  s_c680e569fb0dcb::t_b55669be096a2d 1-9
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/cond-dep/custom.js
+  s_c680e569fb0dcb::t_a3351e659c558e 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/cond-dep/default.js
+  s_c680e569fb0dcb::t_e85b1c928f9827 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/cond-dep/package.json
+  s_c680e569fb0dcb::t_b4ea6abeaf5345 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/fake-dep/index.js
+  s_c680e569fb0dcb::t_7fb9f3f2fe5ad0 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/fake-dep/package.json
+  s_c680e569fb0dcb::t_210c372860d9da 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/errors/imports-missing.ts
+  s_c680e569fb0dcb::t_6ca202635fc39a 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/errors/syntax.ts
+  s_c680e569fb0dcb::t_282d6f9194a044 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/errors/throws.ts
+  s_c680e569fb0dcb::t_240d2125eb9694 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/eslint.config.ts
+  s_c680e569fb0dcb::t_acc772c45bbccf 1-25
+packages/integrate-vitest/__tests__/fixtures/importer/project/features/alias.ts
+  s_c680e569fb0dcb::t_aa5796c5c7b206 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/features/cjs-pkg.ts
+  s_c680e569fb0dcb::t_ded0299bb3a14e 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/features/cts.ts
+  s_c680e569fb0dcb::t_7f714bbf9d487f 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/features/decorator.ts
+  s_c680e569fb0dcb::t_a19d099d7a8089 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/features/enum.ts
+  s_c680e569fb0dcb::t_b3251a55e9c415 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/features/export-default-fn.ts
+  s_c680e569fb0dcb::t_2ef6ba1b7c524a 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/features/extensionless.ts
+  s_c680e569fb0dcb::t_94d56ec36dd03d 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/features/json-attr.ts
+  s_c680e569fb0dcb::t_6186c347a38ced 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/features/json.ts
+  s_c680e569fb0dcb::t_67b922299a7ccb 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/features/jsx.ts
+  s_c680e569fb0dcb::t_894e68e48c4d57 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/features/meta.ts
+  s_c680e569fb0dcb::t_a302d3a69f5a95 1-3
+packages/integrate-vitest/__tests__/fixtures/importer/project/features/mts.ts
+  s_c680e569fb0dcb::t_d98b5e5254254b 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/features/tla.ts
+  s_c680e569fb0dcb::t_b1bd0b799f6159 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/features/tsx.ts
+  s_c680e569fb0dcb::t_57e110be21900b 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/interop/default-only.ts
+  s_c680e569fb0dcb::t_6f91399fcaef17 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/interop/fn.ts
+  s_c680e569fb0dcb::t_a88766f8e537de 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/interop/mixed.ts
+  s_c680e569fb0dcb::t_e238ddbbe7a191 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/interop/named-only.ts
+  s_c680e569fb0dcb::t_1c0041bb6e232b 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/interop/primitive.ts
+  s_c680e569fb0dcb::t_c847054e5db7fc 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/lib/util.ts
+  s_c680e569fb0dcb::t_4b14bb1cb7c6fb 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/package.json
+  s_c680e569fb0dcb::t_8440db8a2a89b2 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/pkg-cjs/index.ts
+  s_c680e569fb0dcb::t_8c2cd7b742e249 1-3
+packages/integrate-vitest/__tests__/fixtures/importer/project/pkg-cjs/package.json
+  s_c680e569fb0dcb::t_99ebc129df7277 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/src/data.json
+  s_c680e569fb0dcb::t_28e214aebe6efb 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/src/decorated.ts
+  s_c680e569fb0dcb::t_61035e0d36f0fa 1-13
+packages/integrate-vitest/__tests__/fixtures/importer/project/src/enum.ts
+  s_c680e569fb0dcb::t_70524f57d714b5 1-3
+packages/integrate-vitest/__tests__/fixtures/importer/project/src/esm-helper.mts
+  s_c680e569fb0dcb::t_ee94895055aee1 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/src/generic.tsx
+  s_c680e569fb0dcb::t_e0e993b5115659 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/src/helper.cts
+  s_c680e569fb0dcb::t_24c8990351d3e9 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/src/other.ts
+  s_c680e569fb0dcb::t_5bf4694ac133a3 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/src/tla.ts
+  s_c680e569fb0dcb::t_cf573b9a815f30 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/src/view.tsx
+  s_c680e569fb0dcb::t_079b2396cd9228 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/tsconfig.json
+  s_c680e569fb0dcb::t_8fab6eac63df10 1-13
+packages/integrate-vitest/__tests__/importer.spec.ts
+  s_6bc2e05bc67c25::t_ea2a7a7e564ab5 1-92
+src/lib.rs
+  s_c680e569fb0dcb::t_3b5b34f59e4992 7,18,20-22,24,31,39,46,1489-1549,1591,1644,1837,1841-1864,1942,2003,2021,2191-2205,2212-2434,3051,3108,3315,4546-4606
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "aacc617079ae17fed5b9bb4f0a98d3672d1661b2",
+  "prompts": {},
+  "sessions": {
+    "s_6bc2e05bc67c25": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aa6e8a35607a9b4b3",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    },
+    "s_c680e569fb0dcb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-af4aca41476a4b7ad",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
