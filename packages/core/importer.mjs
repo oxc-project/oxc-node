@@ -427,7 +427,11 @@ class Graph {
   makeRequire(record) {
     const resolve = (specifier) => this.resolve(specifier, record.url, REQUIRE_CONDITIONS, true);
     const require = (specifier) => this.require(resolve(specifier), record, false);
-    require.resolve = (specifier) => {
+    require.resolve = (specifier, options) => {
+      // Folders to look in instead of the file's own are Node.js' lookup, as in jiti.
+      if (options?.paths) {
+        return createRequire(record.path).resolve(specifier, options);
+      }
       const target = resolve(specifier);
       return target.builtin ?? target.path;
     };
@@ -456,7 +460,15 @@ class Graph {
       return namespace;
     }
     const record = this.cache.get(target.path);
-    return record && record.kind !== "cjs" ? namespace : esModuleInterop(namespace);
+    if (record) {
+      return record.kind === "cjs" ? esModuleInterop(namespace) : namespace;
+    }
+    // Node.js loaded it: CommonJS sits in `require.cache` with its own exports, an ES
+    // module is not there, or holds its namespace there after a `require()`.
+    const cached = Module._cache[target.path];
+    return cached && !types.isModuleNamespaceObject(cached.exports)
+      ? esModuleInterop(namespace)
+      : namespace;
   }
 
   importMeta(record) {

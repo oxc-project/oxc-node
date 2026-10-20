@@ -95,8 +95,11 @@ await probe("require-evaluating-tla-is-async-module-error", async () => {
 await probe("require-resolve-paths", async () => {
   const m = await imp.import("./resolve-paths.cts", { default: true });
   const expected = createRequire(path.join(DIR, "resolve-paths.cts")).resolve.paths("some-package");
-  const ok = JSON.stringify(m.paths) === JSON.stringify(expected) && m.builtin === null;
-  return [ok, `${m.paths?.[0]} ${m.builtin}`];
+  const ok =
+    JSON.stringify(m.paths) === JSON.stringify(expected) &&
+    m.builtin === null &&
+    m.withPaths.includes(`${path.sep}fake-dep${path.sep}`);
+  return [ok, `${m.paths?.[0]} ${m.builtin} ${m.withPaths}`];
 });
 // Babel/tsc CommonJS (`__esModule`): imports inside a runner file get `exports.default`;
 // the module `import()` returns stays as Node.js gives it, and `default: true` unwraps a
@@ -113,8 +116,9 @@ await probe("esmodule-commonjs-interop", async () => {
     JSON.stringify(await m.lazy()),
     JSON.stringify(top),
     typeof plugin === "function" ? plugin() : typeof plugin,
+    JSON.stringify(m.esm),
   ].join(" ");
-  const want = '{"content":["a"]} {"content":["a"]} 1 {"content":["a"]} {"default":{"content":["a"]},"helper":1} plugin';
+  const want = '{"content":["a"]} {"content":["a"]} 1 {"content":["a"]} {"default":{"content":["a"]},"helper":1} plugin {"__esModule":true,"default":"inner"}';
   return [got === want, got];
 });
 // `__dirname`, `__filename` and `require` in an ES module, as jiti has them; a module
