@@ -76,6 +76,7 @@ test("the importer probes pass", () => {
     "require-tla-is-async-module-error",
     "require-cached-tla-is-async-module-error",
     "require-cached-native-tla-is-async-module-error",
+    "default-and-namespace-import",
     "cycle",
     "parallel-cycle",
     "live-binding",

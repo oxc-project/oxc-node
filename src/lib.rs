@@ -15,11 +15,12 @@ use std::{
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use oxc::{
-    allocator::{Allocator, TakeIn},
+    allocator::{Allocator, CloneIn, TakeIn},
     ast::ast::{
         Argument, ArrowFunctionExpression, AwaitExpression, Class, Decorator, Expression,
-        ForOfStatement, Program, Statement, StringLiteral, TSExternalModuleDeclaration,
-        TSGlobalDeclaration, TSNamespaceDeclaration, TemplateLiteral, VariableDeclaration,
+        ForOfStatement, ImportDeclarationSpecifier, Program, Statement, StringLiteral,
+        TSExternalModuleDeclaration, TSGlobalDeclaration, TSNamespaceDeclaration, TemplateLiteral,
+        VariableDeclaration,
     },
     ast_visit::{Visit, VisitMut, walk},
     codegen::{Codegen, CodegenOptions, CodegenReturn},
@@ -2195,6 +2196,7 @@ fn transform_program<'a>(
         runner.top_level_await = esm && has_top_level_await(program);
         // The runner evaluates the code as a function body, where `#!` is a syntax error.
         program.hashbang = None;
+        split_namespace_imports(allocator, program);
         let scoping = SemanticBuilder::new().build(program).semantic.into_scoping();
         ModuleRunnerTransform::new().transform(allocator, program, scoping);
         unmap_hoisted_exports(program);
@@ -2261,6 +2263,29 @@ fn unmap_hoisted_exports(program: &mut Program<'_>) {
             break;
         }
         Unmap.visit_statement(statement);
+    }
+}
+
+/// The runner transform drops the default binding of `import a, * as b from "x"`, so
+/// the declaration is split first: `import a from "x"; import * as b from "x";`.
+fn split_namespace_imports<'a>(allocator: &'a Allocator, program: &mut Program<'a>) {
+    let mut index = 0;
+    while index < program.body.len() {
+        if let Statement::ImportDeclaration(declaration) = &mut program.body[index]
+            && let Some(specifiers) = &mut declaration.specifiers
+            && specifiers.len() > 1
+            && matches!(
+                specifiers.last(),
+                Some(ImportDeclarationSpecifier::ImportNamespaceSpecifier(_))
+            )
+            && let Some(namespace) = specifiers.pop()
+        {
+            let mut split = declaration.clone_in(allocator);
+            split.specifiers = Some(oxc::allocator::Vec::from_array_in([namespace], &allocator));
+            program.body.insert(index + 1, Statement::ImportDeclaration(split));
+            index += 1;
+        }
+        index += 1;
     }
 }
 
@@ -4584,6 +4609,15 @@ mod tests {
         let output = run("tla.mts", "import './dep.ts';\nawait 1;\n", true);
         assert!(output.esm && output.top_level_await);
         assert!(output.code.contains("await __vite_ssr_import__"), "{}", output.code);
+
+        // A default and a namespace import from one declaration both stay bound.
+        let output =
+            run("both.ts", "import f, * as g from './dep.ts';\nexport const z = [f, g];\n", true);
+        assert!(
+            output.code.contains("[__vite_ssr_import_0__.default, __vite_ssr_import_1__]"),
+            "{}",
+            output.code
+        );
 
         // A CommonJS file only hands `import()` to the runner.
         let output = run("lazy.cts", "module.exports = () => import('./dep.ts');\n", false);

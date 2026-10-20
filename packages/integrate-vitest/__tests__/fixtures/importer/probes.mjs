@@ -75,6 +75,10 @@ await probe("require-cached-native-tla-is-async-module-error", async () => {
   const code = requireLater("./parent.mts");
   return [code === "ERR_REQUIRE_ASYNC_MODULE", code];
 });
+await probe("default-and-namespace-import", async () => {
+  const m = await imp.import("./default-ns.ts");
+  return [m.both === "fk", m.both];
+});
 await probe("cycle", async () => {
   const a = await imp.import("./cyc-a.ts");
   const b = await imp.import("./cyc-b.ts");
