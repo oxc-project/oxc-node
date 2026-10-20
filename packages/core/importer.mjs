@@ -66,7 +66,7 @@ export function createImporter(parentId, options = {}) {
       try {
         namespace = await runner.import(target, null);
       } catch (error) {
-        throw mapStack(error, runner.sourceMaps);
+        throw runner.dropFailed(mapStack(error, runner.sourceMaps));
       }
       if (opts.default) {
         return namespace?.default ?? namespace;
@@ -223,6 +223,16 @@ class Graph {
   settle(record) {
     record.done = true;
     record.resolve();
+  }
+
+  // The source maps of modules that failed, once the error has used them.
+  dropFailed(error) {
+    for (const path of this.sourceMaps.keys()) {
+      if (!this.cache.has(path)) {
+        this.sourceMaps.delete(path);
+      }
+    }
+    return error;
   }
 
   // A module that failed is forgotten, so that the next import tries it again.

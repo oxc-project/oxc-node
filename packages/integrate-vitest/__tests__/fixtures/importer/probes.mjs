@@ -234,6 +234,32 @@ await probe("memory-module-cache-false-new-files", async () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+// Every import a new file that throws: a failed module leaves nothing behind either.
+await probe("memory-failed-new-files", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oxc-node-importer-failed-"));
+  try {
+    const lines = Array.from({ length: 1200 }, (_, i) => `export const v${i}: number = ${i};`);
+    const body = [...lines, "throw new Error('fails');"].join("\n");
+    const files = Array.from({ length: 220 }, (_, i) => {
+      const file = path.join(dir, `m${i}.ts`);
+      fs.writeFileSync(file, body);
+      return file;
+    });
+    const cached = createImporter(path.join(dir, "host.mjs"));
+    const collect = () => globalThis.gc({ type: "major", execution: "sync", flavor: "last-resort" });
+    const load = (file) => cached.import(file).catch(() => {});
+    for (const file of files.slice(0, 20)) await load(file);
+    collect();
+    const before = process.memoryUsage().heapUsed;
+    for (const file of files.slice(20)) await load(file);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    collect();
+    const kb = (process.memoryUsage().heapUsed - before) / 200 / 1024;
+    return [kb < 2, `${kb.toFixed(1)} KB per file`];
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 await probe("no-leak", async () => {
   const cached = Object.keys(Module._cache).filter((key) => key.startsWith(realpathSync(DIR)));
   let plain;
