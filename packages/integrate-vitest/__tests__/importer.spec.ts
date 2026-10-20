@@ -94,6 +94,7 @@ test("the importer probes pass", () => {
     "memory-module-cache-false",
     "memory-module-cache-false-new-files",
     "memory-failed-new-files",
+    "memory-failed-caught-new-files",
     "no-leak",
   ]);
 });

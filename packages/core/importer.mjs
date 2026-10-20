@@ -37,6 +37,8 @@ const sharedCache = new Map();
 // Per module map: the source map of each file it ran, to map stack traces. They go
 // with the module map, so a `moduleCache: false` graph takes its maps along when it goes.
 const sourceMapsOfCache = new WeakMap();
+// The source maps of the modules an error failed, by error.
+const failedSourceMaps = new WeakMap();
 
 /**
  * @param {string | URL} parentId
@@ -66,7 +68,7 @@ export function createImporter(parentId, options = {}) {
       try {
         namespace = await runner.import(target, null);
       } catch (error) {
-        throw runner.dropFailed(mapStack(error, runner.sourceMaps));
+        throw mapStack(error, runner.sourceMaps);
       }
       if (opts.default) {
         return namespace?.default ?? namespace;
@@ -225,20 +227,25 @@ class Graph {
     record.resolve();
   }
 
-  // The source maps of modules that failed, once the error has used them.
-  dropFailed(error) {
-    for (const path of this.sourceMaps.keys()) {
-      if (!this.cache.has(path)) {
-        this.sourceMaps.delete(path);
-      }
-    }
-    return error;
-  }
-
-  // A module that failed is forgotten, so that the next import tries it again.
+  // A module that failed is forgotten, so that the next import tries it again. Its
+  // source map goes with the error, for its stack, and is gone when the error is.
   fail(record, error) {
     if (this.cache.get(record.path) === record) {
       this.cache.delete(record.path);
+      const sourceMap = this.sourceMaps.get(record.path);
+      this.sourceMaps.delete(record.path);
+      if (
+        sourceMap &&
+        error !== null &&
+        (typeof error === "object" || typeof error === "function")
+      ) {
+        let maps = failedSourceMaps.get(error);
+        if (!maps) {
+          maps = new Map();
+          failedSourceMaps.set(error, maps);
+        }
+        maps.set(record.path, sourceMap);
+      }
     }
     record.reject(error);
   }
@@ -657,7 +664,8 @@ function mapStack(error, sourceMaps) {
     return error;
   }
   const mapped = stack.replace(STACK_FRAME, (frame, head, file, line, column, tail) => {
-    const position = sourcePosition(sourceMaps.get(file), Number(line) - 1, Number(column) - 1);
+    const sourceMap = failedSourceMaps.get(error)?.get(file) ?? sourceMaps.get(file);
+    const position = sourcePosition(sourceMap, Number(line) - 1, Number(column) - 1);
     return position ? `${head}${file}:${position[0] + 1}:${position[1] + 1}${tail}` : frame;
   });
   if (mapped !== stack) {
