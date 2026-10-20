@@ -10,14 +10,14 @@
     "prepare": "vp config || exit 0"
   },
   "devDependencies": {
-    "@emnapi/runtime": "^2.0.0-alpha.5",
+    "@emnapi/runtime": "2.0.0-alpha.6",
     "@napi-rs/cli": "catalog:",
     "@napi-rs/wasm-runtime": "^1.2.5",
     "@oxc-node/cli": "workspace:*",
     "@oxc-node/core": "workspace:*",
     "@oxc-project/runtime": "^0.154.0",
     "@types/node": "^26.6.4",
-    "emnapi": "^2.0.0-alpha.5",
+    "emnapi": "2.0.0-alpha.6",
     "lerna": "^10.0.1",
     "typescript": "^7.0.2",
     "vite-plus": "catalog:"
