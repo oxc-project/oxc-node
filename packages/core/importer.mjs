@@ -587,7 +587,12 @@ function addNamedExports(namespace, exports) {
   if (exports === null || (typeof exports !== "object" && typeof exports !== "function")) {
     return;
   }
-  for (const key of Object.keys(exports)) {
+  // `__esModule` is usually defined hidden; Node.js' CommonJS import still exports it.
+  const keys = Object.keys(exports);
+  if (exports.__esModule && !keys.includes("__esModule")) {
+    keys.push("__esModule");
+  }
+  for (const key of keys) {
     if (key !== "default" && !(key in namespace)) {
       Object.defineProperty(namespace, key, { enumerable: true, get: () => exports[key] });
     }
