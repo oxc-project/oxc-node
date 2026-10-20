@@ -259,6 +259,8 @@ const hooks = sink
 `flush(sink, take)` sends what the binding recorded, for code that is not a
 hook (a CommonJS transform). `createRelay(sink, take)` returns a port for hooks
 registered with `module.register()`, which run on a thread with no IPC.
+From a CommonJS `--require` preload, `require()` of these two entries works on
+Node.js 22.12 and later, as for `@oxc-node/core/importer`.
 
 What the two sides agree on, for a loader that does not use these entries:
 
