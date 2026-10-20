@@ -60,6 +60,13 @@ await probe("require-tla-is-async-module-error", async () => {
   const code = await imp.import("./req-tla.cts", { default: true });
   return [code === "ERR_REQUIRE_ASYNC_MODULE", code];
 });
+// Loaded by import() first, so the require() finds them in the cache.
+await probe("require-cached-tla-is-async-module-error", async () => {
+  await imp.import("./tla-parent.ts");
+  const requireLater = await imp.import("./req-tla-later.cts", { default: true });
+  const codes = [requireLater("./tla-dep.mts"), requireLater("./tla-parent.ts")];
+  return [codes.every((code) => code === "ERR_REQUIRE_ASYNC_MODULE"), codes.join(" ")];
+});
 await probe("cycle", async () => {
   const a = await imp.import("./cyc-a.ts");
   const b = await imp.import("./cyc-b.ts");
@@ -127,6 +134,22 @@ await probe("package-path-not-exported", async () => {
     error.message.includes("imported from") &&
     tried === undefined;
   return [ok, `${error?.code} ${error?.message.split("\n")[0]} ${tried}`];
+});
+// Exported under `require` only: the import conditions do not match it.
+await probe("package-path-exported-for-require-only", async () => {
+  const fromProject = createImporter(path.join(DIR, "..", "project", "host.ts"));
+  const codes = [];
+  for (const id of ["require-only-dep/r", "require-only-dep"]) {
+    const error = await fromProject.import(id).then(
+      () => undefined,
+      (e) => e,
+    );
+    codes.push(`${error?.code} ${error?.message.split("\n")[0]}`);
+  }
+  const ok =
+    codes[0].startsWith("ERR_PACKAGE_PATH_NOT_EXPORTED Package subpath './r' is not defined") &&
+    codes[1].startsWith('ERR_PACKAGE_PATH_NOT_EXPORTED No "exports" main defined');
+  return [ok, codes.join(" | ")];
 });
 await probe("new-Function-import", async () => {
   const m = await imp.import("./evalimp.ts");

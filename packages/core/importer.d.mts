@@ -29,7 +29,7 @@ export interface ResolveOptions {
 }
 
 export interface ImportOptions extends ResolveOptions {
-  /** Return the `default` export, or the namespace when it has none. */
+  /** Return the `default` export, or the namespace when it is `null` or `undefined` (`mod.default ?? mod`, as in jiti). */
   default?: true;
 }
 

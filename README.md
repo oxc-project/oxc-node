@@ -339,8 +339,8 @@ later.
   directory, and its own `tsconfig.json` applies. The options are `moduleCache` and
   `interopDefault`, both `true` by default.
 - `importer.import(id, options)` imports a module and returns a promise. With
-  `default: true` it returns the default export, or the whole module when there is
-  none. `parentURL` resolves from another file, `conditions` replaces the export
+  `default: true` it returns the default export, or the whole module when the
+  default export is missing, `null` or `undefined` (`mod.default ?? mod`, as in jiti). `parentURL` resolves from another file, `conditions` replaces the export
   conditions (`["node", "import"]`), and `try: true` returns `undefined` when the
   module is not found or its package does not export it.
 - `importer.resolve(id, options)` returns a `file:` URL, or a `node:` id for a

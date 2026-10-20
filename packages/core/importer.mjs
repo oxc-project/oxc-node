@@ -7,7 +7,7 @@
 // oxc-node's helpers go through Node.js' own `import()` and `require()`.
 import { statSync, readFileSync } from "node:fs";
 import Module, { createRequire, isBuiltin } from "node:module";
-import { dirname, extname, isAbsolute, resolve as resolvePath, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { types } from "node:util";
 import vm from "node:vm";
@@ -183,6 +183,9 @@ class Graph {
         this.fail(record, error);
         throw error;
       }
+    } else if (record.async) {
+      // An ES module with top-level await in its graph, loaded by `import()` before.
+      throw requireAsyncModule(path, importer);
     }
     // A record that is still loading is a cycle: it is handed over as far as it got.
     if (esm || record.kind === "esm") {
@@ -199,6 +202,8 @@ class Graph {
       namespace: makeNamespace(),
       module: undefined,
       done: false,
+      // The module or one it imports statically awaits at its top level.
+      async: false,
       waitingOn: new Set(),
       ...Promise.withResolvers(),
     };
@@ -230,6 +235,7 @@ class Graph {
       this.runCommonJs(record, output.code);
       return;
     }
+    record.async = output.topLevelAwait;
     await this.runModule(record, output.code, false);
   }
 
@@ -294,7 +300,15 @@ class Graph {
     const ssrImport = sync
       ? (specifier) =>
           this.require(this.resolve(specifier, url, this.conditions, false), record, true)
-      : (specifier) => this.import(this.resolve(specifier, url, this.conditions, false), record);
+      : async (specifier) => {
+          const target = this.resolve(specifier, url, this.conditions, false);
+          const imported = await this.import(target, record);
+          // A module that statically imports one with top-level await is async too.
+          if (this.cache.get(target.path)?.async) {
+            record.async = true;
+          }
+          return imported;
+        };
     // Local exports are defined first and win. A name two sources give different
     // values is left out, as Node.js leaves out a name two modules export as different
     // bindings; the same binding reached twice gives the same value and stays.
@@ -726,14 +740,51 @@ function notExported(specifier, parentURL, required) {
   if (isPath(specifier) || specifier.startsWith("#") || /^[a-z][a-z\d+.-]*:/i.test(specifier)) {
     return undefined;
   }
+  const from = required ? "" : ` imported from ${pathOf(parentURL)}`;
+  let found;
   try {
-    createRequire(pathOf(fileParent(parentURL))).resolve(specifier);
+    found = createRequire(pathOf(fileParent(parentURL))).resolve(specifier);
   } catch (cause) {
     if (cause?.code === "ERR_PACKAGE_PATH_NOT_EXPORTED") {
-      const from = required ? "" : ` imported from ${pathOf(parentURL)}`;
       const error = new Error(`${cause.message}${from}`);
       error.code = cause.code;
       return error;
+    }
+    return undefined;
+  }
+  // Node.js' `require` conditions find the path, the conditions in use do not: the
+  // package exports it only under other conditions.
+  if (required) {
+    return undefined;
+  }
+  const name = specifier.split("/", specifier.startsWith("@") ? 2 : 1).join("/");
+  const packageJson = exportingPackageJson(found, name);
+  if (!packageJson) {
+    return undefined;
+  }
+  const subpath = `.${specifier.slice(name.length)}`;
+  const error = new Error(
+    subpath === "."
+      ? `No "exports" main defined in ${packageJson}${from}`
+      : `Package subpath '${subpath}' is not defined by "exports" in ${packageJson}${from}`,
+  );
+  error.code = "ERR_PACKAGE_PATH_NOT_EXPORTED";
+  return error;
+}
+
+// The `package.json` of package `name` above `file`, when it has `exports`.
+function exportingPackageJson(file, name) {
+  for (let dir = dirname(file); dir !== dirname(dir); dir = dirname(dir)) {
+    const packageJson = join(dir, "package.json");
+    let json;
+    try {
+      json = JSON.parse(readFileSync(packageJson, "utf8"));
+    } catch {
+      continue;
+    }
+    // A nested `package.json`, such as one that only sets `type`, is not the package's.
+    if (json.name === name) {
+      return json.exports === undefined ? undefined : packageJson;
     }
   }
   return undefined;
