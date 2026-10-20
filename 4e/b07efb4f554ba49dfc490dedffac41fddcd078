@@ -1,0 +1,31 @@
+packages/core/importer.mjs
+  s_5b25d6ae40e975::t_d6f7458559ddc9 307-308,802-812
+packages/integrate-vitest/__tests__/fixtures/importer/probes.mjs
+  s_5b25d6ae40e975::t_e717626bd00000 70-77
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/tla-pkg/index.js
+  s_5b25d6ae40e975::t_ff820b43bc42d5 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/tla-pkg/package.json
+  s_5b25d6ae40e975::t_12bc4b364feaef 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/tla-native/parent.mts
+  s_5b25d6ae40e975::t_aba2498011fa77 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/tla-native/req-later.cts
+  s_5b25d6ae40e975::t_1c3cb989862aed 1-9
+packages/integrate-vitest/__tests__/importer.spec.ts
+  s_5b25d6ae40e975::t_f304ee154a8797 78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4eb07efb4f554ba49dfc490dedffac41fddcd078",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
