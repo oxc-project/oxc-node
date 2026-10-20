@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { registerHooks } from "node:module";
+import { tmpdir } from "node:os";
+import { createRequire, registerHooks } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, describe, expect, test } from "vitest";
@@ -26,8 +27,10 @@ afterAll(removeProjects);
 
 const DIST = fileURLToPath(new URL("../../cli/dist/", import.meta.url));
 const CORE = fileURLToPath(new URL("../../core/", import.meta.url));
+// The watcher makes an ack socket on POSIX when its path fits (run.ts `createSignalAck`).
+const ACK = POSIX && Buffer.byteLength(join(tmpdir(), "oxnode-9999999-abcdef12.sock")) <= 100;
 
-const LOADER = `import { registerHooks } from "node:module";
+const LOADER = `import { createRequire, registerHooks } from "node:module";
 import { isMainThread } from "node:worker_threads";
 
 import { createResolve, enableWatchReport, load, takeWatchDependencies } from "@oxc-node/core";
@@ -158,12 +161,22 @@ describe("the bundle", () => {
           'const { installSignalAck } = await import("@oxc-node/core/signal-ack");\n' +
           "const kinds = [watchSink, flush, withFlush, createRelay, installSignalAck].map((f) => typeof f);\n" +
           "const loaded = Object.keys(createRequire(import.meta.url).cache);\n" +
-          "console.log(kinds.join(), loaded.length);",
+          'const required = createRequire(import.meta.url)("@oxc-node/core/watch-report");\n' +
+          "console.log(kinds.join(), loaded.length, typeof required.withFlush);",
       ],
       { cwd: embedProject(), env: cleanEnv(), encoding: "utf8" },
     );
     expect(r.stderr).toBe("");
-    expect(r.stdout.trim()).toBe("function,function,function,function,function 0");
+    // `require()` works too, for a CommonJS preload.
+    expect(r.stdout.trim()).toBe("function,function,function,function,function 0 function");
+  });
+
+  test("a path into dist still resolves", () => {
+    const root = embedProject();
+    // `require` follows the link to the package folder.
+    expect(createRequire(join(root, "x.js")).resolve("@oxc-node/cli/dist/index.js")).toBe(
+      join(DIST, "index.js"),
+    );
   });
 
   test("the core exports survive the build's rewrite of package.json", () => {
@@ -225,7 +238,7 @@ describe.skipIf(EMULATED || !registerHooks)("a run with the tool's loader", () =
     });
     // The loader removed OXNODE_SIGNAL_ACK before the app ran.
     await o.waitFor(/^RUN v1 a custom false undefined\n/m);
-    expect(o.stdout()).toMatch(new RegExp(`^LOADER ${POSIX ? "string" : "undefined"}\\n`, "m"));
+    expect(o.stdout()).toMatch(new RegExp(`^LOADER ${ACK ? "string" : "undefined"}\\n`, "m"));
     // The loader's own files are reported by Node.js, and left out.
     await o.waitDebug(
       new RegExp(`^skip ${escape(join(root, "loader", "hooks.mjs"))} \\(default\\)$`, "m"),

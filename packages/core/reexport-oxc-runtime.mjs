@@ -49,10 +49,13 @@ const packageJsonExports = {
   "./signal-ack": {
     types: "./signal-ack.d.mts",
     import: "./signal-ack.mjs",
+    // `default` for require(esm): a loader's `--require` preload.
+    default: "./signal-ack.mjs",
   },
   "./watch-report": {
     types: "./watch-report.d.mts",
     import: "./watch-report.mjs",
+    default: "./watch-report.mjs",
   },
   ...oxcRuntimePackageJson.exports,
 };

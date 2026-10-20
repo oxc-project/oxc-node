@@ -29,8 +29,10 @@
   "exports": {
     "./watch": {
       "types": "./watch.d.ts",
-      "import": "./dist/watch.js"
+      "import": "./dist/watch.js",
+      "default": "./dist/watch.js"
     },
+    "./dist/*": "./dist/*",
     "./package.json": "./package.json"
   },
   "publishConfig": {

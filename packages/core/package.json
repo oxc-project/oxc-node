@@ -1106,11 +1106,13 @@
     },
     "./signal-ack": {
       "types": "./signal-ack.d.mts",
-      "import": "./signal-ack.mjs"
+      "import": "./signal-ack.mjs",
+      "default": "./signal-ack.mjs"
     },
     "./watch-report": {
       "types": "./watch-report.d.mts",
-      "import": "./watch-report.mjs"
+      "import": "./watch-report.mjs",
+      "default": "./watch-report.mjs"
     }
   },
   "publishConfig": {
