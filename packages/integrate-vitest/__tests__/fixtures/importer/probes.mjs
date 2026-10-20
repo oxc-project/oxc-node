@@ -244,6 +244,22 @@ await probe("package-path-exported-for-require-only", async () => {
     codes[1].startsWith('ERR_PACKAGE_PATH_NOT_EXPORTED No "exports" main defined');
   return [ok, codes.join(" | ")];
 });
+// A `#` alias the package does not define: Node.js' error, which `try: true` turns into
+// `undefined`, as jiti does.
+await probe("package-import-not-defined", async () => {
+  const codes = [];
+  for (const id of ["./hash-missing.ts", "./hash-missing.cts"]) {
+    const error = await imp.import(id).then(
+      () => undefined,
+      (e) => e,
+    );
+    codes.push(`${error?.code} ${error?.message.includes("imported from")}`);
+  }
+  const tried = await imp.import("#missing", { try: true });
+  const got = `${codes.join(" ")} ${tried}`;
+  const want = "ERR_PACKAGE_IMPORT_NOT_DEFINED true ERR_PACKAGE_IMPORT_NOT_DEFINED true undefined";
+  return [got === want, got];
+});
 await probe("new-Function-import", async () => {
   const m = await imp.import("./evalimp.ts");
   const z = await m.viaFn();

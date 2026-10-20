@@ -1,1 +1,1 @@
-{ "name": "importer-probes", "private": true, "type": "module" }
+{ "name": "importer-probes", "private": true, "type": "module", "imports": { "#defined": "./hidden-import.ts" } }

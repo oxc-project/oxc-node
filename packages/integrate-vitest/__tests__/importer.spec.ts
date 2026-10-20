@@ -92,6 +92,7 @@ test("the importer probes pass", () => {
     "directory-parent-paths",
     "package-path-not-exported",
     "package-path-exported-for-require-only",
+    "package-import-not-defined",
     "new-Function-import",
     "lazy-import-after-return",
     "failed-module-retried",

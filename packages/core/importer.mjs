@@ -843,13 +843,14 @@ function urlOf(target) {
   return pathToFileURL(target.path).href;
 }
 
-// What `try: true` turns into `undefined`: a module that is not there, or a path its
-// package does not export, as jiti does.
+// What `try: true` turns into `undefined`: a module that is not there, a path its
+// package does not export, or a `#` alias its package does not define, as jiti does.
 function isNotFound(error) {
   return (
     error?.code === "ERR_MODULE_NOT_FOUND" ||
     error?.code === "MODULE_NOT_FOUND" ||
-    error?.code === "ERR_PACKAGE_PATH_NOT_EXPORTED"
+    error?.code === "ERR_PACKAGE_PATH_NOT_EXPORTED" ||
+    error?.code === "ERR_PACKAGE_IMPORT_NOT_DEFINED"
   );
 }
 
@@ -876,9 +877,10 @@ function notFound(specifier, parentURL, required) {
 }
 
 // oxc's resolver only says that it found nothing. When a package's `exports` leaves the
-// path out, Node.js' resolver says so, and its error is the one to throw.
+// path out, or its `imports` has no `#` alias, Node.js' resolver says so, and its error is
+// the one to throw.
 function notExported(specifier, parentURL, required) {
-  if (isPath(specifier) || specifier.startsWith("#") || /^[a-z][a-z\d+.-]*:/i.test(specifier)) {
+  if (isPath(specifier) || /^[a-z][a-z\d+.-]*:/i.test(specifier)) {
     return undefined;
   }
   const from = required ? "" : ` imported from ${pathOf(parentURL)}`;
@@ -886,6 +888,12 @@ function notExported(specifier, parentURL, required) {
   try {
     found = createRequire(pathOf(fileParent(parentURL))).resolve(specifier);
   } catch (cause) {
+    // Node.js' message names the importing file already.
+    if (cause?.code === "ERR_PACKAGE_IMPORT_NOT_DEFINED") {
+      const error = new Error(cause.message);
+      error.code = cause.code;
+      return error;
+    }
     if (cause?.code === "ERR_PACKAGE_PATH_NOT_EXPORTED") {
       const error = new Error(`${cause.message}${from}`);
       error.code = cause.code;
@@ -895,7 +903,7 @@ function notExported(specifier, parentURL, required) {
   }
   // Node.js' `require` conditions find the path, the conditions in use do not: the
   // package exports it only under other conditions.
-  if (required) {
+  if (required || specifier.startsWith("#")) {
     return undefined;
   }
   const name = specifier.split("/", specifier.startsWith("@") ? 2 : 1).join("/");
