@@ -1,0 +1,25 @@
+packages/cli/package.json
+  s_5b25d6ae40e975::t_edfba573c8d1e0 32-33,35
+packages/core/package.json
+  s_5b25d6ae40e975::t_1233416d9cd612 1109-1110,1114-1115
+packages/core/reexport-oxc-runtime.mjs
+  s_5b25d6ae40e975::t_58f4730331aaaf 52-53,58
+packages/integrate-vitest/__tests__/watch-embed.spec.ts
+  s_5b25d6ae40e975::t_f403afb4bd029e 3-4,30-31,33,164-165,170-179,241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "500326bdebf0f359fecb7801ecc633232d22c22c",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
