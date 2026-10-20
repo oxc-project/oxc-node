@@ -23,8 +23,8 @@ default = ["napi"]
 # The embedder writes its own thin `#[napi]` forwarders — for `create_resolve`,
 # `load`, `transform`, `OxcTransformer`, `set_tsconfig_path`,
 # `get_tsconfig_path`, `set_transform_deps`, `get_transform_deps`,
-# `transforms_dep`, `freeze_transform_deps`, and for watch mode
-# `enable_watch_report` and `take_watch_dependencies` — compiling this crate against
+# `transforms_dep`, `freeze_transform_deps`, `transform_module_runner`, and for
+# watch mode `enable_watch_report` and `take_watch_dependencies` — compiling this crate against
 # the same napi 3.x version so the `Function`, `PromiseRaw`, `Either` and
 # `FnArgs` types used in those signatures unify with the host's. It also calls
 # `detect_runtime_syntax` from its own `napi(module_exports)` hook (without it

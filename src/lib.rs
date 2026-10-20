@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     env,
     ffi::OsStr,
-    fs, io, mem,
+    fs, io, iter, mem,
     path::{Component, Path, PathBuf},
     sync::{
         Arc, LazyLock, Mutex, OnceLock, PoisonError,
@@ -15,20 +15,20 @@ use std::{
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use oxc::{
-    allocator::Allocator,
+    allocator::{Allocator, TakeIn},
     ast::ast::{
-        ArrowFunctionExpression, AwaitExpression, Class, Decorator, ForOfStatement, Program,
-        Statement, TSExternalModuleDeclaration, TSGlobalDeclaration, TSNamespaceDeclaration,
-        VariableDeclaration,
+        Argument, ArrowFunctionExpression, AwaitExpression, Class, Decorator, Expression,
+        ForOfStatement, Program, Statement, StringLiteral, TSExternalModuleDeclaration,
+        TSGlobalDeclaration, TSNamespaceDeclaration, TemplateLiteral, VariableDeclaration,
     },
-    ast_visit::{Visit, walk},
+    ast_visit::{Visit, VisitMut, walk},
     codegen::{Codegen, CodegenOptions, CodegenReturn},
     diagnostics::{
         Diagnostics, GraphicalReportHandler, GraphicalTheme, NamedSource, OxcDiagnostic,
     },
     parser::{Parser, ParserReturn},
     semantic::SemanticBuilder,
-    span::SourceType,
+    span::{SPAN, SourceType, Span},
     syntax::{module_record::ModuleRecord, scope::ScopeFlags},
     transformer::{
         ClassPropertiesOptions, CompilerAssumptions, DecoratorOptions, ES2022Options,
@@ -36,13 +36,14 @@ use oxc::{
         ProposalOptions, RewriteExtensionsMode, TransformOptions, Transformer, TransformerReturn,
         TypeScriptOptions,
     },
+    transformer_plugins::ModuleRunnerTransform,
 };
 use oxc_resolver::{
     CompilerOptions, EnforceExtension, FileMetadata, FileSystem, FileSystemOs, ModuleType,
     PackageType, Resolution, ResolveContext as ResolverContext, ResolveError, ResolveOptions,
     ResolverGeneric, TsConfig, TsconfigDiscovery, TsconfigOptions, TsconfigReferences,
 };
-use oxc_sourcemap::SourceMap;
+use oxc_sourcemap::{SourceMap, Token};
 use phf::Set;
 
 #[cfg(all(
@@ -1485,6 +1486,67 @@ pub fn transform(path: String, source: Either<String, &[u8]>) -> Result<Output> 
     transformer.transform(path, source)
 }
 
+/// The code `transformModuleRunner` hands to `@oxc-node/core/importer`.
+#[napi(object)]
+pub struct ModuleRunnerOutput {
+    pub code: String,
+    /// The source map as a JSON string
+    pub map: Option<String>,
+    /// The file is an ES module. Its imports, exports and `import.meta` are calls into
+    /// the runner (`__vite_ssr_import__` and friends); a CommonJS file keeps `require`,
+    /// `module` and `exports`, and only its `import()` calls into the runner.
+    pub esm: bool,
+    /// The ES module awaits at its top level, so `require()` of it is
+    /// `ERR_REQUIRE_ASYNC_MODULE`.
+    pub top_level_await: bool,
+}
+
+/// The transform `@oxc-node/core/importer` runs files with: the one the load hook
+/// applies, with the same tsconfig discovery, followed by oxc's module runner transform,
+/// which turns `import`/`export` into calls the importer evaluates itself.
+///
+/// A file is an ES module as Node.js decides it: by a `.mts`/`.mjs` extension or a
+/// `"type": "module"` package, else by its syntax (`import`, `export`, `import.meta` or
+/// top-level await). tsconfig's `module` does not make a file without module syntax an
+/// ES module here, as the resolver's format does, so `module.exports = ...` keeps
+/// working in a package without `"type"`.
+///
+/// `sync` emits static imports without `await`, for `require()` of an ES module without
+/// top-level await. Each line of the output starts on the line of the source it came
+/// from.
+#[cfg_attr(feature = "napi", napi)]
+pub fn transform_module_runner(
+    path: String,
+    source: Either<String, &[u8]>,
+    sync: Option<bool>,
+) -> Result<ModuleRunnerOutput> {
+    let cwd = env::current_dir()?;
+    let src_path = Path::new(&path);
+    let lookup_path = tsconfig_lookup_path(&cwd, src_path).into_owned();
+    let (resolver, tsconfig_source) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd));
+    let resolved_tsconfig = tsconfig_source.for_path(resolver, &lookup_path);
+    let is_es_module = is_module_file(src_path);
+    let mut runner = ModuleRunner { sync: sync.unwrap_or(false), ..Default::default() };
+    // The load hook's arguments: a file reported as CommonJS flips to an ES module when
+    // its syntax says so.
+    let (output, _) = oxc_transform(
+        src_path,
+        &source,
+        resolved_tsconfig.as_ref().map(|t| &t.compiler_options),
+        Some(Module::Preserve),
+        !is_es_module,
+        is_es_module,
+        None,
+        Some(&mut runner),
+    )?;
+    Ok(ModuleRunnerOutput {
+        code: output.code,
+        map: output.map.as_ref().map(SourceMap::to_json_string),
+        esm: runner.esm,
+        top_level_await: runner.top_level_await,
+    })
+}
+
 #[cfg(feature = "napi")]
 #[napi]
 pub fn transform_async(
@@ -1526,6 +1588,7 @@ impl Task for TransformTask {
             // the extension and the source decide.
             false,
             self.helper_module_name.as_deref(),
+            None,
         )
         .map(|(output, _)| output)
     }
@@ -1578,6 +1641,7 @@ impl OxcTransformer {
             true,
             false,
             self.helper_module_name.as_deref(),
+            None,
         )
         .map(|(output, _)| output)
     }
@@ -1770,20 +1834,32 @@ fn is_commonjs_file(path: &Path) -> bool {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some(ext) if ext.eq_ignore_ascii_case("cts") || ext.eq_ignore_ascii_case("cjs") => true,
         Some(ext) if ext.eq_ignore_ascii_case("mts") || ext.eq_ignore_ascii_case("mjs") => false,
-        _ => {
-            let (Some((resolver, _)), Some(directory), Some(name)) = (
-                RESOLVER_AND_TSCONFIG.get(),
-                path.parent(),
-                path.file_name().and_then(|name| name.to_str()),
-            ) else {
-                return false;
-            };
-            resolver_request(directory, &format!("./{name}"))
-                .and_then(|(directory, specifier)| resolver.resolve(&directory, &specifier).ok())
-                .and_then(|resolution| resolution.package_json().and_then(|json| json.r#type()))
-                .is_some_and(|ty| matches!(ty, PackageType::CommonJs))
-        }
+        _ => matches!(package_type(path), Some(PackageType::CommonJs)),
     }
+}
+
+/// Whether Node.js runs the file as an ES module whatever its syntax: a `.mts`/`.mjs`
+/// extension, or an ambiguous one inside a `"type": "module"` package.
+fn is_module_file(path: &Path) -> bool {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("mts") || ext.eq_ignore_ascii_case("mjs") => true,
+        Some(ext) if ext.eq_ignore_ascii_case("cts") || ext.eq_ignore_ascii_case("cjs") => false,
+        _ => matches!(package_type(path), Some(PackageType::Module)),
+    }
+}
+
+/// The `type` of the nearest `package.json`, once the resolver is set up.
+fn package_type(path: &Path) -> Option<PackageType> {
+    let (Some((resolver, _)), Some(directory), Some(name)) = (
+        RESOLVER_AND_TSCONFIG.get(),
+        path.parent(),
+        path.file_name().and_then(|name| name.to_str()),
+    ) else {
+        return None;
+    };
+    resolver_request(directory, &format!("./{name}"))
+        .and_then(|(directory, specifier)| resolver.resolve(&directory, &specifier).ok())
+        .and_then(|resolution| resolution.package_json().and_then(|json| json.r#type()))
 }
 
 /// Whether `program` awaits at its top level: an `await`, a `for await` or an
@@ -1863,6 +1939,7 @@ fn oxc_transform<S: TryAsStr>(
     enable_top_level_await: bool,
     is_es_module: bool,
     helper_module_name: Option<&str>,
+    module_runner: Option<&mut ModuleRunner>,
 ) -> Result<(Output, bool)> {
     let allocator = Allocator::default();
     // `.js`, `.jsx`, `.ts`, `.tsx` and extensionless files are ambiguous: oxc decides
@@ -1923,6 +2000,7 @@ fn oxc_transform<S: TryAsStr>(
         effective_module,
         enable_top_level_await && !flip_to_module,
         helper_module_name,
+        module_runner,
     )?;
     Ok((output, flip_to_module))
 }
@@ -1940,6 +2018,7 @@ fn transform_program<'a>(
     module_target: Option<Module>,
     enable_top_level_await: bool,
     helper_module_name: Option<&str>,
+    mut module_runner: Option<&mut ModuleRunner>,
 ) -> Result<Output> {
     let legacy_decorators =
         compiler_options.and_then(|c| c.experimental_decorators).unwrap_or(false);
@@ -2109,13 +2188,250 @@ fn transform_program<'a>(
         });
     }
 
+    let esm = matches!(module_target, Some(Module::Esm));
+    if let Some(runner) = module_runner.as_deref_mut() {
+        runner.esm = esm;
+        // Read before the runner transform, whose imports are awaits of their own.
+        runner.top_level_await = esm && has_top_level_await(program);
+        // The runner evaluates the code as a function body, where `#!` is a syntax error.
+        program.hashbang = None;
+        let scoping = SemanticBuilder::new().build(program).semantic.into_scoping();
+        ModuleRunnerTransform::new().transform(allocator, program, scoping);
+        unmap_hoisted_exports(program);
+        if runner.sync && !runner.top_level_await {
+            drop_import_awaits(allocator, program);
+        }
+    }
+
     let CodegenReturn { code, map, .. } = Codegen::new()
         .with_options(CodegenOptions {
             source_map_path: Some(src_path.to_path_buf()),
             ..Default::default()
         })
         .build(program);
-    Ok(Output { code, map: map.map(|source_map| source_map.into_owned()) })
+    let map = map.map(|source_map| source_map.into_owned());
+    if module_runner.is_some() {
+        let (code, map) = retain_lines(code, map, esm);
+        return Ok(Output { code, map });
+    }
+    Ok(Output { code, map })
+}
+
+/// What the module runner asks of [`transform_program`] on top of the normal
+/// transform, and what it learns about the file.
+#[derive(Default)]
+struct ModuleRunner {
+    /// Emit static imports without `await`, for `require()` of an ES module. A module
+    /// with top-level await keeps them: it cannot run synchronously at all.
+    sync: bool,
+    /// The file is an ES module: the same decision the load hook makes for it.
+    esm: bool,
+    /// The ES module awaits at its top level.
+    top_level_await: bool,
+}
+
+const SSR_EXPORTS: &str = "__vite_ssr_exports__";
+const SSR_IMPORT: &str = "__vite_ssr_import__";
+
+/// The runner transform puts one `Object.defineProperty(__vite_ssr_exports__, ...)` per
+/// export at the top, each spanning its export: often a line far below, such as an
+/// `export { a, b }` at the end of the file. Mapped, they would push the whole file
+/// down in [`retain_lines`]. They never throw, so they lose their mappings.
+fn unmap_hoisted_exports(program: &mut Program<'_>) {
+    struct Unmap;
+
+    impl<'a> VisitMut<'a> for Unmap {
+        fn visit_span(&mut self, span: &mut Span) {
+            *span = SPAN;
+        }
+    }
+
+    for statement in &mut program.body {
+        let Statement::ExpressionStatement(expression) = statement else { break };
+        let Expression::CallExpression(call) = &expression.expression else { break };
+        let defines_export = call.callee.as_member_expression().is_some_and(|member| {
+            member.object().is_specific_id("Object")
+                && member.static_property_name().is_some_and(|name| name == "defineProperty")
+        }) && call
+            .arguments
+            .first()
+            .and_then(Argument::as_expression)
+            .is_some_and(|target| target.is_specific_id(SSR_EXPORTS));
+        if !defines_export {
+            break;
+        }
+        Unmap.visit_statement(statement);
+    }
+}
+
+/// Turns each `const x = await __vite_ssr_import__(...)` the runner transform hoists
+/// into a plain call, so that the module body runs synchronously.
+fn drop_import_awaits<'a>(allocator: &'a Allocator, program: &mut Program<'a>) {
+    for statement in &mut program.body {
+        let Statement::VariableDeclaration(declaration) = statement else { continue };
+        for declarator in &mut declaration.declarations {
+            let Some(Expression::AwaitExpression(init)) = &mut declarator.init else { continue };
+            let imports = matches!(
+                &init.argument,
+                Expression::CallExpression(call) if call.callee.is_specific_id(SSR_IMPORT)
+            );
+            if imports {
+                declarator.init = Some(init.argument.take_in(&allocator));
+            }
+        }
+    }
+}
+
+/// Moves the generated code's lines so that each starts on the line of the source it
+/// came from, as Babel's `retainLines` does. A stack frame then names the source line
+/// even where no source map is applied: the runner evaluates the code itself, and
+/// Node.js only maps stack traces for it under `--enable-source-maps`.
+///
+/// A line is pushed down with extra line breaks, and joined to the line before when the
+/// output has run ahead of the source. A line break is only removed where JavaScript
+/// does not see it: never inside a string, a template or a comment, nor at the end of a
+/// line comment. The generated code always ends its statements with `;`, so automatic
+/// semicolon insertion has no say. The source map moves with the code.
+fn retain_lines(
+    code: String,
+    map: Option<SourceMap<'static>>,
+    esm: bool,
+) -> (String, Option<SourceMap<'static>>) {
+    struct Protected(Vec<(u32, u32)>);
+
+    impl<'a> Visit<'a> for Protected {
+        fn visit_template_literal(&mut self, it: &TemplateLiteral<'a>) {
+            self.0.push((it.span.start, it.span.end));
+        }
+
+        fn visit_string_literal(&mut self, it: &StringLiteral<'a>) {
+            self.0.push((it.span.start, it.span.end));
+        }
+    }
+
+    let Some(map) = map else { return (code, None) };
+    let line_starts: Vec<usize> =
+        iter::once(0).chain(memchr::memchr_iter(b'\n', code.as_bytes()).map(|at| at + 1)).collect();
+    let line_count = line_starts.len();
+
+    // The first source line each generated line maps to.
+    let mut targets: Vec<Option<u32>> = vec![None; line_count];
+    for token in map.get_tokens() {
+        if token.get_source_id().is_none() {
+            continue;
+        }
+        let target = &mut targets[token.get_dst_line() as usize];
+        if target.is_none() {
+            *target = Some(token.get_src_line());
+        }
+    }
+
+    // Which line breaks can move. One inside a string or a template is part of its value
+    // and stays exactly as it is; one inside a comment, or ending a line comment, has to
+    // stay but may be joined by more.
+    let (fixed, kept) = {
+        let allocator = Allocator::default();
+        let source_type = if esm { SourceType::mjs() } else { SourceType::cjs() };
+        let ParserReturn { program, diagnostics, .. } =
+            Parser::new(&allocator, &code, source_type).parse();
+        if !diagnostics.is_empty() {
+            return (code, Some(map));
+        }
+        let mut literals = Protected(Vec::new());
+        literals.visit_program(&program);
+        let comments = program
+            .comments
+            .iter()
+            .map(|comment| {
+                // A line comment's break ends it, so it counts as part of the comment.
+                let end = if comment.is_line() { comment.span.end + 1 } else { comment.span.end };
+                (comment.span.start, end)
+            })
+            .collect();
+        (breaks_inside(&line_starts, literals.0), breaks_inside(&line_starts, comments))
+    };
+
+    let utf16_len = |text: &str| {
+        if text.is_ascii() { text.len() as u32 } else { text.encode_utf16().count() as u32 }
+    };
+    let mut output = String::with_capacity(code.len());
+    // Per generated line: the output line it lands on, and how far its columns move.
+    let mut moves: Vec<(u32, i64)> = Vec::with_capacity(line_count);
+    let mut out_line = 0;
+    let mut out_column: i64 = 0;
+    for line in 0..line_count {
+        let end = line_starts.get(line + 1).map_or(code.len(), |next| next - 1);
+        let raw = &code[line_starts[line]..end];
+        let push_down = targets[line].filter(|&target| target > out_line);
+        let text = if line > 0 && fixed[line - 1] {
+            output.push('\n');
+            out_line += 1;
+            out_column = 0;
+            raw
+        } else if line > 0 && kept[line - 1] {
+            let target = push_down.unwrap_or(out_line + 1).max(out_line + 1);
+            output.extend(iter::repeat_n('\n', (target - out_line) as usize));
+            out_line = target;
+            out_column = 0;
+            raw
+        } else if let Some(target) = push_down {
+            output.extend(iter::repeat_n('\n', (target - out_line) as usize));
+            out_line = target;
+            out_column = 0;
+            raw
+        } else if line > 0 {
+            output.push(' ');
+            out_column += 1;
+            raw.trim_start()
+        } else {
+            raw
+        };
+        let trimmed = i64::from(utf16_len(&raw[..raw.len() - text.len()]));
+        moves.push((out_line, out_column - trimmed));
+        out_column += i64::from(utf16_len(text));
+        output.push_str(text);
+    }
+
+    let mut parts = map.into_parts();
+    parts.tokens = parts
+        .tokens
+        .iter()
+        .map(|token| {
+            let (line, shift) = moves[token.get_dst_line() as usize];
+            let column = (i64::from(token.get_dst_col()) + shift).max(0) as u32;
+            Token::new(
+                line,
+                column,
+                token.get_src_line(),
+                token.get_src_col(),
+                token.get_source_id(),
+                token.get_name_id(),
+            )
+        })
+        .collect();
+    parts.token_chunks = None;
+    (output, Some(SourceMap::from_parts(parts)))
+}
+
+/// For each line break after the first line, whether it falls inside one of `ranges`.
+fn breaks_inside(line_starts: &[usize], mut ranges: Vec<(u32, u32)>) -> Vec<bool> {
+    ranges.sort_unstable();
+    let mut ranges = ranges.into_iter().peekable();
+    let mut furthest = 0;
+    line_starts[1..]
+        .iter()
+        .map(|&start| {
+            let at = (start - 1) as u32;
+            while let Some(&(range_start, range_end)) = ranges.peek() {
+                if range_start >= at {
+                    break;
+                }
+                furthest = furthest.max(range_end);
+                ranges.next();
+            }
+            at < furthest
+        })
+        .collect()
 }
 
 // The `#[napi(object)]` macros stay unconditional with `napi` off: they emit
@@ -2732,6 +3048,7 @@ fn load_commonjs_esm(
         Some(Module::Esm),
         false,
         helper_module_name.as_deref(),
+        None,
     )?;
     tracing::debug!("loaded {} format: module", url);
     Ok(Some(LoadFnOutput {
@@ -2787,6 +3104,7 @@ fn reject_cts_module_syntax(
         resolved_compiler_options,
         Some(Module::CommonJS),
         true,
+        None,
         None,
     );
     if has_cts_module_declaration(&program) { Err(cts_module_syntax_error(path)) } else { Ok(None) }
@@ -2994,6 +3312,7 @@ fn transform_output(
                 !is_es_module,
                 is_es_module,
                 helper_module_name.as_deref(),
+                None,
             )?;
             // A CommonJS-reported file that turned out to be an ES module is handed back
             // as one, so Node.js never tries to compile its `import`/`export` as CommonJS.
@@ -4223,5 +4542,66 @@ mod tests {
         // is a file-name character.
         assert_eq!(file_url_to_path("file:///x/d\\a.ts"), Some(PathBuf::from("/x/d/a.ts")));
         assert_eq!(file_url_to_path("file:///x/d%5Ca.ts"), Some(PathBuf::from("/x/d\\a.ts")));
+    }
+
+    // `@oxc-node/core/importer`'s transform: which files are ES modules, the form
+    // `require()` of one runs, and lines that stay where the source has them.
+    #[test]
+    fn module_runner_transform() {
+        let root = env::temp_dir().join(format!("oxc-node-module-runner-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("esm")).unwrap();
+        fs::write(root.join("package.json"), "{}").unwrap();
+        fs::write(root.join("esm/package.json"), r#"{ "type": "module" }"#).unwrap();
+        let run = |name: &str, source: &str, sync: bool| {
+            let path = root.join(name);
+            fs::write(&path, source).unwrap();
+            let path = path.to_string_lossy().into_owned();
+            match transform_module_runner(path, Either::A(source.to_owned()), Some(sync)) {
+                Ok(output) => output,
+                // Dropping a napi `Error` calls into Node-API, which a test binary lacks.
+                Err(error) => panic!("{}", mem::ManuallyDrop::new(error).reason),
+            }
+        };
+        let lines = |code: &str, needle: &str| code.lines().position(|line| line.contains(needle));
+
+        let imports = "import { x } from './dep.ts';\nexport const y: number = x;\n";
+        let output = run("a.ts", imports, false);
+        assert!(output.esm && !output.top_level_await);
+        assert!(output.code.contains("await __vite_ssr_import__(\"./dep.ts\""), "{}", output.code);
+        let output = run("a.ts", imports, true);
+        assert!(output.code.contains("__vite_ssr_import__(\"./dep.ts\""), "{}", output.code);
+        assert!(!output.code.contains("await"), "{}", output.code);
+
+        // Module syntax or the package decides; the tsconfig never does.
+        assert!(!run("cjs.ts", "module.exports = require('./dep');\n", false).esm);
+        assert!(!run("plain.cts", "const n: number = 1;\nmodule.exports = n;\n", false).esm);
+        assert!(run("plain.mts", "const n: number = 1;\n", false).esm);
+        assert!(run("esm/plain.ts", "const n: number = 1;\n", false).esm);
+        assert!(run("meta.ts", "console.log(import.meta.url);\n", false).esm);
+
+        // Top-level await keeps the awaits in the sync form: it cannot run synchronously.
+        let output = run("tla.mts", "import './dep.ts';\nawait 1;\n", true);
+        assert!(output.esm && output.top_level_await);
+        assert!(output.code.contains("await __vite_ssr_import__"), "{}", output.code);
+
+        // A CommonJS file only hands `import()` to the runner.
+        let output = run("lazy.cts", "module.exports = () => import('./dep.ts');\n", false);
+        assert!(output.code.contains("__vite_ssr_dynamic_import__(\"./dep.ts\")"));
+
+        // Each line starts on its source line, hashbang and hoisted exports aside.
+        let source = "#!/usr/bin/env node\nenum E { A, B }\ninterface I { a: number }\n\
+                      export function f(): never {\n  // why\n  throw new Error(`a\n  b`);\n}\n\
+                      export { E };\n";
+        let output = run("lines.ts", source, false);
+        assert_eq!(lines(&output.code, "throw new Error"), Some(5), "{}", output.code);
+        assert_eq!(lines(&output.code, "function f()"), Some(3), "{}", output.code);
+        assert!(output.code.contains("`a\n  b`"), "{}", output.code);
+        assert!(!output.code.contains("#!"), "{}", output.code);
+        let map = SourceMap::from_json_string(output.map.as_deref().unwrap()).unwrap();
+        let throw_line = map.get_tokens().find(|token| token.get_dst_line() == 5).unwrap();
+        assert_eq!(throw_line.get_src_line(), 5);
+
+        fs::remove_dir_all(&root).unwrap();
     }
 }

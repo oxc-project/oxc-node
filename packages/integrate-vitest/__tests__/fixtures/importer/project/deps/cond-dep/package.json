@@ -1,0 +1,2 @@
+{ "name": "cond-dep", "version": "1.0.0", "type": "module",
+  "exports": { ".": { "jl-custom": "./custom.js", "default": "./default.js" } } }

@@ -1,0 +1,182 @@
+// Usage: node --expose-gc probes.mjs <path to @oxc-node/core/importer>
+// Behaviour beyond the parity checks: stack lines, require() of ES modules, cycles,
+// live bindings, `export *`, retries, memory and leaks. One JSON line per probe.
+import { realpathSync } from "node:fs";
+import Module, { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "probes");
+const req = createRequire(import.meta.url);
+const extensionsBefore = Object.keys(req.extensions).join(",");
+const sourceMapsBefore = process.sourceMapsEnabled;
+const { createImporter } = await import(pathToFileURL(process.argv[2]).href);
+const imp = createImporter(path.join(DIR, "host.mjs"));
+
+const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms));
+async function probe(check, fn) {
+  let result;
+  try {
+    const [ok, detail] = await Promise.race([fn(), timeout(5000)]);
+    result = { check, ok, detail: String(detail) };
+  } catch (e) {
+    result = { check, ok: false, detail: `threw ${e?.code ?? ""} ${String(e?.message).split("\n")[0]}` };
+  }
+  console.log(JSON.stringify(result));
+}
+const frame = (error, file) => error.stack.split("\n").find((line) => line.includes(file)) ?? "";
+
+// A frame of code that runs after import() still names the TypeScript line: the
+// output keeps each line where the source has it.
+await probe("stack-line-after-import", async () => {
+  const m = await imp.import("./thrower.ts");
+  try {
+    m.boom();
+  } catch (e) {
+    const line = frame(e, "thrower.ts");
+    return [/thrower\.ts:7:\d+\)?$/.test(line), line.trim()];
+  }
+  return [false, "no throw"];
+});
+// An error that leaves import() gets line and column from the source map.
+await probe("stack-mapped-escaping-import", async () => {
+  try {
+    await imp.import("./top-throw.ts");
+  } catch (e) {
+    const line = frame(e, "top-throw.ts");
+    return [/top-throw\.ts:6:11\)?$/.test(line) && !line.includes("?"), line.trim()];
+  }
+  return [false, "no throw"];
+});
+await probe("cts-requires-esm-ts", async () => {
+  const m = await imp.import("./req-esm.cts", { default: true });
+  return [m?.got === 5, JSON.stringify(m)];
+});
+await probe("cts-requires-esm-graph", async () => {
+  const out = await imp.import("./req-chain.cts", { default: true });
+  return [out === "b.ts:probe-data:10", out];
+});
+await probe("require-tla-is-async-module-error", async () => {
+  const code = await imp.import("./req-tla.cts", { default: true });
+  return [code === "ERR_REQUIRE_ASYNC_MODULE", code];
+});
+await probe("cycle", async () => {
+  const a = await imp.import("./cyc-a.ts");
+  const b = await imp.import("./cyc-b.ts");
+  return [a.getB() === "b" && b.getA() === "a", `${a.getB()} ${b.getA()}`];
+});
+await probe("parallel-cycle", async () => {
+  const fresh = createImporter(path.join(DIR, "host.mjs"), { moduleCache: false });
+  const [a, b] = await Promise.all([fresh.import("./cyc-a.ts"), fresh.import("./cyc-b.ts")]);
+  return [a.getB() === "b" && b.getA() === "a", "ok"];
+});
+await probe("live-binding", async () => {
+  const m = await imp.import("./live.ts");
+  const before = m.count;
+  m.inc();
+  m.inc();
+  return [m.count === before + 2, m.count];
+});
+await probe("export-star", async () => {
+  const m = await createImporter(path.join(DIR, "host.mjs"), { interopDefault: false }).import(
+    "./reexport.ts",
+  );
+  const live = await imp.import("./live.ts");
+  live.inc();
+  const keys = Object.keys(m).sort().join(",");
+  const ok = keys === "Named,count,inc,live" && m.count === live.count && m.live.count === live.count;
+  return [ok && m.Named.n === 3, `${keys} ${m.count}`];
+});
+// A name two `export *` sources give as different bindings is left out, as Node.js
+// leaves it out; the same binding reached twice (a diamond) stays.
+await probe("export-star-ambiguous", async () => {
+  const raw = createImporter(path.join(DIR, "host.mjs"), { interopDefault: false });
+  const ambiguous = await raw.import("./star-ambiguous.ts");
+  const diamond = await raw.import("./star-diamond.ts");
+  const keys = Object.keys(ambiguous).sort().join(",");
+  const ok = keys === "fromA,fromB" && ambiguous.only1 === undefined && diamond.only1 === "a";
+  return [ok, `${keys} ${ambiguous.only1} ${diamond.only1}`];
+});
+// Node.js gives a URL for a path that names no file, as it does for `./nope.js`.
+await probe("import-meta-resolve-missing", async () => {
+  const m = await imp.import("./meta-missing.ts");
+  return [m.missing === new URL("nope.js", m.self).href, m.missing];
+});
+// A directory parent uses the `tsconfig.json` in it, as a file in it does.
+await probe("directory-parent-paths", async () => {
+  const fromDir = createImporter(DIR + path.sep);
+  const elsewhere = createImporter(path.join(DIR, "..") + path.sep);
+  const results = [
+    (await fromDir.import("@probes/ns.ts")).z,
+    fromDir.resolve("@probes/ns.ts")?.endsWith("/probes/ns.ts"),
+    (await elsewhere.import("@probes/ns", { parentURL: pathToFileURL(DIR + path.sep) })).z,
+  ];
+  return [results.join(",") === "1,true,1", results.join(",")];
+});
+// Node.js says the package does not export the path; `try` still gives `undefined`,
+// as jiti does.
+await probe("package-path-not-exported", async () => {
+  const fromProject = createImporter(path.join(DIR, "..", "project", "host.ts"));
+  const error = await fromProject.import("cond-dep/custom.js").then(
+    () => undefined,
+    (e) => e,
+  );
+  const tried = await fromProject.import("cond-dep/custom.js", { try: true });
+  const ok =
+    error?.code === "ERR_PACKAGE_PATH_NOT_EXPORTED" &&
+    error.message.includes("imported from") &&
+    tried === undefined;
+  return [ok, `${error?.code} ${error?.message.split("\n")[0]} ${tried}`];
+});
+await probe("new-Function-import", async () => {
+  const m = await imp.import("./evalimp.ts");
+  const z = await m.viaFn();
+  return [z === 1, z];
+});
+await probe("lazy-import-after-return", async () => {
+  const m = await imp.import("./lazy-host.ts");
+  const [v, w] = [await m.later(), await m.laterExt()];
+  return [v === 7 && w === 9, `${v} ${w}`];
+});
+await probe("failed-module-retried", async () => {
+  const first = await imp.import("./fails-once.ts").then(
+    () => "loaded",
+    (e) => e.message,
+  );
+  const second = await imp.import("./fails-once.ts");
+  return [first === "first-run" && second.ok === true, first];
+});
+await probe("hashbang", async () => {
+  const m = await imp.import("./hashbang.ts");
+  return [m.shebang === "ok", m.shebang];
+});
+// Bounded, not exact: 200 runs of a module with a 2000-entry array must not keep them.
+await probe("memory-module-cache-false", async () => {
+  const fresh = createImporter(path.join(DIR, "host.mjs"), { moduleCache: false });
+  for (let i = 0; i < 20; i++) await fresh.import("./small.ts");
+  globalThis.gc();
+  const before = process.memoryUsage().heapUsed;
+  for (let i = 0; i < 200; i++) await fresh.import("./small.ts");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  globalThis.gc();
+  const kb = (process.memoryUsage().heapUsed - before) / 200 / 1024;
+  return [kb < 16, `${kb.toFixed(1)} KB per import`];
+});
+await probe("no-leak", async () => {
+  const cached = Object.keys(Module._cache).filter((key) => key.startsWith(realpathSync(DIR)));
+  let plain;
+  try {
+    await import(pathToFileURL(path.join(DIR, "lazy-enum.ts")).href);
+    plain = "transformed";
+  } catch (e) {
+    plain = e.code;
+  }
+  const ok =
+    cached.length === 0 &&
+    Object.keys(req.extensions).join(",") === extensionsBefore &&
+    process.sourceMapsEnabled === sourceMapsBefore &&
+    plain !== "transformed";
+  return [ok, `cache ${cached.length}, plain import ${plain}`];
+});
+
+process.exit(0);
