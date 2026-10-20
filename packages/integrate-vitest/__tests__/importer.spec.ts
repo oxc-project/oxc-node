@@ -81,6 +81,7 @@ test("the importer probes pass", () => {
     "require-resolve-paths",
     "esmodule-commonjs-interop",
     "commonjs-variables-in-es-module",
+    "commonjs-hidden-named-export",
     "cycle",
     "parallel-cycle",
     "live-binding",

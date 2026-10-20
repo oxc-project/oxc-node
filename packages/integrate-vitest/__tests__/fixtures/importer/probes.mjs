@@ -98,8 +98,9 @@ await probe("require-resolve-paths", async () => {
   const ok =
     JSON.stringify(m.paths) === JSON.stringify(expected) &&
     m.builtin === null &&
-    m.withPaths.includes(`${path.sep}fake-dep${path.sep}`);
-  return [ok, `${m.paths?.[0]} ${m.builtin} ${m.withPaths}`];
+    m.withPaths.includes(`${path.sep}fake-dep${path.sep}`) &&
+    m.hasMain === true;
+  return [ok, `${m.paths?.[0]} ${m.builtin} ${m.withPaths} main:${m.hasMain}`];
 });
 // Babel/tsc CommonJS (`__esModule`): imports inside a runner file get `exports.default`;
 // the module `import()` returns stays as Node.js gives it, and `default: true` unwraps a
@@ -133,6 +134,10 @@ await probe("commonjs-variables-in-es-module", async () => {
     { own: "function", dir: "cjs-interop" },
   ]);
   return [got === want, got];
+});
+await probe("commonjs-hidden-named-export", async () => {
+  const got = JSON.stringify(await imp.import("./hidden-import.ts", { default: true }));
+  return [got === "[1,2]", got];
 });
 await probe("cycle", async () => {
   const a = await imp.import("./cyc-a.ts");

@@ -439,6 +439,7 @@ class Graph {
     require.resolve.paths = (request) => createRequire(record.path).resolve.paths(request);
     require.cache = Module._cache;
     require.extensions = Module._extensions;
+    require.main = requireSelf.main;
     return require;
   }
 
@@ -599,9 +600,13 @@ function addNamedExports(namespace, exports) {
   if (exports === null || (typeof exports !== "object" && typeof exports !== "function")) {
     return;
   }
-  // `__esModule` is usually defined hidden; Node.js' CommonJS import still exports it.
-  const keys = Object.keys(exports);
-  if (exports.__esModule && !keys.includes("__esModule")) {
+  // On an exports object, hidden properties count too, such as
+  // `Object.defineProperty(exports, "a", { value })` and Babel's `__esModule`, as
+  // Node.js' CommonJS import finds them. A function's or an array's do not: those are
+  // `length`, `prototype` or a class's static methods.
+  const plain = typeof exports === "object" && !Array.isArray(exports);
+  const keys = plain ? Object.getOwnPropertyNames(exports) : Object.keys(exports);
+  if (!plain && exports.__esModule && !keys.includes("__esModule")) {
     keys.push("__esModule");
   }
   for (const key of keys) {
