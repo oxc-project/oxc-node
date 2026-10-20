@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
-import { execSync, spawn } from "node:child_process";
 import process from "node:process";
 
 import { Builtins, Cli, Command, Option, Usage } from "clipanion";
 
 import pkgJson from "../package.json" with { type: "json" };
+import { runChild, usesNodeWatch } from "./run.js";
+import { WatchCommand } from "./watch/command.js";
 
 const [node, app, ...stdArgs] = process.argv;
 
@@ -21,6 +22,7 @@ class MainCommand extends Command {
     examples: [
       [`Run a script`, `oxnode ./src/index.ts`],
       [`repl`, `oxnode`],
+      [`Watch mode`, `oxnode watch ./src/index.ts`],
     ],
   };
 
@@ -42,27 +44,11 @@ class MainCommand extends Command {
     if (this.nodeHelp) {
       this.args.push(`--help`);
     }
-    const args = this.args.length ? `${this.args.join(" ")}` : "";
     const register = import.meta.resolve("@oxc-node/core/register");
-    if (!args.length) {
-      execSync(`node --enable-source-maps --import ${register}`, {
-        env: process.env,
-        cwd: process.cwd(),
-        stdio: `inherit`,
-      });
-      return;
-    }
-    return new Promise<number>((resolve) => {
-      const cp = spawn(`node`, [`--enable-source-maps`, `--import`, register, ...this.args], {
-        env: process.env,
-        cwd: process.cwd(),
-        stdio: `inherit`,
-      });
-      cp.addListener(`error`, (error) => {
-        console.error(error);
-      });
-      cp.addListener(`exit`, (code) => {
-        resolve(code ?? 0);
+    // With no args this is the REPL. oxnode exits from `runChild` the way the child did.
+    return new Promise<never>(() => {
+      runChild(`node`, [`--enable-source-maps`, `--import`, register, ...this.args], {
+        nodeWatch: usesNodeWatch(this.args),
       });
     });
   }
@@ -75,6 +61,7 @@ const cli = new Cli({
 });
 
 cli.register(MainCommand);
+cli.register(WatchCommand);
 cli.register(Builtins.HelpCommand);
 cli.register(Builtins.VersionCommand);
 void cli.runExit(stdArgs);

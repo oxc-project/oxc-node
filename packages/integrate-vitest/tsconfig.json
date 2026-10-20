@@ -4,9 +4,11 @@
     "outDir": "lib",
     "composite": true,
     "module": "ESNext",
-    "moduleResolution": "Bundler"
+    "moduleResolution": "Bundler",
+    // The unit specs import the CLI's sources.
+    "rootDir": ".."
   },
-  "include": ["__tests__/**/*.ts"],
+  "include": ["__tests__/**/*.ts", "../cli/src/run.ts", "../cli/src/watch/**/*.ts"],
   "exclude": ["__tests__/fixtures/**/*"],
   "references": [{ "path": "../core" }]
 }

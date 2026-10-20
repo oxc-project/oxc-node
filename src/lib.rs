@@ -2,18 +2,15 @@ use std::{
     borrow::Cow,
     cell::OnceCell,
     collections::{HashMap, HashSet},
-    env, fs,
+    env,
+    ffi::OsStr,
+    fs, io, mem,
     path::{Component, Path, PathBuf},
     sync::{
         Arc, LazyLock, Mutex, OnceLock, PoisonError,
         atomic::{AtomicBool, Ordering},
     },
 };
-
-// `mem` is only needed by `TransformTask::finally`, which is part of the
-// napi-only async surface.
-#[cfg(feature = "napi")]
-use std::mem;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -41,9 +38,9 @@ use oxc::{
     },
 };
 use oxc_resolver::{
-    CompilerOptions, EnforceExtension, ModuleType, PackageType, Resolution,
-    ResolveContext as ResolverContext, ResolveError, ResolveOptions, Resolver, TsConfig,
-    TsconfigDiscovery, TsconfigOptions, TsconfigReferences,
+    CompilerOptions, EnforceExtension, FileMetadata, FileSystem, FileSystemOs, ModuleType,
+    PackageType, Resolution, ResolveContext as ResolverContext, ResolveError, ResolveOptions,
+    ResolverGeneric, TsConfig, TsconfigDiscovery, TsconfigOptions, TsconfigReferences,
 };
 use oxc_sourcemap::SourceMap;
 use phf::Set;
@@ -567,6 +564,139 @@ fn is_bare_specifier(specifier: &str) -> bool {
 fn tsconfig_lookup_path<'a>(cwd: &Path, path: &'a Path) -> Cow<'a, Path> {
     if path.is_absolute() { Cow::Borrowed(path) } else { Cow::Owned(cwd.join(path)) }
 }
+
+/// Whether a watch parent asked for the files Node.js does not report itself
+/// (issue #450). `register.mjs` turns it on under `WATCH_REPORT_DEPENDENCIES`;
+/// while it is off, recording costs one relaxed load per tsconfig read and
+/// per failed resolve.
+static WATCH_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Every path recorded so far, and the `file:` URLs of those not yet taken.
+/// The native binding has one queue for every thread, so whichever thread
+/// drains it first sends the URLs; they all end at the main thread, which
+/// drops duplicates.
+static WATCH_QUEUE: LazyLock<Mutex<(HashSet<PathBuf>, Vec<String>)>> =
+    LazyLock::new(Default::default);
+
+#[inline]
+fn watching() -> bool {
+    WATCH_ENABLED.load(Ordering::Relaxed)
+}
+
+/// Queue `path` for the watch parent, once per process.
+fn report_watch_path(path: &Path) {
+    if !watching() || !path.is_absolute() {
+        return;
+    }
+    let mut queue = WATCH_QUEUE.lock().unwrap_or_else(PoisonError::into_inner);
+    if queue.0.insert(path.to_path_buf()) {
+        queue.1.push(path_to_file_url(&path.to_string_lossy()));
+    }
+}
+
+/// Start recording the files watch mode restarts on that Node.js does not
+/// report: every tsconfig read (`extends` chain and `references` included)
+/// and the paths a failed resolve looked for. Call it before the first
+/// transform or resolve: a tsconfig is read once, and one read before this is
+/// never recorded.
+#[cfg_attr(feature = "napi", napi)]
+pub fn enable_watch_report() {
+    WATCH_ENABLED.store(true, Ordering::Relaxed);
+}
+
+/// The `file:` URLs recorded since the last call, each path once per process.
+/// Always empty while recording is off.
+#[cfg_attr(feature = "napi", napi)]
+pub fn take_watch_dependencies() -> Vec<String> {
+    if !watching() {
+        return Vec::new();
+    }
+    mem::take(&mut WATCH_QUEUE.lock().unwrap_or_else(PoisonError::into_inner).1)
+}
+
+/// The paths a failed resolve looked for that are worth watching, sorted
+/// (the resolver's set is unordered) and capped. The resolver also lists a
+/// `package.json` in every ancestor up to the root and the `node_modules`
+/// folders it walked, which are noise; a file directly in the root is never
+/// one a project creates.
+fn watch_candidates<'a>(missing: impl IntoIterator<Item = &'a PathBuf>) -> Vec<&'a PathBuf> {
+    // A directory import tries about 24 paths; the cap only bounds a bad alias.
+    const MAX_CANDIDATES: usize = 64;
+    let mut candidates: Vec<&PathBuf> = missing
+        .into_iter()
+        .filter(|path| path.file_name() != Some(OsStr::new("package.json")))
+        .filter(|path| !path.components().any(|c| c.as_os_str() == "node_modules"))
+        .filter(|path| path.parent().and_then(Path::parent).is_some())
+        .collect();
+    candidates.sort();
+    candidates.truncate(MAX_CANDIDATES);
+    candidates
+}
+
+/// The OS file system, recording every tsconfig the resolver reads for watch
+/// mode.
+///
+/// oxc_resolver 11 reads text only for tsconfig files: `read_to_string` has
+/// one caller, the tsconfig loader, while `package.json` goes through `read`.
+/// So this sees the explicit config, every discovered one, each `extends`
+/// target (relative, package or `#imports`) and `references`. Discovery reads
+/// only files that exist, so a failed read is a file some config names, and
+/// creating it must restart too. A unit test pins that; recheck it on each
+/// resolver upgrade.
+struct WatchFs(FileSystemOs);
+
+impl FileSystem for WatchFs {
+    #[cfg(not(feature = "yarn_pnp"))]
+    fn new() -> Self {
+        Self(<FileSystemOs as FileSystem>::new())
+    }
+
+    #[cfg(feature = "yarn_pnp")]
+    fn new(yarn_pnp: bool) -> Self {
+        Self(<FileSystemOs as FileSystem>::new(yarn_pnp))
+    }
+
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        FileSystem::read(&self.0, path)
+    }
+
+    fn read_to_string(&self, path: &Path) -> io::Result<String> {
+        let text = FileSystem::read_to_string(&self.0, path);
+        // Belt and braces: should a later resolver read package.json as text,
+        // the one in every ancestor directory must still not be reported.
+        if path.file_name() != Some(OsStr::new("package.json")) {
+            report_watch_path(path);
+            // A missing `extends: "./base.json"` is read as `base.json.json`.
+            if text.is_err()
+                && let Some(named) = path.to_str().and_then(|p| p.strip_suffix(".json"))
+                && named.ends_with(".json")
+            {
+                report_watch_path(Path::new(named));
+            }
+        }
+        text
+    }
+
+    fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+        FileSystem::metadata(&self.0, path)
+    }
+
+    fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+        FileSystem::symlink_metadata(&self.0, path)
+    }
+
+    fn read_link(&self, path: &Path) -> std::result::Result<PathBuf, ResolveError> {
+        FileSystem::read_link(&self.0, path)
+    }
+
+    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
+        FileSystem::canonicalize(&self.0, path)
+    }
+}
+
+/// oxc_resolver's resolver on [`WatchFs`]; `clone_with_options` shares the
+/// file system and cache, so every condition resolver records too.
+type Resolver = ResolverGeneric<WatchFs>;
 
 static RESOLVER_AND_TSCONFIG: OnceLock<(Resolver, TsconfigSource)> = OnceLock::new();
 
@@ -2208,6 +2338,8 @@ pub fn create_resolve<'env>(
             }
         };
     let mut resolution = resolve(resolver);
+    // oxc's own answer, before any fallback below.
+    let failed = resolution.is_err();
     // TypeScript first is for the project's own files. A package that ships its
     // `.ts` (or `.jsx`) sources beside the compiled `.js` is still run from what
     // it compiled, as it is when the package imports itself. The two orders can
@@ -2231,6 +2363,38 @@ pub fn create_resolve<'env>(
             symlinks,
         );
         resolution = resolve(&package_resolver);
+    }
+
+    // A file that does not exist yet can still be created, so a watch parent
+    // learns every path the resolver tried (`x.ts` for `./x.js`, `dir/index.ts`,
+    // a `paths` alias's targets). It runs ahead of the early returns below, so a
+    // request with import attributes (`./data.json` with `type: "json"`) is
+    // covered too. The paths are asked of the resolver again rather than
+    // collected on every resolve, which keeps the hot path as it is: only a
+    // failure while watching pays for the second run.
+    if watching()
+        && failed
+        && !parent_file.is_some_and(in_node_modules)
+        && let Some((directory, resolver_specifier)) = &request
+    {
+        // The config the failed resolve used.
+        let tsconfig = match (tsconfig_source, parent_file, is_absolute_path) {
+            (TsconfigSource::Manual(tsconfig), ..) => tsconfig.clone(),
+            (TsconfigSource::Auto, Some(parent_file), false) => {
+                tsconfig_source.for_importer(resolver, parent_file, &specifier)
+            }
+            _ => None,
+        };
+        let mut resolve_context = ResolverContext::default();
+        let _ = resolver.resolve_with_context(
+            directory,
+            resolver_specifier,
+            tsconfig.as_deref(),
+            &mut resolve_context,
+        );
+        for path in watch_candidates(&resolve_context.missing_dependencies) {
+            report_watch_path(path);
+        }
     }
 
     // JSON modules, resolved with oxc-node's own resolver so that tsconfig `paths`, package
@@ -3781,6 +3945,204 @@ mod tests {
         // Unless the file name itself holds one.
         assert_eq!(request("/x/w?.tsx"), None);
         assert_eq!(request("/x/é#x.ts"), None);
+    }
+
+    /// The watch recorder is process-wide, so its tests take turns, and each
+    /// leaves it off and empty, as a fresh process has it.
+    fn watch_lock() -> impl Drop {
+        static LOCK: Mutex<()> = Mutex::new(());
+        struct Reset(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                WATCH_ENABLED.store(false, Ordering::Relaxed);
+                *WATCH_QUEUE.lock().unwrap_or_else(PoisonError::into_inner) = Default::default();
+            }
+        }
+        let guard = Reset(LOCK.lock().unwrap_or_else(PoisonError::into_inner));
+        WATCH_ENABLED.store(false, Ordering::Relaxed);
+        guard
+    }
+
+    /// A fresh project directory holding `files`.
+    fn watch_fixture(name: &str, files: &[(&str, &str)]) -> PathBuf {
+        let root = env::temp_dir().join(format!("oxc-node-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        for (file, contents) in files {
+            let path = root.join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, contents).unwrap();
+        }
+        // The resolver reports real paths (macOS keeps temp under a symlink);
+        // Windows' canonical form is a verbatim `\\?\` path, so it stays as is.
+        #[cfg(not(windows))]
+        let root = fs::canonicalize(root).unwrap();
+        root
+    }
+
+    fn sorted(mut urls: Vec<String>) -> Vec<String> {
+        urls.sort();
+        urls
+    }
+
+    fn url_of(path: &Path) -> String {
+        path_to_file_url(&path.to_string_lossy())
+    }
+
+    #[test]
+    fn watch_report_is_off_by_default() {
+        let _lock = watch_lock();
+        assert!(!watching());
+        let file = env::temp_dir().join("tsconfig.json");
+        report_watch_path(&file);
+        assert!(take_watch_dependencies().is_empty());
+        // Nothing recorded while it was off turns up once it is on.
+        enable_watch_report();
+        assert!(take_watch_dependencies().is_empty());
+        report_watch_path(&file);
+        assert_eq!(take_watch_dependencies(), [url_of(&file)]);
+    }
+
+    // Pins what `WatchFs` relies on: oxc_resolver reads tsconfig files, and only
+    // those, with `read_to_string`, each once. Recheck on resolver upgrades.
+    #[test]
+    fn watch_report_records_each_tsconfig_once_and_never_package_json() {
+        let _lock = watch_lock();
+        let root = watch_fixture(
+            "watch-tsconfig",
+            &[
+                ("package.json", r#"{ "type": "module" }"#),
+                (
+                    "tsconfig.json",
+                    r#"{ "extends": "./cfg/base.json", "include": ["src"], "references": [{ "path": "./sub" }] }"#,
+                ),
+                ("cfg/base.json", r#"{ "extends": "./deeper.json" }"#),
+                ("cfg/deeper.json", r#"{ "extends": "pkg/tsconfig.json" }"#),
+                ("node_modules/pkg/package.json", r#"{ "name": "pkg" }"#),
+                ("node_modules/pkg/tsconfig.json", r#"{ "compilerOptions": { "strict": true } }"#),
+                ("sub/tsconfig.json", r#"{ "include": ["."] }"#),
+                ("src/main.ts", ""),
+                ("sub/a.ts", ""),
+            ],
+        );
+        let resolver = Resolver::new(ResolveOptions {
+            tsconfig: Some(TsconfigDiscovery::Auto),
+            ..Default::default()
+        });
+        enable_watch_report();
+        for _ in 0..2 {
+            assert!(resolver.find_tsconfig(root.join("src/main.ts")).unwrap().is_some());
+            assert!(resolver.find_tsconfig(root.join("sub/a.ts")).unwrap().is_some());
+            // These read `package.json` files, through `read`.
+            resolver.resolve(root.join("src"), "./main.ts").unwrap();
+            resolver.resolve(&root, "pkg/package.json").unwrap();
+        }
+        let expected = sorted(
+            [
+                "cfg/base.json",
+                "cfg/deeper.json",
+                "node_modules/pkg/tsconfig.json",
+                "sub/tsconfig.json",
+                "tsconfig.json",
+            ]
+            .map(|file| url_of(&root.join(file)))
+            .to_vec(),
+        );
+        assert_eq!(sorted(take_watch_dependencies()), expected);
+        assert!(take_watch_dependencies().is_empty());
+        // Another resolver reads the same files again; they are still reported once.
+        let manual = Resolver::new(ResolveOptions {
+            tsconfig: Some(TsconfigDiscovery::Manual(TsconfigOptions {
+                config_file: root.join("tsconfig.json"),
+                references: TsconfigReferences::Auto,
+            })),
+            ..Default::default()
+        });
+        manual.resolve_tsconfig(root.join("tsconfig.json")).unwrap();
+        assert!(take_watch_dependencies().is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn watch_report_records_a_missing_extends_target() {
+        let _lock = watch_lock();
+        let root = watch_fixture(
+            "watch-missing-extends",
+            &[
+                ("tsconfig.json", r#"{ "extends": "./cfg/base.json", "include": ["src"] }"#),
+                ("src/main.ts", ""),
+            ],
+        );
+        let resolver = Resolver::new(ResolveOptions {
+            tsconfig: Some(TsconfigDiscovery::Auto),
+            ..Default::default()
+        });
+        enable_watch_report();
+        assert!(resolver.find_tsconfig(root.join("src/main.ts")).is_err());
+        let reported = take_watch_dependencies();
+        for file in ["tsconfig.json", "cfg/base.json"] {
+            assert!(reported.contains(&url_of(&root.join(file))), "{file}: {reported:?}");
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn watch_candidates_drop_noise() {
+        #[cfg(not(windows))]
+        let drive = Path::new("/");
+        #[cfg(windows)]
+        let drive = Path::new("C:\\");
+        let p = |path: &str| drive.join(path);
+        let missing = [
+            p("p/src/later.tsx"),
+            p("p/src/later.ts"),
+            p("p/src/package.json"),
+            p("p/package.json"),
+            p("package.json"),
+            p("p/node_modules"),
+            p("p/node_modules/x/index.ts"),
+            p("later.ts"),
+        ];
+        assert_eq!(watch_candidates(&missing), [&p("p/src/later.ts"), &p("p/src/later.tsx")]);
+        let many: Vec<PathBuf> = (0..100).map(|i| p(&format!("p/{i:03}.ts"))).collect();
+        let kept = watch_candidates(&many);
+        assert_eq!(kept.len(), 64);
+        assert_eq!(kept[0], &p("p/000.ts"));
+
+        // What the resolver lists for a miss, with the project's extension order.
+        let root = watch_fixture(
+            "watch-candidates",
+            &[("package.json", "{}"), ("src/main.ts", ""), ("src/dir/other.ts", "")],
+        );
+        let resolver = Resolver::new(source_order(ResolveOptions::default()));
+        let candidates = |specifier: &str| {
+            let mut context = ResolverContext::default();
+            let resolved =
+                resolver.resolve_with_context(root.join("src"), specifier, None, &mut context);
+            assert!(resolved.is_err(), "{specifier}");
+            watch_candidates(&context.missing_dependencies).into_iter().cloned().collect::<Vec<_>>()
+        };
+        let later = candidates("./later.js");
+        assert!(later.contains(&root.join("src/later.ts")), "{later:?}");
+        assert!(later.contains(&root.join("src/later.tsx")), "{later:?}");
+        assert!(candidates("./later.mjs").contains(&root.join("src/later.mts")));
+        assert!(candidates("./later.cjs").contains(&root.join("src/later.cts")));
+        assert!(candidates("./dir").contains(&root.join("src/dir/index.ts")));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn watch_report_urls_are_encoded_and_absolute_only() {
+        let _lock = watch_lock();
+        enable_watch_report();
+        let file = env::temp_dir().join("a b").join("c#d.ts");
+        report_watch_path(&file);
+        report_watch_path(&file);
+        report_watch_path(Path::new("relative/tsconfig.json"));
+        let urls = take_watch_dependencies();
+        assert_eq!(urls.len(), 1, "{urls:?}");
+        assert!(urls[0].starts_with("file:///"), "{urls:?}");
+        assert!(urls[0].ends_with("/a%20b/c%23d.ts"), "{urls:?}");
+        assert_eq!(file_url_to_path(&urls[0]).as_deref(), Some(file.as_path()));
     }
 
     #[cfg(not(windows))]

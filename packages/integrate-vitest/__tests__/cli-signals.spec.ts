@@ -1,0 +1,336 @@
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterAll, afterEach, describe, expect, test } from "vitest";
+
+import { descendants, processTable } from "../../cli/src/watch/kill-tree.js";
+import { HAS_PTY, runInPty, type PtyStep } from "./helpers/pty.js";
+
+/**
+ * Plain runs: oxnode passes signals on to the app once and exits the way the app did.
+ * A process group stands in for the terminal: `process.kill(-pid)` is what Ctrl+C does.
+ */
+const CLI = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
+const CORE = dirname(fileURLToPath(new URL("../../core/register.mjs", import.meta.url)));
+const posix = process.platform !== "win32";
+
+const env = {
+  ...process.env,
+  NODE_OPTIONS: undefined,
+  OXC_LOG: undefined,
+  OXNODE_SIGNAL_ACK: undefined,
+  WATCH_REPORT_DEPENDENCIES: undefined,
+  // oxnode runs `node` from PATH: make it the one running the tests.
+  PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH ?? ""}`,
+};
+
+const root = realpathSync(mkdtempSync(join(tmpdir(), "oxc-node-signals-")));
+writeFileSync(join(root, "package.json"), JSON.stringify({ private: true, type: "module" }));
+mkdirSync(join(root, "node_modules", "@oxc-node"), { recursive: true });
+symlinkSync(CORE, join(root, "node_modules", "@oxc-node", "core"), posix ? "dir" : "junction");
+
+const READY = `console.log("READY", process.pid);\nsetInterval(() => {}, 1000);\n`;
+
+const apps: Record<string, string> = {
+  "exit-code.ts": `const code: number = 7;\nprocess.exit(code);\n`,
+  "self-kill.ts": `process.kill(process.pid, "SIGKILL");\nsetInterval(() => {}, 1000);\n`,
+  // Each signal is logged, then the app cleans up and exits.
+  "handler.ts": `for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.on(sig, () => {
+    console.log("GOT", sig);
+    setTimeout(() => { console.log("cleaned"); process.exit(0); }, 300);
+  });
+}
+${READY}`,
+  "cleanup-7.ts": `process.on("SIGINT", () => {
+  console.log("GOT SIGINT");
+  setTimeout(() => { console.log("cleaned"); process.exit(7); }, 300);
+});
+${READY}`,
+  // signal-exit: when its listener is the only one, it removes itself and re-raises.
+  "signal-exit.ts": `const onSig = () => {
+  console.log("GOT SIGINT");
+  if (process.listeners("SIGINT").length === 1) {
+    process.removeListener("SIGINT", onSig);
+    process.kill(process.pid, "SIGINT");
+  }
+};
+process.on("SIGINT", onSig);
+console.log("COUNT", process.listenerCount("SIGINT"));
+${READY}`,
+  "no-listener.ts": READY,
+  // Busy when Ctrl+C comes, so its SIGINT listener (and the ack) runs late.
+  "busy.mjs": `let n = 0;
+process.on("SIGINT", () => {
+  console.log("GOT SIGINT", ++n);
+  setTimeout(() => { console.log("total", n); process.exit(0); }, 300);
+});
+console.log("BUSY");
+const end = Date.now() + 200;
+while (Date.now() < end) {}
+setInterval(() => {}, 1000);
+`,
+};
+for (const [name, source] of Object.entries(apps)) writeFileSync(join(root, name), source);
+
+afterAll(() => {
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+});
+
+interface Run {
+  child: ChildProcess;
+  out(): string;
+  waitFor(re: RegExp, ms?: number): Promise<RegExpMatchArray>;
+  exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+}
+
+const started: Run[] = [];
+
+function oxnode(args: string[], extraEnv: NodeJS.ProcessEnv = {}): Run {
+  // A new group, so a group signal reaches oxnode and the app, as Ctrl+C does.
+  const child = spawn(process.execPath, [CLI, ...args], {
+    cwd: root,
+    env: { ...env, ...extraEnv },
+    detached: posix,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let out = "";
+  const waiters = new Set<() => void>();
+  const onData = (chunk: Buffer) => {
+    out += chunk;
+    for (const w of waiters) w();
+  };
+  child.stdout!.on("data", onData);
+  child.stderr!.on("data", onData);
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    child.on("exit", (code, signal) => resolve({ code, signal }));
+  });
+  const run: Run = {
+    child,
+    out: () => out,
+    exited,
+    waitFor: (re, ms = 20_000) =>
+      new Promise((resolve, reject) => {
+        const check = () => {
+          const m = out.match(re);
+          if (!m) return;
+          clearTimeout(timer);
+          waiters.delete(check);
+          resolve(m);
+        };
+        const timer = setTimeout(() => {
+          waiters.delete(check);
+          reject(new Error(`timed out waiting for ${re}; output:\n${out}`));
+        }, ms);
+        waiters.add(check);
+        check();
+      }),
+  };
+  started.push(run);
+  return run;
+}
+
+afterEach(async () => {
+  for (const run of started.splice(0)) {
+    try {
+      // The group even after oxnode exited: a failed test can leave the app running.
+      if (posix) process.kill(-run.child.pid!, "SIGKILL");
+      else if (run.child.exitCode === null && run.child.signalCode === null) run.child.kill();
+    } catch {}
+    await run.exited;
+  }
+});
+
+const isAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+async function isGone(pid: number) {
+  const until = Date.now() + 5000;
+  while (isAlive(pid) && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+  return !isAlive(pid);
+}
+
+/** oxnode's process tree, taken before it is stopped. */
+const tree = (pid: number) => descendants(processTable(), pid);
+
+const count = (text: string, re: RegExp) => text.match(new RegExp(re, "g"))?.length ?? 0;
+
+test("the exit code passes through", async () => {
+  const run = oxnode(["exit-code.ts"]);
+  expect(await run.exited).toEqual({ code: 7, signal: null });
+});
+
+test("no node on PATH exits 1", () => {
+  const r = spawnSync(process.execPath, [CLI, "exit-code.ts"], {
+    cwd: root,
+    env: { ...env, PATH: "" },
+    encoding: "utf8",
+  });
+  expect(r.status, r.stderr).toBe(1);
+  expect(r.stderr).toMatch(/ENOENT/);
+});
+
+describe.skipIf(!posix)("signals", () => {
+  test("an app that SIGKILLs itself: oxnode ends by SIGKILL", async () => {
+    const run = oxnode(["self-kill.ts"]);
+    expect(await run.exited).toEqual({ code: null, signal: "SIGKILL" });
+  });
+
+  test.each(["SIGTERM", "SIGHUP", "SIGINT"] as const)(
+    "%s to oxnode alone reaches the app once",
+    async (sig) => {
+      const run = oxnode(["handler.ts"]);
+      const [, pid] = await run.waitFor(/READY (\d+)/);
+      process.kill(run.child.pid!, sig);
+      expect(await run.exited).toEqual({ code: 0, signal: null });
+      expect(count(run.out(), /GOT /)).toBe(1);
+      expect(run.out()).toContain(`GOT ${sig}`);
+      expect(run.out()).toContain("cleaned");
+      expect(await isGone(Number(pid))).toBe(true);
+    },
+  );
+
+  test("Ctrl+C: the app gets one SIGINT, and oxnode waits for its cleanup", async () => {
+    const run = oxnode(["cleanup-7.ts"]);
+    await run.waitFor(/READY/);
+    process.kill(-run.child.pid!, "SIGINT");
+    expect(await run.exited).toEqual({ code: 7, signal: null });
+    expect(count(run.out(), /GOT SIGINT/)).toBe(1);
+    expect(run.out()).toMatch(/GOT SIGINT[\s\S]*cleaned/);
+  });
+
+  test("npm: Ctrl+C plus a forwarded SIGINT still gives one", async () => {
+    const run = oxnode(["cleanup-7.ts"]);
+    await run.waitFor(/READY/);
+    process.kill(-run.child.pid!, "SIGINT");
+    process.kill(run.child.pid!, "SIGINT");
+    expect(await run.exited).toEqual({ code: 7, signal: null });
+    expect(count(run.out(), /GOT SIGINT/)).toBe(1);
+  });
+
+  test("a signal-exit style app still dies by SIGINT, and sees one listener", async () => {
+    const run = oxnode(["signal-exit.ts"]);
+    await run.waitFor(/READY/);
+    expect(run.out()).toContain("COUNT 1");
+    process.kill(-run.child.pid!, "SIGINT");
+    expect(await run.exited).toEqual({ code: null, signal: "SIGINT" });
+  });
+
+  test("Ctrl+\\ leaves no ack socket behind", async () => {
+    // Its own TMPDIR, short enough for a socket path.
+    const tmp = mkdtempSync(join(tmpdir(), "oxq-"));
+    try {
+      const run = oxnode(["no-listener.ts"], { TMPDIR: tmp });
+      await run.waitFor(/READY/);
+      expect(readdirSync(tmp).filter((name) => name.endsWith(".sock"))).toHaveLength(1);
+      process.kill(-run.child.pid!, "SIGQUIT");
+      const { code, signal } = await run.exited;
+      // Raised again, or 128+3 when the app's exit is seen first.
+      expect(signal === "SIGQUIT" || code === 131, `${code} ${signal}`).toBe(true);
+      expect(readdirSync(tmp)).toEqual([]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("an app with no listener: oxnode ends by SIGINT", async () => {
+    const run = oxnode(["no-listener.ts"]);
+    await run.waitFor(/READY/);
+    process.kill(-run.child.pid!, "SIGINT");
+    expect(await run.exited).toEqual({ code: null, signal: "SIGINT" });
+  });
+
+  test.each([
+    ["SIGTERM to oxnode", [], (pid: number) => process.kill(pid, "SIGTERM")],
+    ["SIGHUP to oxnode", [], (pid: number) => process.kill(pid, "SIGHUP")],
+    [
+      "SIGHUP to oxnode, after a value flag",
+      ["--unhandled-rejections", "strict"],
+      (pid: number) => process.kill(pid, "SIGHUP"),
+    ],
+    ["Ctrl+C", [], (pid: number) => process.kill(-pid, "SIGINT")],
+  ])("oxnode --watch + %s leaves nothing running", async (_name, flags, send) => {
+    const run = oxnode([...flags, "--watch", "no-listener.ts"]);
+    const [, appPid] = await run.waitFor(/READY (\d+)/);
+    const pids = tree(run.child.pid!);
+    expect(pids).toContain(Number(appPid));
+    send(run.child.pid!);
+    await run.exited;
+    for (const pid of pids) expect(await isGone(pid), `pid ${pid}`).toBe(true);
+  });
+});
+
+/** In a real terminal, Ctrl+C reaches oxnode and the app together: plain node is the reference. */
+describe.skipIf(!HAS_PTY)("in a terminal", () => {
+  const inPty = (args: string[], steps: PtyStep[], extra: Record<string, string> = {}) =>
+    runInPty([process.execPath, ...args], steps, {
+      cwd: root,
+      env: { ...env, NO_COLOR: "1", ...extra },
+    });
+
+  test("Ctrl+C while the app is busy: its SIGINT listener runs once, as with node", async () => {
+    const steps = [{ wait: "BUSY", send: "\x03" }];
+    const node = await inPty(["busy.mjs"], steps);
+    expect(node.out).toContain("total 1");
+    const run = await inPty([CLI, "busy.mjs"], steps);
+    expect(count(run.out, /GOT SIGINT/), run.out).toBe(1);
+    expect(run.out).toContain("total 1");
+    expect(run).toMatchObject({ code: 0, signal: null, timedOut: false });
+  });
+
+  // macOS asks `ps` whether oxnode is in the foreground. On a slow machine Ctrl+C can come
+  // before oxnode listens, or kill that `ps`; a `ps` that sleeps makes both certain.
+  test.skipIf(process.platform !== "darwin")(
+    "Ctrl+C while the app is busy and the foreground check is slow",
+    async () => {
+      const bin = join(root, "slow-ps");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, "ps"), '#!/bin/sh\nsleep 1\nexec /bin/ps "$@"\n', { mode: 0o755 });
+      const run = await inPty([CLI, "busy.mjs"], [{ wait: "BUSY", send: "\x03" }], {
+        PATH: `${bin}${delimiter}${env.PATH}`,
+      });
+      expect(count(run.out, /GOT SIGINT/), run.out).toBe(1);
+      expect(run).toMatchObject({ code: 0, signal: null, timedOut: false });
+    },
+  );
+
+  test("oxnode watch: Ctrl+C while the app is busy runs its SIGINT listener once", async () => {
+    const run = await inPty([CLI, "watch", "busy.mjs"], [{ wait: "BUSY", send: "\x03" }]);
+    expect(count(run.out, /GOT SIGINT/), run.out).toBe(1);
+    expect(run.out).toContain("total 1");
+    expect(run).toMatchObject({ code: 0, signal: null, timedOut: false });
+  });
+
+  test("the REPL survives Ctrl+C during a long synchronous eval, as with node", async () => {
+    const steps: PtyStep[] = [
+      // console.log has a side effect, so the input preview never runs the loop.
+      { wait: "> ", send: 'console.log("LOOP" + "ING"); while (true) {}\r' },
+      { wait: "LOOPING", delay: 100, send: "\x03" },
+      // Node.js 24 puts the signal name in backticks.
+      { wait: "interrupted by `?SIGINT", send: "" },
+      // Long enough for a SIGINT oxnode would forward after its 50 ms wait.
+      { wait: "> ", delay: 300, send: 'console.log("ALIVE" + 1)\r' },
+      { wait: "ALIVE1", send: ".exit\r" },
+    ];
+    const node = await inPty(["--no-warnings"], steps);
+    expect(node, node.out).toMatchObject({ code: 0, done: steps.length });
+    const run = await inPty([CLI], steps);
+    expect(run, run.out).toMatchObject({ code: 0, signal: null, done: steps.length });
+  });
+});

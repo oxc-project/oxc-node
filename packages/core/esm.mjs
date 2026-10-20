@@ -6,11 +6,13 @@ import { isMainThread, MessageChannel } from "node:worker_threads";
 import {
   __napiBindingTarget,
   createResolve,
+  enableWatchReport,
   initTracing,
   load as oxcLoad,
   setTransformDeps,
   setTsconfigPath,
 } from "./index.js";
+import { withFlush } from "./watch-report.mjs";
 
 initTracing();
 
@@ -128,6 +130,20 @@ function load(url, context, nextLoad) {
 }
 
 /**
+ * Under watch mode, the hooks wrapped to report, through the port `register.mjs`
+ * sent, what each call read or looked for.
+ */
+let watchHooks = null;
+
+function resolveHook(specifier, context, nextResolve) {
+  return (watchHooks?.resolve ?? resolve)(specifier, context, nextResolve);
+}
+
+function loadHook(url, context, nextLoad) {
+  return (watchHooks?.load ?? load)(url, context, nextLoad);
+}
+
+/**
  * Receives the `data` that `register.mjs` passes to `module.register()`. Absent when
  * this module is registered some other way.
  *
@@ -137,9 +153,20 @@ function load(url, context, nextLoad) {
  * `setTransformDeps` made since, and a stale mode would throw once a different one
  * is already in use.
  *
- * @param {{ tsconfigPath?: string | null, transformDeps?: string | null } | undefined} data
+ * The watch port is taken first, on every binding: a native one shares its queue
+ * with the main thread but still needs someone to drain it after these hooks run.
+ *
+ * @param {{ tsconfigPath?: string | null, transformDeps?: string | null, watchPort?: import('node:worker_threads').MessagePort } | undefined} data
  */
 function initialize(data) {
+  const port = data?.watchPort;
+  if (port) {
+    port.unref();
+    const sink = (message) => port.postMessage(message);
+    watchHooks = { resolve: withFlush(resolve, sink), load: withFlush(load, sink) };
+    // A WASI copy has a recorder of its own; on native this repeats the main thread.
+    enableWatchReport();
+  }
   if (__napiBindingTarget === "native") {
     return;
   }
@@ -151,4 +178,4 @@ function initialize(data) {
   }
 }
 
-export { initialize, load, resolve };
+export { initialize, loadHook as load, resolveHook as resolve };

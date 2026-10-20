@@ -22,7 +22,9 @@
     "index.d.ts",
     "index.js",
     "register.mjs",
-    "src/**/*"
+    "signal-ack.mjs",
+    "src/**/*",
+    "watch-report.mjs"
   ],
   "main": "./index.js",
   "browser": "./browser.js",

@@ -31,6 +31,15 @@ export declare class OxcTransformer {
 export declare function createResolve(options: OxcResolveOptions, specifier: string, context: ResolveContext, nextResolve: (arg0: string, arg1?: ResolveContext | undefined | null) => ResolveFnOutput | Promise<ResolveFnOutput>): ResolveFnOutput | Promise<ResolveFnOutput>
 
 /**
+ * Start recording the files watch mode restarts on that Node.js does not
+ * report: every tsconfig read (`extends` chain and `references` included)
+ * and the paths a failed resolve looked for. Call it before the first
+ * transform or resolve: a tsconfig is read once, and one read before this is
+ * never recorded.
+ */
+export declare function enableWatchReport(): void
+
+/**
  * Latch the dependency mode without a transform or resolve having run, and
  * return it — `"off"`, `"typescript"` or `"all"`. The `module.register()`
  * path hands the mode to the hook thread as a snapshot: under WASI that
@@ -149,6 +158,12 @@ export declare function setTransformDeps(mode?: string | undefined | null): void
  * that came from here or from an environment variable.
  */
 export declare function setTsconfigPath(path?: string | undefined | null): void
+
+/**
+ * The `file:` URLs recorded since the last call, each path once per process.
+ * Always empty while recording is off.
+ */
+export declare function takeWatchDependencies(): Array<string>
 
 export declare function transform(path: string, source: string | Uint8Array): Output
 
