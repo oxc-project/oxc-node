@@ -1,0 +1,29 @@
+packages/core/importer.mjs
+  s_5b25d6ae40e975::t_d2cf160f7b7a3a 430-434,463-471
+packages/integrate-vitest/__tests__/fixtures/importer/probes.mjs
+  s_5b25d6ae40e975::t_56a09f10a1ef85 98-102,119,121
+packages/integrate-vitest/__tests__/fixtures/importer/probes/resolve-paths.cts
+  s_5b25d6ae40e975::t_ef3a646ead3d6e 1-2,6-7
+packages/integrate-vitest/__tests__/fixtures/importer/project/cjs-interop/static.ts
+  s_5b25d6ae40e975::t_d08907b6f83f57 3,9-10
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/esm-esmodule-default/index.js
+  s_5b25d6ae40e975::t_cb9f56885fcc30 1
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/esm-esmodule-default/package.json
+  s_5b25d6ae40e975::t_134caae3c98781 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "862951b8c0cb0b75b537ffdf3f04e7573f9f0211",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
