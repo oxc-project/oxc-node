@@ -80,6 +80,17 @@ await probe("default-and-namespace-import", async () => {
   const m = await imp.import("./default-ns.ts");
   return [m.both === "fk", m.both];
 });
+// Still waiting on its dependency's top-level await when the require() comes.
+await probe("require-evaluating-tla-is-async-module-error", async () => {
+  const release = Promise.withResolvers();
+  globalThis.__releaseSlowTla = release.promise;
+  const pending = imp.import("./slow-parent.ts");
+  const requireLater = await imp.import("./req-tla-later.cts", { default: true });
+  const code = requireLater("./slow-parent.ts");
+  release.resolve();
+  await pending;
+  return [code === "ERR_REQUIRE_ASYNC_MODULE", code];
+});
 await probe("cycle", async () => {
   const a = await imp.import("./cyc-a.ts");
   const b = await imp.import("./cyc-b.ts");

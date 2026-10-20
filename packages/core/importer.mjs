@@ -313,9 +313,18 @@ class Graph {
           this.require(this.resolve(specifier, url, this.conditions, false), record, true)
       : async (specifier) => {
           const target = this.resolve(specifier, url, this.conditions, false);
-          const imported = await this.import(target, record);
           // A module that statically imports one with top-level await is async too.
+          // The record exists, and knows about its own await, once the import starts: it
+          // is marked before the wait, so that a `require()` of this module meanwhile
+          // fails as well.
+          const importing = this.import(target, record);
           const dependency = target.path && this.cache.get(target.path);
+          if (dependency?.async) {
+            record.async = true;
+          }
+          const imported = await importing;
+          // A module Node.js loads tells only once it is loaded, and a record may have
+          // learned of an await further down while it ran.
           if (dependency ? dependency.async : target.path && isAsyncModule(target.path)) {
             record.async = true;
           }
