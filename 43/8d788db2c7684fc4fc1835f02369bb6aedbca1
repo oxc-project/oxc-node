@@ -1,0 +1,37 @@
+README.md
+  s_5b25d6ae40e975::t_f78154c9cfc390 342-343
+packages/core/importer.d.mts
+  s_5b25d6ae40e975::t_d0cde7a1ae30d0 32
+packages/core/importer.mjs
+  s_5b25d6ae40e975::t_36fcceb0bb61d3 10,186-188,205-206,238,303-311,743-744,746,753-788
+packages/integrate-vitest/__tests__/fixtures/importer/probes.mjs
+  s_5b25d6ae40e975::t_3f88466db6ac0b 63-69,138-153
+packages/integrate-vitest/__tests__/fixtures/importer/probes/req-tla-later.cts
+  s_5b25d6ae40e975::t_80c8ca86e790aa 1-9
+packages/integrate-vitest/__tests__/fixtures/importer/probes/tla-dep.mts
+  s_5b25d6ae40e975::t_5571d9d5758047 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/probes/tla-parent.ts
+  s_5b25d6ae40e975::t_b917f009aa6470 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/require-only-dep/package.json
+  s_5b25d6ae40e975::t_939682c5fc654a 1-2
+packages/integrate-vitest/__tests__/fixtures/importer/project/deps/require-only-dep/r.js
+  s_5b25d6ae40e975::t_5a41a69bd32dd3 1
+packages/integrate-vitest/__tests__/importer.spec.ts
+  s_5b25d6ae40e975::t_c7f74709c6cb46 77,86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "438d788db2c7684fc4fc1835f02369bb6aedbca1",
+  "prompts": {},
+  "sessions": {
+    "s_5b25d6ae40e975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f6f6be1-9489-4385-8cc6-72b556d5f202",
+        "model": "unknown"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
