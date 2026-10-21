@@ -880,6 +880,24 @@ test("a missing OXC_TSCONFIG_PATH is reported", () => {
   }
 });
 
+// Issue #876: `oxnode watch --tsconfig` sets both variables to the same path, so an
+// `--env-file` cannot override it. The warning names the variable --tsconfig stands for.
+test("a missing config both variables name is reported as OXC_TSCONFIG_PATH", () => {
+  const root = createProject({ "tsconfig.json": DECORATORS_TSCONFIG, "entry.ts": DECORATED });
+  const missing = join(root, "does-not-exist.json");
+  try {
+    const emitted = emit(root, root, "./entry.ts", {
+      OXC_TSCONFIG_PATH: missing,
+      TS_NODE_PROJECT: missing,
+    });
+    expect(emitted.stderr).toContain(
+      `oxc-node: warning: the tsconfig OXC_TSCONFIG_PATH names, ${missing}, does not exist; running without a tsconfig`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("an explicit tsconfig that cannot be parsed is reported", () => {
   const root = createProject({
     "package.json": JSON.stringify({ type: "module" }),

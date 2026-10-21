@@ -238,6 +238,24 @@ ${KEEP}`,
     await o.editUntil(join(root, "custom.json"), () => paths("c"), runLine("c"));
   });
 
+  test("--tsconfig over a config an --env-file names (issue #876)", async () => {
+    const paths = (dir: string) =>
+      JSON.stringify({ compilerOptions: { paths: { "@lib/*": [`./${dir}/*`] } } });
+    const root = project({
+      "package.json": ESM,
+      "cli.json": paths("a"),
+      "ts-node.json": paths("b"),
+      "oxc.json": paths("c"),
+      ".env": "TS_NODE_PROJECT=ts-node.json\nOXC_TSCONFIG_PATH=oxc.json\n",
+      "main.ts": `import { v } from "@lib/value";\nconsole.log("RUN", v, process.pid);\n${KEEP}`,
+      "a/value.ts": value("a"),
+      "b/value.ts": value("b"),
+      "c/value.ts": value("c"),
+    });
+    const o = startOxnode(["watch", "--tsconfig", "cli.json", "--env-file=.env", "main.ts"], root);
+    await o.waitFor(runLine("a"));
+  });
+
   test("--include: a file the app only reads, and one created later", async () => {
     const root = project({
       "package.json": ESM,
