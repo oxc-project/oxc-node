@@ -3617,11 +3617,19 @@ fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
         tracing::debug!(api_tsconfig = ?tsconfig_override.path);
         let explicit_tsconfig =
             tsconfig_override.path.clone().map(|path| (path, "setTsconfigPath()")).or_else(|| {
+                let oxc_tsconfig = non_empty_env("OXC_TSCONFIG_PATH");
                 let explicit_tsconfig = non_empty_env("TS_NODE_PROJECT")
-                    .map(|path| (path, "TS_NODE_PROJECT"))
-                    .or_else(|| {
-                        non_empty_env("OXC_TSCONFIG_PATH").map(|path| (path, "OXC_TSCONFIG_PATH"))
-                    });
+                    .map(|path| {
+                        // `oxnode watch --tsconfig` sets both, so an env file cannot
+                        // override it (issue #876); the warnings then name the one it means.
+                        let source = if oxc_tsconfig.as_deref() == Some(path.as_str()) {
+                            "OXC_TSCONFIG_PATH"
+                        } else {
+                            "TS_NODE_PROJECT"
+                        };
+                        (path, source)
+                    })
+                    .or_else(|| oxc_tsconfig.map(|path| (path, "OXC_TSCONFIG_PATH")));
                 tracing::debug!(explicit_tsconfig = ?explicit_tsconfig);
                 explicit_tsconfig.map(|(path, source)| (PathBuf::from(path), source))
             });

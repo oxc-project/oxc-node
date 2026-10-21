@@ -92,7 +92,7 @@ describe("parseWatchArgs", () => {
     expect(a.nodeArgs).toEqual(["app.ts"]);
     expect(tsconfigEnv(a.tsconfig, "/proj")).toEqual({
       OXC_TSCONFIG_PATH: resolve("/proj", "tsconfig.dev.json"),
-      TS_NODE_PROJECT: undefined,
+      TS_NODE_PROJECT: resolve("/proj", "tsconfig.dev.json"),
     });
     expect(tsconfigEnv(undefined, "/proj")).toEqual({});
   });

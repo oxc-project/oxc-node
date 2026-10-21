@@ -539,10 +539,16 @@ function childNodeOptions(
   return fromFiles;
 }
 
-/** The child env for `--tsconfig`: oxc-node reads TS_NODE_PROJECT before OXC_TSCONFIG_PATH. */
+/**
+ * The child env for `--tsconfig`. oxc-node reads TS_NODE_PROJECT before OXC_TSCONFIG_PATH,
+ * so both name the config: Node.js keeps a variable the environment already has, so an
+ * `--env-file` that sets either one cannot override it (issue #876).
+ */
 export function tsconfigEnv(
   tsconfig: string | undefined,
   cwd: string,
 ): Record<string, string | undefined> {
-  return tsconfig ? { OXC_TSCONFIG_PATH: resolve(cwd, tsconfig), TS_NODE_PROJECT: undefined } : {};
+  if (!tsconfig) return {};
+  const path = resolve(cwd, tsconfig);
+  return { OXC_TSCONFIG_PATH: path, TS_NODE_PROJECT: path };
 }
