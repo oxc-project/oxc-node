@@ -2719,11 +2719,12 @@ pub fn create_resolve<'env>(
     let failed = resolution.is_err();
     // TypeScript first is for the project's own files. A package that ships its
     // `.ts` (or `.jsx`) sources beside the compiled `.js` is still run from what
-    // it compiled, as it is when the package imports itself. The two orders can
-    // only disagree when the source order lands on an extension it tries ahead
-    // of the package order — every other result means the files tried before it
-    // are absent, so the package order picks it too — and only then is the
-    // request resolved again.
+    // it compiled, as it is when the package imports itself. When the source
+    // order lands on an extension it tries ahead of the package order, the
+    // request is resolved again with the package order. Any other result means
+    // the files tried before it are absent, so the package order picks it too,
+    // except for a `.jsx` specifier that lands on `.js`: the package order has
+    // no `.jsx` alias, and the `.js` is kept, as tsc and tsx resolve it.
     if order == ExtensionOrder::Source
         && let Ok(resolved) = &resolution
         && in_node_modules(resolved.path())
