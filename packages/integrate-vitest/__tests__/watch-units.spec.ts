@@ -14,10 +14,12 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterAll, describe, expect, test } from "vitest";
+import { afterAll, describe, expect, test, vi } from "vitest";
 
 import { DirWatcher, type DirWatcherOptions } from "../../cli/src/watch/dirs.js";
 import { descendants, parseProcStat, parsePs } from "../../cli/src/watch/kill-tree.js";
+import { DEFAULT_NAMES, help, namesFor, usage } from "../../cli/src/watch/help.js";
+import { createLog } from "../../cli/src/watch/log.js";
 import { fromOxcNode, parseWatchMessage } from "../../cli/src/watch/messages.js";
 
 const abs = (p: string) => resolve(p);
@@ -1162,5 +1164,45 @@ describe("DirWatcher", () => {
         w.close();
       }
     });
+  });
+});
+
+describe("names for a tool that embeds the watcher (issue #871)", () => {
+  test("oxnode's own", () => {
+    expect(namesFor()).toBe(DEFAULT_NAMES);
+    expect(namesFor("oxnode watch")).toBe(DEFAULT_NAMES);
+    expect(usage()).toBe(
+      "Usage: oxnode watch [options] [node options] [--] <entry> [script args...]",
+    );
+    expect(help()).toMatch(/^Usage: oxnode watch /);
+    expect(
+      help().endsWith("\n\n`oxnode --watch <entry>` still runs Node.js' own watch mode.\n"),
+    ).toBe(true);
+  });
+
+  test("another tool's", () => {
+    const vpx = namesFor("vpx watch");
+    expect(vpx).toEqual({ name: "vpx watch", label: "vpx", nodeWatch: null });
+    const text = help(vpx);
+    expect(text).toMatch(/^Usage: vpx watch \[options\]/);
+    expect(text.match(/^ {2}vpx watch /gm)).toHaveLength(3);
+    expect(text).not.toMatch(/oxnode watch|oxnode --watch|own watch mode/);
+    expect(text.endsWith("--clear-screen=false ./src/index.ts\n")).toBe(true);
+  });
+
+  test("the log tag", () => {
+    const tty = process.stdout.isTTY;
+    process.stdout.isTTY = false;
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    let lines: unknown[];
+    try {
+      createLog("vpx")("hi");
+    } finally {
+      lines = write.mock.calls.map((call) => call[0]);
+      write.mockRestore();
+      process.stdout.isTTY = tty;
+    }
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^\d\d:\d\d:\d\d \[vpx\] hi\n$/);
   });
 });

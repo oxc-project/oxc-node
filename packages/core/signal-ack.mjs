@@ -3,6 +3,9 @@
 // the app already has it, and forwarding would deliver it twice. The app tells
 // oxnode it got one by writing "I" to the socket named in OXNODE_SIGNAL_ACK;
 // oxnode forwards only when no such ack arrives.
+//
+// Public as `@oxc-node/core/signal-ack`, for a loader of its own (issue #871).
+// The protocol is in the README, "Embedding the watcher".
 import { connect } from "node:net";
 
 /**

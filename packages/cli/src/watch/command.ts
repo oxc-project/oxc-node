@@ -4,58 +4,73 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { Command, Option, type Usage } from "clipanion";
-
 import { createSignalAck, FORWARDED, gateSignals, SignalGate, sigintFromTerminal } from "../run.js";
 import { nestedWatcher, parseWatchArgs, tsconfigEnv } from "./args.js";
 import { DirWatcher } from "./dirs.js";
 import { makeMatcher, type Matcher, type Source } from "./glob.js";
-import { HELP, USAGE } from "./help.js";
+import { help, namesFor, usage } from "./help.js";
 import { killTree } from "./kill-tree.js";
-import { debug, log } from "./log.js";
+import { createLog, debug } from "./log.js";
 import { step, type Effect, type Event, type State } from "./machine.js";
 import { fromOxcNode, parseWatchMessage } from "./messages.js";
 
-export class WatchCommand extends Command {
-  static paths = [[`watch`]];
-
-  static usage: Usage = {
-    description: `Run a script and run it again when a file it uses changes`,
-    details: `Run \`oxnode watch --help\` for the options.`,
-    examples: [[`Watch mode`, `oxnode watch ./src/index.ts`]],
-  };
-
-  // Everything, `--help` included, goes to the watch parser.
-  args = Option.Proxy();
-
-  async execute() {
-    return runWatch(this.args);
-  }
-}
-
 const isBareReturn = (chunk: string) => /[\r\n]/.test(chunk) && chunk.replace(/[\r\n]/g, "") === "";
 
-export function runWatch(argv: string[]): Promise<number> {
-  const args = parseWatchArgs(argv, process.env);
+export interface WatchOptions {
+  /**
+   * The Node.js flags that load the app's hooks, put before the user's Node.js options:
+   * `node <loaderArgs> <node options> <entry> <script args>`.
+   * Default: `["--enable-source-maps", "--import", "@oxc-node/core/register" as a URL]`.
+   */
+  loaderArgs?: string[];
+  /**
+   * Folders of the loader's own files, which show up in the module graph but are never
+   * watched. Each folder's real path counts too. Default: the folder of
+   * `@oxc-node/core/register` when `loaderArgs` is not given, else none.
+   */
+  ignoreDirs?: string[];
+  /**
+   * The command as the user types it, in errors, the usage line and `--help`. Its first
+   * word tags the log lines. Default: `"oxnode watch"`.
+   */
+  name?: string;
+}
+
+/**
+ * Run the watcher until it stops, and resolve with the exit code. Until then it owns
+ * SIGINT, SIGTERM and SIGHUP, stdin (for Return) and the process's IPC channel.
+ */
+export function runWatch(argv: string[], options: WatchOptions = {}): Promise<number> {
+  const names = namesFor(options.name);
+  const log = createLog(names.label);
+  const args = parseWatchArgs(argv, process.env, undefined, undefined, names);
   if ("error" in args) {
     process.stderr.write(
-      `oxnode watch: ${args.error}\n${USAGE}\nRun "oxnode watch --help" for the options.\n`,
+      `${names.name}: ${args.error}\n${usage(names)}\nRun "${names.name} --help" for the options.\n`,
     );
     return Promise.resolve(1);
   }
   if (args.help) {
-    process.stdout.write(HELP);
+    process.stdout.write(help(names));
     return Promise.resolve(0);
   }
 
   const cwd = process.cwd();
-  const registerURL = import.meta.resolve("@oxc-node/core/register");
-  // oxc-node's own files show up in the module graph.
-  const ignoreDirs = [path.dirname(fileURLToPath(registerURL))];
-  try {
-    const real = realpathSync.native(ignoreDirs[0]);
-    if (real !== ignoreDirs[0]) ignoreDirs.push(real);
-  } catch {}
+  let { loaderArgs, ignoreDirs: given = [] } = options;
+  if (!loaderArgs) {
+    const registerURL = import.meta.resolve("@oxc-node/core/register");
+    loaderArgs = [`--enable-source-maps`, `--import`, registerURL];
+    // oxc-node's own files show up in the module graph.
+    if (!options.ignoreDirs) given = [path.dirname(fileURLToPath(registerURL))];
+  }
+  const ignoreDirs: string[] = [];
+  for (const dir of given) {
+    ignoreDirs.push(dir);
+    try {
+      const real = realpathSync.native(dir);
+      if (real !== dir) ignoreDirs.push(real);
+    } catch {}
+  }
   let matcher: Matcher;
   try {
     matcher = makeMatcher({
@@ -66,7 +81,7 @@ export function runWatch(argv: string[]): Promise<number> {
       ignoreDirs,
     });
   } catch (error) {
-    process.stderr.write(`oxnode watch: ${(error as Error).message}\n`);
+    process.stderr.write(`${names.name}: ${(error as Error).message}\n`);
     return Promise.resolve(1);
   }
   for (const note of args.notes) log(note);
@@ -100,7 +115,7 @@ export function runWatch(argv: string[]): Promise<number> {
       ...ack.env,
       ...tsconfigEnv(args.tsconfig, cwd),
     };
-    const nodeArgs = [`--enable-source-maps`, `--import`, registerURL, ...args.nodeArgs];
+    const nodeArgs = [...loaderArgs, ...args.nodeArgs];
     const timers = new Map<"debounce" | "kill", NodeJS.Timeout>();
     let state: State = { k: "idle" };
 

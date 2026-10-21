@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
  */
 export const CLI = fileURLToPath(new URL("../../../cli/dist/index.js", import.meta.url));
 const CORE = dirname(fileURLToPath(new URL("../../../core/register.mjs", import.meta.url)));
+const CLI_PACKAGE = fileURLToPath(new URL("../../../cli", import.meta.url));
 export const MAJOR = Number(process.versions.node.split(".")[0]);
 export const POSIX = process.platform !== "win32";
 /** These run under QEMU in CI, where file events and timers are too slow to time. */
@@ -32,9 +33,10 @@ const roots: string[] = [];
 
 /**
  * A project in a fresh temp folder, by its real path (Node.js reports real
- * paths, and macOS keeps tmp under a link), with `@oxc-node/core` linked in.
+ * paths, and macOS keeps tmp under a link), with `@oxc-node/core` linked in, and
+ * `@oxc-node/cli` too with `linkCli`.
  */
-export function project(files: Record<string, string>): string {
+export function project(files: Record<string, string>, opts: { linkCli?: boolean } = {}): string {
   // `.native` also expands a Windows 8.3 name (CI's temp folder is under `RUNNER~1`), so the
   // paths the tests expect are the ones Node.js reports.
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), "oxc-node-watch-e2e-")));
@@ -43,12 +45,15 @@ export function project(files: Record<string, string>): string {
     write(join(root, name), contents);
   }
   mkdirSync(join(root, "node_modules", "@oxc-node"), { recursive: true });
-  symlinkSync(
-    CORE,
-    join(root, "node_modules", "@oxc-node", "core"),
-    // `junction` is the only link type Windows allows without elevated privileges.
-    POSIX ? "dir" : "junction",
-  );
+  const links = opts.linkCli ? { core: CORE, cli: CLI_PACKAGE } : { core: CORE };
+  for (const [name, target] of Object.entries(links)) {
+    symlinkSync(
+      target,
+      join(root, "node_modules", "@oxc-node", name),
+      // `junction` is the only link type Windows allows without elevated privileges.
+      POSIX ? "dir" : "junction",
+    );
+  }
   return root;
 }
 
@@ -139,16 +144,16 @@ export interface Oxnode {
 const started: Oxnode[] = [];
 
 /**
- * Runs the built CLI with `args`. On POSIX it gets a process group of its own,
+ * Runs the built CLI (or `opts.script`) with `args`. On POSIX it gets a process group of its own,
  * so `process.kill(-pid, sig)` stands in for the terminal (Ctrl+C), and `stop`
  * can sweep up anything the app left behind.
  */
 export function startOxnode(
   args: string[],
   cwd: string,
-  opts: { debug?: boolean; env?: NodeJS.ProcessEnv } = {},
+  opts: { debug?: boolean; env?: NodeJS.ProcessEnv; script?: string } = {},
 ): Oxnode {
-  const child = spawn(process.execPath, [CLI, ...args], {
+  const child = spawn(process.execPath, [opts.script ?? CLI, ...args], {
     cwd,
     env: cleanEnv({ ...(opts.debug === false ? {} : { OXNODE_WATCH_DEBUG: "1" }), ...opts.env }),
     detached: POSIX,
@@ -228,7 +233,7 @@ export function startOxnode(
           if (Date.now() >= until) throw error;
           // The write was seen: the app is only slow to start (a worker, a slow runner). Writing
           // again would restart it before it prints, again and again.
-          if (/\[oxnode\] change in /.test(buffers.stdout.slice(at))) {
+          if (/\[[\w-]+\] change in /.test(buffers.stdout.slice(at))) {
             return await wait("stdout", re, until - Date.now(), from);
           }
         }

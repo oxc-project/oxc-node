@@ -24,8 +24,10 @@
     "index.d.ts",
     "index.js",
     "register.mjs",
+    "signal-ack.d.mts",
     "signal-ack.mjs",
     "src/**/*",
+    "watch-report.d.mts",
     "watch-report.mjs"
   ],
   "main": "./index.js",
@@ -1101,6 +1103,16 @@
     },
     "./register.mjs": {
       "import": "./register.mjs"
+    },
+    "./signal-ack": {
+      "types": "./signal-ack.d.mts",
+      "import": "./signal-ack.mjs",
+      "default": "./signal-ack.mjs"
+    },
+    "./watch-report": {
+      "types": "./watch-report.d.mts",
+      "import": "./watch-report.mjs",
+      "default": "./watch-report.mjs"
     }
   },
   "publishConfig": {

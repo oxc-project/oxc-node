@@ -6,7 +6,7 @@ import { Builtins, Cli, Command, Option, Usage } from "clipanion";
 
 import pkgJson from "../package.json" with { type: "json" };
 import { runChild, usesNodeWatch } from "./run.js";
-import { WatchCommand } from "./watch/command.js";
+import { runWatch } from "./watch/command.js";
 
 const [node, app, ...stdArgs] = process.argv;
 
@@ -51,6 +51,23 @@ class MainCommand extends Command {
         nodeWatch: usesNodeWatch(this.args),
       });
     });
+  }
+}
+
+class WatchCommand extends Command {
+  static paths = [[`watch`]];
+
+  static usage: Usage = {
+    description: `Run a script and run it again when a file it uses changes`,
+    details: `Run \`oxnode watch --help\` for the options.`,
+    examples: [[`Watch mode`, `oxnode watch ./src/index.ts`]],
+  };
+
+  // Everything, `--help` included, goes to the watch parser.
+  args = Option.Proxy();
+
+  async execute() {
+    return runWatch(this.args);
   }
 }
 

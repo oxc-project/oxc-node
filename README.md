@@ -199,6 +199,88 @@ watcher ignores `SIGHUP`.
 - **A script named `watch`.** `oxnode watch` is now the watch command, so run a
   file named exactly `watch` as `oxnode ./watch`.
 
+### Embedding the watcher
+
+A tool with its own loader built on the oxc-node binding (Vite+'s `vpx watch`,
+for example) can run the same watcher. Both sides have an entry:
+
+```
+ your CLI                                        the app (your loader)
+ runWatch(argv, options)  ── node <loaderArgs> <node options> <entry> ──▶  installSignalAck()
+   @oxc-node/cli/watch                                                     watchSink(), withFlush()
+                          ◀── IPC { "watch:import": [url] } ──────────────   @oxc-node/core/watch-report
+                          ◀── "I" on the OXNODE_SIGNAL_ACK socket ─────────   @oxc-node/core/signal-ack
+```
+
+The watcher side:
+
+```js
+import { runWatch } from "@oxc-node/cli/watch";
+
+process.exitCode = await runWatch(process.argv.slice(2), {
+  name: "vpx watch",
+  loaderArgs: ["--enable-source-maps", "--require", preloadPath, "--import", hooksURL],
+  ignoreDirs: [loaderDir],
+});
+```
+
+| Option       | Default                                                                          | What it does                                                                                    |
+| ------------ | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `loaderArgs` | `["--enable-source-maps", "--import", "@oxc-node/core/register"]`                | Node.js flags that load your hooks, put before the user's Node.js options                       |
+| `ignoreDirs` | the folder of `@oxc-node/core/register`, if `loaderArgs` is not given, else none | Folders of your loader's own files: Node.js reports them, but they are not watched              |
+| `name`       | `"oxnode watch"`                                                                 | The command in errors, the usage line and `--help`; its first word tags the log lines (`[vpx]`) |
+
+`runWatch` resolves with the exit code once the watcher stops. Until then it
+handles `SIGINT`, `SIGTERM`, `SIGHUP`, stdin (Return) and the IPC channel of
+the process, so add no handlers of your own and run one at a time. Importing
+`@oxc-node/cli/watch` starts nothing, and it does not load clipanion or the
+binding.
+
+The app side, in your loader. `take` is your binding's
+`takeWatchDependencies`, so these entries load no binding of their own:
+
+```js
+import { isMainThread } from "node:worker_threads";
+import { installSignalAck } from "@oxc-node/core/signal-ack";
+import { watchSink, withFlush } from "@oxc-node/core/watch-report";
+import { enableWatchReport, takeWatchDependencies } from "<your binding>";
+
+if (isMainThread) installSignalAck(); // first, before the app's code
+const sink = watchSink(); // once per thread; share it between your --require and --import
+if (sink) enableWatchReport(); // before the first resolve or transform
+const hooks = sink
+  ? {
+      resolve: withFlush(resolve, sink, takeWatchDependencies),
+      load: withFlush(load, sink, takeWatchDependencies),
+    }
+  : { resolve, load };
+```
+
+`flush(sink, take)` sends what the binding recorded, for code that is not a
+hook (a CommonJS transform). `createRelay(sink, take)` returns a port for hooks
+registered with `module.register()`, which run on a thread with no IPC.
+From a CommonJS `--require` preload, `require()` of these two entries works on
+Node.js 22.12 and later, as for `@oxc-node/core/importer`.
+
+What the two sides agree on, for a loader that does not use these entries:
+
+- **Start.** The app runs as `node <loaderArgs> <node options> <entry> <script args>`
+  with stdio `["inherit", "inherit", "inherit", "ipc"]`, and
+  `WATCH_REPORT_DEPENDENCIES=1` in its environment.
+- **Reports.** The app sends `{ "watch:import": [url] }` (or `"watch:require"`)
+  over IPC. Each entry is a `file:` URL or an absolute path; a bad one is
+  skipped alone. A report the loader makes itself (a tsconfig it read, a path a
+  failed resolve looked for) also has `"oxc-node": true`: it counts even under
+  `node_modules`, and is dropped before each rerun. Other messages pass through
+  both ways.
+- **Ctrl+C.** On POSIX, `OXNODE_SIGNAL_ACK` names a unix socket. While the app
+  has a `SIGINT` listener of its own, it writes the byte `I` to the socket for
+  each `SIGINT` it gets, and the watcher then does not send it a second one.
+  The app removes the variable before its code runs. With no socket, or no
+  `I`, the watcher passes `SIGINT` on as before.
+
+`OXNODE_WATCH_DEBUG`, its output, and the log text are not part of this.
+
 ## Node hook
 
 If you do not need the wrapper CLI, install the core package:

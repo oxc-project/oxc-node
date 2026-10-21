@@ -22,9 +22,19 @@
     "oxnode": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "watch.d.ts"
   ],
   "type": "module",
+  "exports": {
+    "./watch": {
+      "types": "./watch.d.ts",
+      "import": "./dist/watch.js",
+      "default": "./dist/watch.js"
+    },
+    "./dist/*": "./dist/*",
+    "./package.json": "./package.json"
+  },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
