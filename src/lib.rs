@@ -1046,13 +1046,14 @@ fn resolver_for_conditions(
 const SOURCE_FIRST_EXTENSIONS: [&str; 5] = ["ts", "tsx", "mts", "cts", "jsx"];
 
 /// The base options with TypeScript tried before JavaScript, in the `.js`,
-/// `.mjs` and `.cjs` aliases and in the extensions an extensionless specifier
-/// tries, and `.jsx` as a `.js` alias target the way tsc maps it.
+/// `.jsx`, `.mjs` and `.cjs` aliases and in the extensions an extensionless
+/// specifier tries, and `.jsx` as a `.js` alias target the way tsc maps it.
 fn source_order(options: ResolveOptions) -> ResolveOptions {
     let owned = |extensions: &[&str]| extensions.iter().map(|ext| (*ext).to_owned()).collect();
     ResolveOptions {
         extension_alias: vec![
             (".js".to_owned(), owned(&[".ts", ".tsx", ".js", ".jsx"])),
+            (".jsx".to_owned(), owned(&[".tsx", ".ts", ".jsx", ".js"])),
             (".mjs".to_owned(), owned(&[".mts", ".mjs"])),
             (".cjs".to_owned(), owned(&[".cts", ".cjs"])),
         ],
@@ -4145,6 +4146,7 @@ mod tests {
             options.extension_alias.iter().find(|(from, _)| from == ext).map(|(_, to)| to.clone())
         };
         assert_eq!(alias(".js").unwrap(), [".ts", ".tsx", ".js", ".jsx"]);
+        assert_eq!(alias(".jsx").unwrap(), [".tsx", ".ts", ".jsx", ".js"]);
         assert_eq!(alias(".mjs").unwrap(), [".mts", ".mjs"]);
         assert_eq!(alias(".cjs").unwrap(), [".cts", ".cjs"]);
         let position = |ext: &str| options.extensions.iter().position(|e| e == ext).unwrap();

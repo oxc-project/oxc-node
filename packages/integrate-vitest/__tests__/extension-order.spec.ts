@@ -104,6 +104,20 @@ describe("TypeScript resolves before JavaScript outside node_modules", () => {
     expect(run(root, "./main.ts")).toBe("jsx jsx\n");
   });
 
+  test("`./dep.jsx` picks `dep.tsx`, then `dep.ts`", () => {
+    const root = fixture({
+      "dep.jsx": "export const v = 'jsx';\n",
+      "dep.tsx": value("tsx"),
+      "util.ts": value("ts"),
+      "main.ts": [
+        "import { v as a } from './dep.jsx';",
+        "import { v as b } from './util.jsx';",
+        "console.log(a, b);",
+      ].join("\n"),
+    });
+    expect(run(root, "./main.ts")).toBe("tsx ts\n");
+  });
+
   test("a JavaScript file alone still resolves", () => {
     const root = fixture({
       "dep.js": "export const v = 'js';\n",
