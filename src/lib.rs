@@ -1045,6 +1045,17 @@ fn resolver_for_conditions(
 /// [`ExtensionOrder::Package`] tries them.
 const SOURCE_FIRST_EXTENSIONS: [&str; 5] = ["ts", "tsx", "mts", "cts", "jsx"];
 
+/// Extensions a JavaScript specifier names, which the entry point and a
+/// JavaScript importer resolve to as written when the file exists (issue #878).
+const JAVASCRIPT_EXTENSIONS: [&str; 4] = ["js", "jsx", "mjs", "cjs"];
+
+/// Whether `path` is a JavaScript file whose imports resolve the way Node.js
+/// resolves them, the named file first, rather than TypeScript first.
+fn is_javascript_file(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ["js", "mjs", "cjs"].iter().any(|js| ext.eq_ignore_ascii_case(js)))
+}
+
 /// The base options with TypeScript tried before JavaScript, in the `.js`,
 /// `.jsx`, `.mjs` and `.cjs` aliases and in the extensions an extensionless
 /// specifier tries, and `.jsx` as a `.js` alias target the way tsc maps it.
@@ -2743,6 +2754,35 @@ pub fn create_resolve<'env>(
         resolution = resolve(&package_resolver);
     }
 
+    // TypeScript first is also only for TypeScript importers, as tsx resolves.
+    // The entry point, a preload resolved from the working directory and an
+    // import from a JavaScript file run the JavaScript file they name when it
+    // exists, as Node.js does (issue #878): `oxnode ./main.js` runs `main.js`
+    // beside `main.ts`, and `import "./dep.js"` in a `.js` file loads `dep.js`
+    // beside `dep.ts`. When the source order lands on another extension, the
+    // request is resolved again with the package order, which tries the named
+    // extension first, and its answer is kept only if it is the named file.
+    if order == ExtensionOrder::Source
+        && parent_file.is_none_or(is_javascript_file)
+        && let Some((_, resolver_specifier)) = &request
+        && let Some(named) = Path::new(resolver_specifier.as_ref()).extension()
+        && JAVASCRIPT_EXTENSIONS.iter().any(|ext| named.eq_ignore_ascii_case(ext))
+        && let Ok(resolved) = &resolution
+        && resolved.path().extension().is_some_and(|ext| ext != named)
+    {
+        let package_resolver = resolver_for_conditions(
+            base_resolver,
+            &context.conditions,
+            ExtensionOrder::Package,
+            symlinks,
+        );
+        if let Ok(package_resolution) = resolve(&package_resolver)
+            && package_resolution.path().extension() == Some(named)
+        {
+            resolution = Ok(package_resolution);
+        }
+    }
+
     // A file that does not exist yet can still be created, so a watch parent
     // learns every path the resolver tried (`x.ts` for `./x.js`, `dir/index.ts`,
     // a `paths` alias's targets). It runs ahead of the early returns below, so a
@@ -4162,6 +4202,18 @@ mod tests {
         assert!(position(".ts") < position(".js"));
         assert!(position(".tsx") < position(".js"));
         assert!(position(".js") < position(".jsx"));
+    }
+
+    // Issue #878: imports from these files resolve the named JavaScript file
+    // first; TypeScript and `.jsx` importers keep TypeScript first.
+    #[test]
+    fn javascript_importers_name_their_files() {
+        for file in ["a.js", "a.mjs", "a.cjs", "A.JS"] {
+            assert!(is_javascript_file(Path::new(file)), "{file}");
+        }
+        for file in ["a.ts", "a.mts", "a.cts", "a.tsx", "a.jsx", "a"] {
+            assert!(!is_javascript_file(Path::new(file)), "{file}");
+        }
     }
 
     // Issue #839: a diagnostic names the file, line and column and shows the

@@ -161,3 +161,93 @@ describe("TypeScript resolves before JavaScript outside node_modules", () => {
     expect(run(root, "./main.ts")).toBe("mjs\n");
   });
 });
+
+/**
+ * TypeScript first is how tsc and tsx resolve an import from a TypeScript file.
+ * The entry point, a preload and an import from a JavaScript file name the file
+ * Node.js runs, so `./main.js` beside `main.ts` runs `main.js` (issue #878).
+ */
+describe("the entry point and JavaScript importers run the JavaScript file they name", () => {
+  test("`./main.js` runs `main.js` beside `main.ts`", () => {
+    const root = fixture({
+      "main.js": "console.log('js');\n",
+      "main.ts": "console.log('ts');\n",
+    });
+    expect(run(root, "./main.js")).toBe("js\n");
+  });
+
+  test("a preload `./pre.js` runs `pre.js` beside `pre.ts`", () => {
+    const root = fixture({
+      "pre.js": "console.log('pre js');\n",
+      "pre.ts": "console.log('pre ts');\n",
+      "main.ts": "console.log('main');\n",
+    });
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "@oxc-node/core/register", "--import", "./pre.js", "./main.ts"],
+      { cwd: root, encoding: "utf8", env: ENV, timeout: 30_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("pre js\nmain\n");
+  });
+
+  test("a `.js` importer loads `dep.js`, `dep.mjs` and `dep.cjs` beside their TypeScript", () => {
+    const root = fixture({
+      "dep.js": "export const v = 'js';\n",
+      "dep.ts": value("ts"),
+      "dep.mjs": "export const v = 'mjs';\n",
+      "dep.mts": value("mts"),
+      "dep.cjs": "exports.v = 'cjs';\n",
+      "dep.cts": "exports.v = 'cts';\n",
+      "importer.js": [
+        "import { v as a } from './dep.js';",
+        "import { v as b } from './dep.mjs';",
+        "import { v as c } from './dep.cjs';",
+        "console.log(a, b, c);",
+      ].join("\n"),
+    });
+    expect(run(root, "./importer.js")).toBe("js mjs cjs\n");
+  });
+
+  test("`.mjs` and `.cjs` importers load the JavaScript file they name", () => {
+    const root = fixture({
+      "dep.js": "export const v = 'js';\n",
+      "dep.ts": value("ts"),
+      "esm.mjs": "import { v } from './dep.js';\nconsole.log('mjs', v);\n",
+      "main.cjs": "import('./esm.mjs');\n",
+    });
+    expect(run(root, "./main.cjs")).toBe("mjs js\n");
+  });
+
+  test("a `.js` importer loads `dep.jsx` beside `dep.tsx`", () => {
+    const root = fixture({
+      "dep.jsx": "export const v = 'jsx';\n",
+      "dep.tsx": value("tsx"),
+      "importer.js": "import { v } from './dep.jsx';\nconsole.log(v);\n",
+    });
+    expect(run(root, "./importer.js")).toBe("jsx\n");
+  });
+
+  test("a `.js` importer still finds TypeScript when the named file is missing", () => {
+    const root = fixture({
+      "util.ts": value("ts"),
+      "comp.tsx": value("tsx"),
+      "importer.js": [
+        "import { v as a } from './util.js';",
+        "import { v as b } from './comp.jsx';",
+        "console.log(a, b);",
+      ].join("\n"),
+    });
+    expect(run(root, "./importer.js")).toBe("ts tsx\n");
+  });
+
+  test("a TypeScript importer reached from a JavaScript entry keeps TypeScript first", () => {
+    const root = fixture({
+      "dep.js": "export const v = 'js';\n",
+      "dep.ts": value("ts"),
+      "main.js": "import './lib.ts';\n",
+      "lib.ts": "import { v } from './dep.js';\nconsole.log(v);\n",
+    });
+    expect(run(root, "./main.js")).toBe("ts\n");
+  });
+});
