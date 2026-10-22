@@ -1046,13 +1046,14 @@ fn resolver_for_conditions(
 const SOURCE_FIRST_EXTENSIONS: [&str; 5] = ["ts", "tsx", "mts", "cts", "jsx"];
 
 /// The base options with TypeScript tried before JavaScript, in the `.js`,
-/// `.mjs` and `.cjs` aliases and in the extensions an extensionless specifier
-/// tries, and `.jsx` as a `.js` alias target the way tsc maps it.
+/// `.jsx`, `.mjs` and `.cjs` aliases and in the extensions an extensionless
+/// specifier tries, and `.jsx` as a `.js` alias target the way tsc maps it.
 fn source_order(options: ResolveOptions) -> ResolveOptions {
     let owned = |extensions: &[&str]| extensions.iter().map(|ext| (*ext).to_owned()).collect();
     ResolveOptions {
         extension_alias: vec![
             (".js".to_owned(), owned(&[".ts", ".tsx", ".js", ".jsx"])),
+            (".jsx".to_owned(), owned(&[".tsx", ".ts", ".jsx", ".js"])),
             (".mjs".to_owned(), owned(&[".mts", ".mjs"])),
             (".cjs".to_owned(), owned(&[".cts", ".cjs"])),
         ],
@@ -2718,11 +2719,12 @@ pub fn create_resolve<'env>(
     let failed = resolution.is_err();
     // TypeScript first is for the project's own files. A package that ships its
     // `.ts` (or `.jsx`) sources beside the compiled `.js` is still run from what
-    // it compiled, as it is when the package imports itself. The two orders can
-    // only disagree when the source order lands on an extension it tries ahead
-    // of the package order — every other result means the files tried before it
-    // are absent, so the package order picks it too — and only then is the
-    // request resolved again.
+    // it compiled, as it is when the package imports itself. When the source
+    // order lands on an extension it tries ahead of the package order, the
+    // request is resolved again with the package order. Any other result means
+    // the files tried before it are absent, so the package order picks it too,
+    // except for a `.jsx` specifier that lands on `.js`: the package order has
+    // no `.jsx` alias, and the `.js` is kept, as tsc and tsx resolve it.
     if order == ExtensionOrder::Source
         && let Ok(resolved) = &resolution
         && in_node_modules(resolved.path())
@@ -4153,6 +4155,7 @@ mod tests {
             options.extension_alias.iter().find(|(from, _)| from == ext).map(|(_, to)| to.clone())
         };
         assert_eq!(alias(".js").unwrap(), [".ts", ".tsx", ".js", ".jsx"]);
+        assert_eq!(alias(".jsx").unwrap(), [".tsx", ".ts", ".jsx", ".js"]);
         assert_eq!(alias(".mjs").unwrap(), [".mts", ".mjs"]);
         assert_eq!(alias(".cjs").unwrap(), [".cts", ".cjs"]);
         let position = |ext: &str| options.extensions.iter().position(|e| e == ext).unwrap();

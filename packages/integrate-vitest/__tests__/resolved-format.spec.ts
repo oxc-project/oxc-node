@@ -147,10 +147,11 @@ describe("resolved module format (issue #797)", () => {
     const root = fixture({
       "package.json": JSON.stringify({ name: "fx", private: true, type: "commonjs" }),
       "dep.tsx": `${probe("dep.tsx")}\nexports.dep = true;\n`,
-      "dep.jsx": `${probe("dep.jsx")}\nexports.dep = true;\n`,
+      // Not `dep.jsx`: `./dep.jsx` resolves to `dep.tsx` first, as tsc resolves it.
+      "other.jsx": `${probe("other.jsx")}\nexports.dep = true;\n`,
       "entry.ts": [
         'await import("./dep.tsx");',
-        'await import("./dep.jsx");',
+        'await import("./other.jsx");',
         // Top-level await is module syntax, so the entry itself runs as an ES
         // module — the CommonJS assertions belong to the two deps above.
         'console.log("entry:", typeof module !== "undefined" ? typeof module.exports : "n/a");',
@@ -158,7 +159,7 @@ describe("resolved module format (issue #797)", () => {
     });
     const output = run(root, "./entry.ts");
     expect(output).toContain("dep.tsx: commonjs function object");
-    expect(output).toContain("dep.jsx: commonjs function object");
+    expect(output).toContain("other.jsx: commonjs function object");
     expect(output).toContain("entry: n/a");
   });
 
