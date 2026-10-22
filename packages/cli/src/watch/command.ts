@@ -9,12 +9,24 @@ import { nestedWatcher, parseWatchArgs, tsconfigEnv } from "./args.js";
 import { DirWatcher } from "./dirs.js";
 import { makeMatcher, type Matcher, type Source } from "./glob.js";
 import { help, namesFor, usage } from "./help.js";
-import { killTree } from "./kill-tree.js";
+import {
+  killTree,
+  processTable,
+  signalAll,
+  stillRunning,
+  subtree,
+  type ProcRow,
+} from "./kill-tree.js";
 import { createLog, debug } from "./log.js";
 import { step, type Effect, type Event, type State } from "./machine.js";
 import { fromOxcNode, parseWatchMessage } from "./messages.js";
 
 const isBareReturn = (chunk: string) => /[\r\n]/.test(chunk) && chunk.replace(/[\r\n]/g, "") === "";
+/** How soon a rerun looks again for what the app left running: fast first, then every 250 ms. */
+const TREE_POLL_MS = 25;
+const TREE_POLL_MAX_MS = 250;
+/** How long after a force kill oxnode waits for what is left: SIGKILL cannot end a process stuck on a hung mount. */
+const FORCE_WAIT_MS = 1000;
 
 export interface WatchOptions {
   /**
@@ -118,6 +130,33 @@ export function runWatch(argv: string[], options: WatchOptions = {}): Promise<nu
     const nodeArgs = [...loaderArgs, ...args.nodeArgs];
     const timers = new Map<"debounce" | "kill", NodeJS.Timeout>();
     let state: State = { k: "idle" };
+    // What the app had started when a rerun stopped it. Once the app exits, these move to
+    // PID 1 and cannot be found by parent, so the list is taken before the signal.
+    let tree: ProcRow[] = [];
+    // When a force kill ran: from then on, what is left gets SIGKILL each time oxnode looks.
+    let forcedAt: number | undefined;
+    let treeTimer: NodeJS.Timeout | undefined;
+
+    /** Signal what is left of `tree` once, and call `then` when all of it is gone. */
+    const afterTree = (then: () => void, tick = 0) => {
+      if (tree.length) {
+        tree = stillRunning(tree, processTable());
+        if (tick === 0 || forcedAt !== undefined) {
+          const sig = forcedAt === undefined ? cfg.killSignal : "SIGKILL";
+          tree = signalAll(tree, sig as NodeJS.Signals);
+        }
+      }
+      if (tree.length && forcedAt !== undefined && Date.now() - forcedAt >= FORCE_WAIT_MS) {
+        log(`${tree.map((r) => r.pid).join(" ")} did not stop after a force kill, going on`);
+        tree = [];
+      }
+      if (tree.length === 0) return then();
+      if (tick === 0) debug(`waiting for ${tree.map((r) => r.pid).join(" ")}`);
+      treeTimer = setTimeout(
+        () => afterTree(then, tick + 1),
+        Math.min(TREE_POLL_MAX_MS, TREE_POLL_MS * 2 ** tick),
+      );
+    };
 
     const display = (p: string) => {
       const rel = path.relative(cwd, p);
@@ -185,6 +224,8 @@ export function runWatch(argv: string[], options: WatchOptions = {}): Promise<nu
         queueMicrotask(() => dispatch({ t: "spawnError", err: nested }));
         return;
       }
+      tree = [];
+      forcedAt = undefined;
       newRun();
       const c = spawn(process.execPath, nodeArgs, {
         env,
@@ -213,7 +254,8 @@ export function runWatch(argv: string[], options: WatchOptions = {}): Promise<nu
       c.on("exit", (code, signal) => {
         if (child !== c) return;
         child = undefined;
-        dispatch({ t: "childExit", code, signal });
+        // What it started may still hold a port: go on once that is gone too.
+        afterTree(() => dispatch({ t: "childExit", code, signal }));
       });
       if (c.pid !== undefined) debug(`spawn ${c.pid}`);
     };
@@ -224,12 +266,19 @@ export function runWatch(argv: string[], options: WatchOptions = {}): Promise<nu
           spawnChild();
           break;
         case "kill":
+          if (!child) break;
           // On Windows `kill()` is TerminateProcess anyway, and it leaves the grandchildren.
-          if (child && process.platform === "win32") killTree(child);
-          else child?.kill(e.sig as NodeJS.Signals);
+          if (process.platform === "win32") killTree(child);
+          else {
+            // Before the signal: once the app exits, what it started moves to PID 1.
+            if (child.pid !== undefined) tree = subtree(processTable(), child.pid);
+            child.kill(e.sig as NodeJS.Signals);
+          }
           break;
         case "killTree":
-          if (child) killTree(child);
+          // While oxnode waits for what the app left, `child` is undefined and `tree` holds it.
+          forcedAt ??= Date.now();
+          tree = killTree(child, tree);
           break;
         case "clearScreen":
           process.stdout.write("\x1Bc");
@@ -287,6 +336,8 @@ export function runWatch(argv: string[], options: WatchOptions = {}): Promise<nu
     };
 
     function finish(code: number) {
+      clearTimeout(treeTimer);
+      tree = [];
       for (const t of timers.values()) clearTimeout(t);
       timers.clear();
       signals.dispose();

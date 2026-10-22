@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
   linkSync,
@@ -17,7 +18,14 @@ import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, test, vi } from "vitest";
 
 import { DirWatcher, type DirWatcherOptions } from "../../cli/src/watch/dirs.js";
-import { descendants, parseProcStat, parsePs } from "../../cli/src/watch/kill-tree.js";
+import {
+  descendants,
+  parseProcStat,
+  parsePs,
+  signalAll,
+  stillRunning,
+  subtree,
+} from "../../cli/src/watch/kill-tree.js";
 import { DEFAULT_NAMES, help, namesFor, usage } from "../../cli/src/watch/help.js";
 import { createLog } from "../../cli/src/watch/log.js";
 import { fromOxcNode, parseWatchMessage } from "../../cli/src/watch/messages.js";
@@ -121,6 +129,58 @@ describe("kill tree parsers", () => {
     expect(descendants(table, 99)).toEqual([]);
     // A loop in a bad snapshot ends.
     expect(descendants([...table, { pid: 10, ppid: 13 }], 10)).toEqual([11, 12, 13]);
+    expect(subtree(table, 10).map((r) => r.pid)).toEqual([11, 12, 13]);
+  });
+
+  test("/proc/<pid>/stat: the state and the start time", () => {
+    const line =
+      "1234 (node) S 1000 1234 1234 0 -1 4194560 2000 0 0 0 10 5 0 0 20 0 11 0 987654 1 2";
+    expect(parseProcStat(line)).toEqual({ pid: 1234, ppid: 1000, start: "987654" });
+    const zombie = "9 (x) Z 1 9 9 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 555 0 0";
+    expect(parseProcStat(zombie)).toEqual({ pid: 9, ppid: 1, zombie: true, start: "555" });
+    expect(parseProcStat(zombie.replace(" Z ", " X "))?.zombie).toBe(true);
+    // The state comes after the last `)`.
+    expect(parseProcStat("5 (a) Z (b) S 4 5 5")?.zombie).toBe(undefined);
+  });
+
+  test("ps -A -o pid=,ppid=,stat=,lstart=", () => {
+    const text =
+      "  350     1 Ss   Thu Oct  1 11:22:51 2026    \n28750 28748 ZN   Thu Oct 22 11:30:59 2026\nbad\n";
+    expect(parsePs(text)).toEqual([
+      { pid: 350, ppid: 1, start: "Thu Oct  1 11:22:51 2026" },
+      { pid: 28750, ppid: 28748, zombie: true, start: "Thu Oct 22 11:30:59 2026" },
+    ]);
+  });
+
+  test("stillRunning drops what is gone and adds what the rest started since", () => {
+    const table = [
+      { pid: 1, ppid: 0 },
+      { pid: 11, ppid: 1, start: "a" },
+      { pid: 12, ppid: 1, start: "x" },
+      { pid: 13, ppid: 1, start: "c", zombie: true },
+      { pid: 14, ppid: 11, start: "d" },
+      { pid: 15, ppid: 1, start: "e" },
+      { pid: 16, ppid: 14, start: "f" },
+    ];
+    const rows = [
+      { pid: 11, ppid: 10, start: "a" },
+      // Another process now has this PID.
+      { pid: 12, ppid: 10, start: "b" },
+      { pid: 13, ppid: 10, start: "c" },
+      { pid: 14, ppid: 11, start: "d" },
+    ];
+    // 15 is not below any of them: it is not ours.
+    expect(stillRunning(rows, table).map((r) => r.pid)).toEqual([11, 14, 16]);
+    expect(stillRunning(rows, [])).toEqual([]);
+  });
+
+  test("signalAll keeps only the processes it reached", () => {
+    const gone = spawnSync(process.execPath, ["-e", ""]).pid!;
+    const rows = [
+      { pid: process.pid, ppid: 0 },
+      { pid: gone, ppid: 0 },
+    ];
+    expect(signalAll(rows, 0).map((r) => r.pid)).toEqual([process.pid]);
   });
 });
 

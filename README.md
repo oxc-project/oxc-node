@@ -154,10 +154,11 @@ use `oxnode --watch --test`.
 | Return | rerun now          | force kill now                   |
 | Ctrl+C | stop               | press again to force kill        |
 
-A rerun first sends `--kill-signal` to the app. If the app is still running
-after `--kill-timeout`, oxnode kills it and every process it started. A
-second Ctrl+C counts only when it comes more than half a second after the
-first one.
+A rerun first sends `--kill-signal` to the app. Once the app exits, oxnode
+sends it to the processes the app started that are still running, and starts
+the next run when they are gone, so a port they held is free again. If
+anything is still running after `--kill-timeout`, oxnode kills it. A second
+Ctrl+C counts only when it comes more than half a second after the first one.
 
 ### Exit codes and signals
 
@@ -194,6 +195,13 @@ watcher ignores `SIGHUP`.
 - **Background jobs.** `oxnode watch app.ts &` does not read the terminal. A job
   moved to the background later (Ctrl+Z, then `bg`) stops on its next read; use
   `--no-rerun-on-enter` for that.
+- **Processes left behind.** On a rerun, oxnode stops what the app had started
+  when the rerun began, and what those processes start later. A process the
+  app starts while it is stopping, or leaves behind when it exits by itself,
+  keeps running. Stop those in the app. A process even a force kill cannot
+  stop (one stuck on a hung network drive, say) is left behind after 1 s.
+- **PID 1 in a container.** Stopped processes stay as zombies, which oxnode
+  counts as gone. Use `docker run --init` to clean them up.
 - **Windows** has no graceful stop before a rerun: oxnode ends the app and its
   children at once, and `--kill-signal` is ignored.
 - **A script named `watch`.** `oxnode watch` is now the watch command, so run a

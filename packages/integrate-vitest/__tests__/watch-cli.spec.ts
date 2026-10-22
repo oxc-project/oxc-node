@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, test } from "vitest";
 
@@ -40,6 +41,41 @@ const sentinel = (s: string) => `export const s: string = ${JSON.stringify(s)};\
 const MAIN = `import { v } from "./dep.js";\nconsole.log("RUN", v, process.pid);\n${KEEP}`;
 const runLine = (v: string) => new RegExp(`^RUN ${v} \\d+\\n`, "m");
 const count = (text: string, re: RegExp) => text.match(new RegExp(re, "g"))?.length ?? 0;
+
+/** A port no one listens on now. */
+const freePort = () =>
+  new Promise<number>((resolve, reject) => {
+    const server = createServer().listen(0, () => {
+      const { port } = server.address() as { port: number };
+      server.close(() => resolve(port));
+    });
+    server.on("error", reject);
+  });
+
+/**
+ * An app that starts a server in a normal subprocess, as `<v> <port>` (issue #875). The
+ * server prints `GC listening <v> <pid>`, and on SIGTERM cleans up for 200 ms, or with
+ * `ignore`, prints `GC ignored <v>` and keeps running.
+ */
+const serverApp = (port: number, mode: "clean" | "ignore") => ({
+  "package.json": ESM,
+  "main.ts": `import { spawn } from "node:child_process";
+import { v } from "./dep.js";
+spawn(process.execPath, ["gc.mjs", v, "${port}", "${mode}"], { stdio: "inherit" });
+console.log("RUN", v, process.pid);
+`,
+  "gc.mjs": `import { createServer } from "node:net";
+const [v, port, mode] = process.argv.slice(2);
+process.on("SIGTERM", () => {
+  if (mode === "ignore") return console.log("GC ignored", v);
+  setTimeout(() => { console.log("GC cleaned", v); process.exit(0); }, 200);
+});
+createServer()
+  .listen(Number(port), () => console.log("GC listening", v, process.pid))
+  .on("error", (e) => { console.log("GC error", v, e.code); process.exit(1); });
+`,
+  "dep.ts": value("v1"),
+});
 
 const cli = (args: string[], cwd: string) =>
   spawnSync(process.execPath, [CLI, ...args], { cwd, env: cleanEnv(), encoding: "utf8" });
@@ -709,6 +745,44 @@ ${KEEP}`,
     expect(o.stdout()).toContain("[oxnode] still running after 300ms, force killing");
     expect(await isGone(Number(app)), "the app").toBe(true);
     expect(await isGone(Number(grandchild)), "the app's child").toBe(true);
+  });
+
+  test("a restart stops what the app started, and waits for it (issue #875)", async () => {
+    const root = project(serverApp(await freePort(), "clean"));
+    const o = startOxnode(["watch", "main.ts"], root);
+    const [, gc] = await o.waitFor(/^GC listening v1 (\d+)\n/m);
+    await o.watched(join(root, "dep.ts"));
+    await o.editUntil(join(root, "dep.ts"), () => value("v2"), /^GC listening v2 \d+\n/m);
+    expect(o.stdout()).toMatch(/^GC cleaned v1\n[\s\S]*^RUN v2 /m);
+    expect(o.stdout()).not.toContain("EADDRINUSE");
+    expect(o.stdout()).not.toContain("force killing");
+    expect(await isGone(Number(gc)), "the app's server").toBe(true);
+  });
+
+  test("--kill-timeout=300 force kills what the app left running", async () => {
+    const root = project(serverApp(await freePort(), "ignore"));
+    const o = startOxnode(["watch", "--kill-timeout=300", "main.ts"], root);
+    const [, gc] = await o.waitFor(/^GC listening v1 (\d+)\n/m);
+    await o.watched(join(root, "dep.ts"));
+    await o.editUntil(join(root, "dep.ts"), () => value("v2"), /^GC listening v2 \d+\n/m);
+    expect(o.stdout()).toMatch(
+      /^GC ignored v1\n[\s\S]*\[oxnode\] still running after 300ms, force killing\n[\s\S]*^RUN v2 /m,
+    );
+    expect(count(o.stdout(), /force killing/)).toBe(1);
+    expect(await isGone(Number(gc)), "the app's server").toBe(true);
+  });
+
+  test("SIGTERM to oxnode while it waits for what the app left still ends it", async () => {
+    const root = project(serverApp(await freePort(), "ignore"));
+    const o = startOxnode(["watch", "--kill-timeout=1000", "main.ts"], root);
+    const [, gc] = await o.waitFor(/^GC listening v1 (\d+)\n/m);
+    await o.watched(join(root, "dep.ts"));
+    await o.editUntil(join(root, "dep.ts"), () => value("v2"), /^GC ignored v1\n/m);
+    process.kill(o.child.pid!, "SIGTERM");
+    expect(await o.exited).toEqual({ code: 0, signal: null });
+    expect(o.stdout()).toContain("[oxnode] still running after 1s, force killing");
+    expect(o.stdout()).not.toContain("RUN v2");
+    expect(await isGone(Number(gc)), "the app's server").toBe(true);
   });
 
   test("SIGTERM to oxnode reaches the app, and oxnode exits with its code", async () => {
