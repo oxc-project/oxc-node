@@ -1015,6 +1015,11 @@ enum ExtensionOrder {
     /// place, or keeps generated `.js` beside its sources, must run the
     /// sources rather than stale output (issue #840).
     Source,
+    /// The file the specifier names, then TypeScript, for the entry point and an
+    /// importer that is not TypeScript: `./x.js` is `x.js` when it exists, as
+    /// Node.js loads it, and `x.ts`, `x.tsx` or `x.jsx` when it does not (issue
+    /// #878). Extensionless specifiers still try TypeScript first.
+    Named,
 }
 
 fn resolver_for_conditions(
@@ -1035,6 +1040,7 @@ fn resolver_for_conditions(
     let options = match order {
         ExtensionOrder::Package => options,
         ExtensionOrder::Source => source_order(options),
+        ExtensionOrder::Named => named_order(options),
     };
     let resolver = Arc::new(base.clone_with_options(options));
     resolvers.push((conditions.to_vec(), order, symlinks, Arc::clone(&resolver)));
@@ -1042,7 +1048,8 @@ fn resolver_for_conditions(
 }
 
 /// Extensions [`ExtensionOrder::Source`] tries ahead of where
-/// [`ExtensionOrder::Package`] tries them.
+/// [`ExtensionOrder::Package`] tries them. They are also the importer extensions
+/// tsx counts as TypeScript (`/\.([cm]?ts|[tj]sx)$/`), which resolve with `Source`.
 const SOURCE_FIRST_EXTENSIONS: [&str; 5] = ["ts", "tsx", "mts", "cts", "jsx"];
 
 /// The base options with TypeScript tried before JavaScript, in the `.js`,
@@ -1061,6 +1068,40 @@ fn source_order(options: ResolveOptions) -> ResolveOptions {
             ".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs", ".cts", ".cjs", ".json", ".wasm", ".node",
         ]),
         ..options
+    }
+}
+
+/// [`source_order`] with the file a `.js`, `.jsx`, `.mjs` or `.cjs` specifier
+/// names tried first, so `./x.js` is `x.js` when it exists (issue #878).
+fn named_order(options: ResolveOptions) -> ResolveOptions {
+    let owned = |extensions: &[&str]| extensions.iter().map(|ext| (*ext).to_owned()).collect();
+    ResolveOptions {
+        extension_alias: vec![
+            (".js".to_owned(), owned(&[".js", ".ts", ".tsx", ".jsx"])),
+            (".jsx".to_owned(), owned(&[".jsx", ".tsx", ".ts", ".js"])),
+            (".mjs".to_owned(), owned(&[".mjs", ".mts"])),
+            (".cjs".to_owned(), owned(&[".cjs", ".cts"])),
+        ],
+        ..source_order(options)
+    }
+}
+
+/// The order a request resolves with, from what imports it. An importer inside
+/// `node_modules` keeps the package order, and a TypeScript or JSX file resolves
+/// TypeScript first (issue #840). The entry point (no parent), a preload (a
+/// directory parent) and any other importer get the file they name (issue #878),
+/// as tsx decides when `allowJs` is off.
+fn extension_order(parent: Option<&Path>, parent_file: Option<&Path>) -> ExtensionOrder {
+    if parent.and_then(Path::to_str).is_some_and(|path| path.contains(NODE_MODULES_PATH)) {
+        ExtensionOrder::Package
+    } else if parent_file
+        .and_then(Path::extension)
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| SOURCE_FIRST_EXTENSIONS.contains(&ext))
+    {
+        ExtensionOrder::Source
+    } else {
+        ExtensionOrder::Named
     }
 }
 
@@ -2591,15 +2632,9 @@ pub fn create_resolve<'env>(
     // A directory parent has no file to discover from, as the entry point has not.
     let parent_file = parent.filter(|_| !parent_is_directory);
 
-    // An importer inside `node_modules` keeps the package order; the entry point
-    // and every file outside it resolve TypeScript first.
     let in_node_modules =
         |path: &Path| path.to_str().is_some_and(|path| path.contains(NODE_MODULES_PATH));
-    let order = if parent.is_some_and(in_node_modules) {
-        ExtensionOrder::Package
-    } else {
-        ExtensionOrder::Source
-    };
+    let order = extension_order(parent, parent_file);
     // Node.js keeps a symlinked path under `--preserve-symlinks`, and the entry
     // point's under `--preserve-symlinks-main` (issue #845). Only the entry point
     // has no parent URL: a preload's parent is the working directory.
@@ -2720,12 +2755,12 @@ pub fn create_resolve<'env>(
     // TypeScript first is for the project's own files. A package that ships its
     // `.ts` (or `.jsx`) sources beside the compiled `.js` is still run from what
     // it compiled, as it is when the package imports itself. When the source
-    // order lands on an extension it tries ahead of the package order, the
-    // request is resolved again with the package order. Any other result means
+    // or named order lands on an extension it tries ahead of the package order,
+    // the request is resolved again with the package order. Any other result means
     // the files tried before it are absent, so the package order picks it too,
     // except for a `.jsx` specifier that lands on `.js`: the package order has
     // no `.jsx` alias, and the `.js` is kept, as tsc and tsx resolve it.
-    if order == ExtensionOrder::Source
+    if order != ExtensionOrder::Package
         && let Ok(resolved) = &resolution
         && in_node_modules(resolved.path())
         && resolved
@@ -4162,6 +4197,40 @@ mod tests {
         assert!(position(".ts") < position(".js"));
         assert!(position(".tsx") < position(".js"));
         assert!(position(".js") < position(".jsx"));
+    }
+
+    // Issue #878: the entry point and a JavaScript importer get the file they
+    // name, and TypeScript only when it is missing.
+    #[test]
+    fn named_order_tries_the_named_file_first() {
+        let options = named_order(ResolveOptions::default());
+        let alias = |ext: &str| {
+            options.extension_alias.iter().find(|(from, _)| from == ext).map(|(_, to)| to.clone())
+        };
+        assert_eq!(alias(".js").unwrap(), [".js", ".ts", ".tsx", ".jsx"]);
+        assert_eq!(alias(".jsx").unwrap(), [".jsx", ".tsx", ".ts", ".js"]);
+        assert_eq!(alias(".mjs").unwrap(), [".mjs", ".mts"]);
+        assert_eq!(alias(".cjs").unwrap(), [".cjs", ".cts"]);
+        assert_eq!(options.extensions, source_order(ResolveOptions::default()).extensions);
+    }
+
+    #[test]
+    fn extension_order_follows_the_importer() {
+        let root = Path::new("/p");
+        let package = root.join("node_modules").join("pkg");
+        assert_eq!(extension_order(None, None), ExtensionOrder::Named);
+        assert_eq!(extension_order(Some(root), None), ExtensionOrder::Named);
+        for name in ["a.js", "a.mjs", "a.cjs", "[eval1]", "noop.js"] {
+            let file = root.join(name);
+            assert_eq!(extension_order(Some(&file), Some(&file)), ExtensionOrder::Named, "{name}");
+        }
+        for name in ["a.ts", "a.mts", "a.cts", "a.tsx", "a.jsx"] {
+            let file = root.join(name);
+            assert_eq!(extension_order(Some(&file), Some(&file)), ExtensionOrder::Source, "{name}");
+        }
+        let file = package.join("a.ts");
+        assert_eq!(extension_order(Some(&file), Some(&file)), ExtensionOrder::Package);
+        assert_eq!(extension_order(Some(&package), None), ExtensionOrder::Package);
     }
 
     // Issue #839: a diagnostic names the file, line and column and shows the
