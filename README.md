@@ -21,7 +21,8 @@ type checker, and it does not write build output to disk.
 - ESM and CommonJS, including `.mts`, `.cts`, `.mjs`, and `.cjs`
 - JSX and selected TypeScript compiler options
 - `tsconfig.json` path aliases and TypeScript-aware import resolution
-- Imports such as `./file.js` resolving to `./file.ts` or `./file.tsx`
+- Imports such as `./file.js` resolving to `./file.ts` or `./file.tsx`. From
+  JavaScript files and the entry point, `./file.js` itself runs when it exists
 - Source-mapped stack traces
 - Importing TypeScript from a tool, without hooks (`@oxc-node/core/importer`)
 - Node features and flags such as watch mode, the test runner, and the

@@ -74,4 +74,14 @@ describe("a preload resolved from the working directory", () => {
     const args = ["--import", REGISTER, "--import", join(root, "setup.ts"), join(root, "main.ts")];
     expect(run(parse(root).root, args)).toBe("setup\nmain\n");
   });
+
+  test("an --import ./setup.js runs setup.js, not setup.ts beside it (issue #878)", () => {
+    const root = fixture({
+      "setup.js": "console.log('setup js');\n",
+      "setup.ts": typed("setup ts"),
+      "main.ts": typed("main"),
+    });
+    const args = ["--import", "@oxc-node/core/register", "--import", "./setup.js", "./main.ts"];
+    expect(run(root, args)).toBe("setup js\nmain\n");
+  });
 });

@@ -9,8 +9,10 @@ import { afterAll, describe, expect, test } from "vitest";
  * With `dep.js` beside `dep.ts`, both `./dep.js` and `./dep` used to resolve to
  * `dep.js`, so a project that compiles in place, or keeps generated `.js` next to
  * its sources, ran stale output; tsc and tsx resolve both to `dep.ts`. And `./x.js`
- * mapped to `x.tsx` but not to `x.jsx` (issue #840). Files outside `node_modules`
- * now resolve TypeScript first; a package keeps running what it compiled.
+ * mapped to `x.tsx` but not to `x.jsx` (issue #840). Imports from TypeScript files
+ * outside `node_modules` now resolve TypeScript first; a package keeps running what
+ * it compiled. The entry point and JavaScript importers run the file they name,
+ * as Node.js and tsx do (issue #878).
  */
 const CORE = dirname(fileURLToPath(new URL("../../core/register.mjs", import.meta.url)));
 
@@ -159,5 +161,99 @@ describe("TypeScript resolves before JavaScript outside node_modules", () => {
       "main.ts": "import { v } from 'pkg';\nconsole.log(v);\n",
     });
     expect(run(root, "./main.ts")).toBe("mjs\n");
+  });
+});
+
+describe("the entry point and JavaScript importers run the file they name (issue #878)", () => {
+  test.each([
+    ["./main.js", "main.js", "main.ts"],
+    ["./main.mjs", "main.mjs", "main.mts"],
+    ["./main.cjs", "main.cjs", "main.cts"],
+    ["./main.jsx", "main.jsx", "main.tsx"],
+    ["./main", "main.js", "main.ts"],
+  ])("the entry %s runs %s, not %s", (entry, named, sibling) => {
+    const root = fixture({ [named]: "console.log('JS');\n", [sibling]: "console.log('TS');\n" });
+    expect(run(root, entry)).toBe("JS\n");
+  });
+
+  test.each([
+    ["./main.js", "main.ts"],
+    ["./main.mjs", "main.mts"],
+    ["./main.cjs", "main.cts"],
+    ["./main.jsx", "main.tsx"],
+  ])("the entry %s still runs %s when it is missing", (entry, source) => {
+    const root = fixture({ [source]: "console.log('TS');\n" });
+    expect(run(root, entry)).toBe("TS\n");
+  });
+
+  test.each(["main.js", "main.mjs", "main.cjs"])("%s imports the files it names", (main) => {
+    const root = fixture({
+      "dep.js": "export const v = 'js';\n",
+      "dep.ts": value("ts"),
+      "dep.mjs": "export const v = 'mjs';\n",
+      "dep.mts": value("mts"),
+      "dep.cjs": "exports.v = 'cjs';\n",
+      "dep.cts": "exports.v = 'cts';\n",
+      "dep.jsx": "export const v = 'jsx';\n",
+      "dep.tsx": value("tsx"),
+      [main]:
+        "Promise.all(['./dep.js', './dep.mjs', './dep.cjs', './dep.jsx', './dep'].map((s) => import(s)))" +
+        ".then((ms) => console.log(ms.map((m) => m.v).join(' ')));\n",
+    });
+    // An extensionless `./dep` stays TypeScript first, as tsx resolves it.
+    expect(run(root, `./${main}`)).toBe("js mjs cjs jsx ts\n");
+  });
+
+  test("a JavaScript importer still finds TypeScript when the named file is missing", () => {
+    const root = fixture({
+      "a.ts": value("ts"),
+      "b.mts": value("mts"),
+      "c.tsx": value("tsx"),
+      "main.js": [
+        "import { v as a } from './a.js';",
+        "import { v as b } from './b.mjs';",
+        "import { v as c } from './c.jsx';",
+        "console.log(a, b, c);",
+      ].join("\n"),
+    });
+    expect(run(root, "./main.js")).toBe("ts mts tsx\n");
+  });
+
+  test("a `.jsx` importer stays TypeScript first, as tsx counts it", () => {
+    const root = fixture({
+      "dep.js": "export const v = 'js';\n",
+      "dep.ts": value("ts"),
+      "main.jsx": "import { v } from './dep.js';\nconsole.log(v);\n",
+    });
+    expect(run(root, "./main.jsx")).toBe("ts\n");
+  });
+
+  test("a package imported from JavaScript keeps running its compiled JavaScript", () => {
+    const root = fixture({
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        type: "module",
+        main: "./index",
+      }),
+      "node_modules/pkg/index.js": "export const v = 'js';\nexport { w } from './inner.js';\n",
+      "node_modules/pkg/index.ts": value("ts"),
+      "node_modules/pkg/inner.js": "export const w = 'js';\n",
+      "node_modules/pkg/inner.ts": "export const w: string = 'ts';\n",
+      "main.js": "import { v, w } from 'pkg';\nconsole.log(v, w);\n",
+    });
+    expect(run(root, "./main.js")).toBe("js js\n");
+  });
+
+  test("the importer resolves `./cfg.js` from a directory to `cfg.js`", () => {
+    const root = fixture({
+      "cfg.js": "export const v = 'js';\n",
+      "cfg.ts": value("ts"),
+      "probe.mjs": [
+        "import { createImporter } from '@oxc-node/core/importer';",
+        "const resolved = createImporter(process.cwd() + '/').resolve('./cfg.js');",
+        "console.log(/[\\\\/]cfg\\.js$/.test(String(resolved)));",
+      ].join("\n"),
+    });
+    expect(run(root, "./probe.mjs")).toBe("true\n");
   });
 });
