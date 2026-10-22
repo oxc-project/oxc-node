@@ -24,6 +24,7 @@ export type Event =
   | { t: "change"; path: string; now: number }
   | { t: "debounceFired" }
   | { t: "enter" }
+  /** The app exited. After a rerun stopped it, what it had started is gone too: command.ts waits for that. */
   | { t: "childExit"; code: number | null; signal: string | null }
   | { t: "killTimeout" }
   | { t: "signal"; sig: NodeJS.Signals; now: number }
