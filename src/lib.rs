@@ -775,22 +775,35 @@ fn loader_env(name: &str) -> Option<String> {
     })
 }
 
-// The public asynchronous transformer computes on a libuv pool thread. Carry the
-// caller's context into that job and restore the pool thread's prior context even
-// when the transform returns an error or panics.
-#[cfg(feature = "napi")]
+/// A caller's loader context, captured before submitting work to another thread.
+/// Obtain this from [`OxcTransformer::capture_context`]. Clones share the caller's
+/// frozen configuration and resolver caches. This API does not require `napi`.
+#[derive(Clone)]
+pub struct CapturedLoaderContext(Arc<LoaderContext>);
+
+impl CapturedLoaderContext {
+    /// Run synchronous work with this context, then restore the executing thread's
+    /// previous context, including on an error or panic. Calls can be nested.
+    ///
+    /// The context applies only while the closure runs. Returning a future does
+    /// not carry the context into that future's later execution.
+    pub fn with<T>(&self, run: impl FnOnce() -> T) -> T {
+        let _context = LoaderContextGuard::enter(Arc::clone(&self.0));
+        run()
+    }
+}
+
+// Keep the guard private so it cannot outlive the closure or move to another thread.
 struct LoaderContextGuard {
     previous: Arc<LoaderContext>,
 }
 
-#[cfg(feature = "napi")]
 impl LoaderContextGuard {
     fn enter(context: Arc<LoaderContext>) -> Self {
         Self { previous: LOADER_CONTEXT.with(|current| current.replace(context)) }
     }
 }
 
-#[cfg(feature = "napi")]
 impl Drop for LoaderContextGuard {
     fn drop(&mut self) {
         LOADER_CONTEXT.with(|current| {
@@ -1679,9 +1692,10 @@ pub fn detect_runtime_syntax(_exports: Object, env: Env) -> Result<()> {
 // `ToNapiValue`/`TypeName` impls and the async-task surface below — `TransformTask`,
 // `impl Task` and the `transform_async` functions — is gated on `feature = "napi"`
 // entirely. An embedder forwards the synchronous `transform` and wraps it in its
-// own `Task` if it needs a promise; the `Output` itself cannot cross its napi
-// boundary, so a forwarder maps `source()`/`source_map()` onto its own
-// `#[napi(object)]` result type.
+// own `Task` if it needs a promise. Capture `OxcTransformer::capture_context()` on
+// the caller thread before queuing that task, then run its synchronous transform
+// inside `CapturedLoaderContext::with`. The `Output` itself cannot cross the host's
+// napi boundary, so map `source()`/`source_map()` onto its own `#[napi(object)]` type.
 #[cfg_attr(feature = "napi", napi)]
 pub struct Output {
     code: String,
@@ -1818,7 +1832,7 @@ pub fn transform_async_js(
 
 #[cfg(feature = "napi")]
 pub struct TransformTask {
-    context: Arc<LoaderContext>,
+    context: CapturedLoaderContext,
     cwd: String,
     helper_module_name: Option<String>,
     path: String,
@@ -1832,28 +1846,29 @@ impl Task for TransformTask {
     type JsValue = Output;
 
     fn compute(&mut self) -> Result<Self::Output> {
-        let _context = LoaderContextGuard::enter(Arc::clone(&self.context));
-        let src_path = Path::new(&self.path);
-        let cwd = PathBuf::from(&self.cwd);
-        // Worked out before `cwd` is moved into the initialiser.
-        let lookup_path = tsconfig_lookup_path(&cwd, src_path).into_owned();
-        let context = loader_context();
-        let (resolver, tsconfig_source) =
-            context.resolver_and_tsconfig.get_or_init(|| init_resolver(cwd));
-        let resolved_tsconfig = tsconfig_source.for_path(resolver, &lookup_path);
-        oxc_transform(
-            src_path,
-            &self.source,
-            resolved_tsconfig.as_ref().map(|t| &t.compiler_options),
-            Some(Module::CommonJS),
-            true,
-            // The `pirates` hook and this public API both target CommonJS, so keep letting
-            // the extension and the source decide.
-            false,
-            self.helper_module_name.as_deref(),
-            None,
-        )
-        .map(|(output, _)| output)
+        self.context.with(|| {
+            let src_path = Path::new(&self.path);
+            let cwd = PathBuf::from(&self.cwd);
+            // Worked out before `cwd` is moved into the initialiser.
+            let lookup_path = tsconfig_lookup_path(&cwd, src_path).into_owned();
+            let context = loader_context();
+            let (resolver, tsconfig_source) =
+                context.resolver_and_tsconfig.get_or_init(|| init_resolver(cwd));
+            let resolved_tsconfig = tsconfig_source.for_path(resolver, &lookup_path);
+            oxc_transform(
+                src_path,
+                &self.source,
+                resolved_tsconfig.as_ref().map(|t| &t.compiler_options),
+                Some(Module::CommonJS),
+                true,
+                // The `pirates` hook and this public API both target CommonJS, so keep letting
+                // the extension and the source decide.
+                false,
+                self.helper_module_name.as_deref(),
+                None,
+            )
+            .map(|(output, _)| output)
+        })
     }
 
     fn resolve(&mut self, _: Env, output: Self::Output) -> Result<Self::JsValue> {
@@ -1886,6 +1901,20 @@ impl OxcTransformer {
         }
     }
 
+    /// Capture the calling thread's loader context before queuing an external task.
+    /// This freezes the tsconfig selection, relative to this transformer's working
+    /// directory, and the dependency mode. Parsing waits until the first transform
+    /// or resolve. The returned handle shares this caller's resolver caches.
+    ///
+    /// Move or clone the handle into the task, then wrap its synchronous computation
+    /// in `context.with(|| transformer.transform(path, source))`. The transformer
+    /// alone does not carry a context when moved to another thread.
+    pub fn capture_context(&self) -> CapturedLoaderContext {
+        let _ = select_tsconfig(PathBuf::from(&self.cwd));
+        let _ = freeze_transform_deps();
+        CapturedLoaderContext(loader_context())
+    }
+
     pub fn transform(&self, path: String, source: Either<String, &[u8]>) -> Result<Output> {
         let cwd = PathBuf::from(&self.cwd);
         let src_path = Path::new(&path);
@@ -1914,13 +1943,8 @@ impl OxcTransformer {
         path: String,
         source: Either3<String, Uint8Array, Buffer>,
     ) -> AsyncTask<TransformTask> {
-        // Freeze selection before queuing work. A later synchronous transform must
-        // not choose another config while this task waits for a libuv pool thread.
-        // Parsing and diagnostics still belong to the task's compute phase.
-        let _ = select_tsconfig(PathBuf::from(&self.cwd));
-        let _ = freeze_transform_deps();
         AsyncTask::new(TransformTask {
-            context: loader_context(),
+            context: self.capture_context(),
             path,
             source,
             cwd: self.cwd.clone(),

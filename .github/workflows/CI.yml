@@ -55,6 +55,8 @@ jobs:
       # contain no registration symbols.
       - name: Cargo check (napi feature off)
         run: cargo check --all-targets --no-default-features
+      - name: Rust embedder context tests
+        run: cargo test --no-default-features --test loader_context
       - name: Cargo check (napi off, host allocator)
         run: cargo check --all-targets --no-default-features --features default_global_allocator
       - name: No napi registrations in the embed build
