@@ -716,9 +716,7 @@ fn loader_context() -> Arc<LoaderContext> {
 
 /// Owned values from the calling JavaScript environment. A Worker's `process.env`
 /// can differ from the native process environment, even when a variable is absent.
-/// Keep this per invocation: configuration stays mutable until its existing deadline,
-/// and an async task must retain the values from its own caller.
-#[derive(Clone, Default)]
+/// Keep this per invocation: configuration stays mutable until its existing deadline.
 struct LoaderEnvironment {
     ts_node_project: Option<String>,
     oxc_tsconfig_path: Option<String>,
@@ -755,12 +753,9 @@ impl LoaderEnvironment {
 struct LoaderEnvironmentGuard(Option<LoaderEnvironment>);
 
 impl LoaderEnvironmentGuard {
-    fn enter(environment: Option<LoaderEnvironment>) -> Self {
-        Self(LOADER_ENVIRONMENT.with(|current| current.replace(environment)))
-    }
-
     fn from_env(env: &Env) -> Result<Self> {
-        Ok(Self::enter(LoaderEnvironment::read(env)?))
+        let environment = LoaderEnvironment::read(env)?;
+        Ok(Self(LOADER_ENVIRONMENT.with(|current| current.replace(environment))))
     }
 }
 
@@ -786,16 +781,12 @@ fn loader_env(name: &str) -> Option<String> {
 #[cfg(feature = "napi")]
 struct LoaderContextGuard {
     previous: Arc<LoaderContext>,
-    _environment: LoaderEnvironmentGuard,
 }
 
 #[cfg(feature = "napi")]
 impl LoaderContextGuard {
-    fn enter(context: Arc<LoaderContext>, environment: Option<LoaderEnvironment>) -> Self {
-        Self {
-            previous: LOADER_CONTEXT.with(|current| current.replace(context)),
-            _environment: LoaderEnvironmentGuard::enter(environment),
-        }
+    fn enter(context: Arc<LoaderContext>) -> Self {
+        Self { previous: LOADER_CONTEXT.with(|current| current.replace(context)) }
     }
 }
 
@@ -896,19 +887,14 @@ fn set_tsconfig_override(
             None if use_process_env => tsconfig_override.path.is_none(),
             None => active.is_none(),
         };
-        if same {
-            // Remember it, so `getTsconfigPath()` reports the accepted path even
-            // when the environment chose it first.
-            tsconfig_override.path = path;
-            tsconfig_override.source = source;
-            tsconfig_override.use_process_env = use_process_env;
-            return Ok(());
+        if !same {
+            return Err(Error::new(
+                Status::GenericFailure,
+                "setTsconfigPath() must be called before the first transform or resolve",
+            ));
         }
-        return Err(Error::new(
-            Status::GenericFailure,
-            "setTsconfigPath() must be called before the first transform or resolve",
-        ));
     }
+    // Remember accepted paths even when the environment chose the active config.
     tsconfig_override.path = path;
     tsconfig_override.source = source;
     tsconfig_override.use_process_env = use_process_env;
@@ -1001,19 +987,17 @@ pub fn set_transform_deps(mode: Option<String>) -> Result<()> {
         // Naming the mode already in use is fine, wherever it came from;
         // anything else — `null` asking for the variable's answer included —
         // could not take effect anyway.
-        if mode == Some(consumed) {
-            deps.mode = mode;
-            return Ok(());
+        let same = match mode {
+            Some(mode) => mode == consumed,
+            // Clearing an override that was never set leaves the env choice intact.
+            None => deps.mode.is_none(),
+        };
+        if !same {
+            return Err(Error::new(
+                Status::GenericFailure,
+                "setTransformDeps() must be called before the first transform or resolve",
+            ));
         }
-        if mode.is_none() && deps.mode.is_none() {
-            // Clearing an override that was never set asks for exactly the
-            // mode the environment already chose.
-            return Ok(());
-        }
-        return Err(Error::new(
-            Status::GenericFailure,
-            "setTransformDeps() must be called before the first transform or resolve",
-        ));
     }
     deps.mode = mode;
     Ok(())
@@ -1835,7 +1819,6 @@ pub fn transform_async_js(
 #[cfg(feature = "napi")]
 pub struct TransformTask {
     context: Arc<LoaderContext>,
-    environment: Option<LoaderEnvironment>,
     cwd: String,
     helper_module_name: Option<String>,
     path: String,
@@ -1849,8 +1832,7 @@ impl Task for TransformTask {
     type JsValue = Output;
 
     fn compute(&mut self) -> Result<Self::Output> {
-        let _context =
-            LoaderContextGuard::enter(Arc::clone(&self.context), self.environment.clone());
+        let _context = LoaderContextGuard::enter(Arc::clone(&self.context));
         let src_path = Path::new(&self.path);
         let cwd = PathBuf::from(&self.cwd);
         // Worked out before `cwd` is moved into the initialiser.
@@ -1939,7 +1921,6 @@ impl OxcTransformer {
         let _ = freeze_transform_deps();
         AsyncTask::new(TransformTask {
             context: loader_context(),
-            environment: LOADER_ENVIRONMENT.with(|environment| environment.borrow().clone()),
             path,
             source,
             cwd: self.cwd.clone(),
@@ -3934,27 +3915,27 @@ fn select_tsconfig(cwd: PathBuf) -> Option<(PathBuf, &'static str)> {
         return selected.clone();
     }
     tracing::debug!(api_tsconfig = ?tsconfig_override.path);
-    let explicit_tsconfig =
-        tsconfig_override.path.clone().map(|path| (path, tsconfig_override.source)).or_else(|| {
-            if !tsconfig_override.use_process_env {
-                return None;
-            }
-            let oxc_tsconfig = non_empty_env("OXC_TSCONFIG_PATH");
-            let explicit_tsconfig = non_empty_env("TS_NODE_PROJECT")
-                .map(|path| {
-                    // `oxnode watch --tsconfig` sets both, so an env file cannot
-                    // override it (issue #876); warnings name the one it means.
-                    let source = if oxc_tsconfig.as_deref() == Some(path.as_str()) {
-                        "OXC_TSCONFIG_PATH"
-                    } else {
-                        "TS_NODE_PROJECT"
-                    };
-                    (path, source)
-                })
-                .or_else(|| oxc_tsconfig.map(|path| (path, "OXC_TSCONFIG_PATH")));
-            tracing::debug!(explicit_tsconfig = ?explicit_tsconfig);
-            explicit_tsconfig.map(|(path, source)| (PathBuf::from(path), source))
-        });
+    let explicit_tsconfig = if let Some(path) = &tsconfig_override.path {
+        Some((path.clone(), tsconfig_override.source))
+    } else if tsconfig_override.use_process_env {
+        let oxc_tsconfig = non_empty_env("OXC_TSCONFIG_PATH");
+        let explicit_tsconfig = if let Some(path) = non_empty_env("TS_NODE_PROJECT") {
+            // `oxnode watch --tsconfig` sets both, so an env file cannot
+            // override it (issue #876); warnings name the one it means.
+            let source = if oxc_tsconfig.as_deref() == Some(path.as_str()) {
+                "OXC_TSCONFIG_PATH"
+            } else {
+                "TS_NODE_PROJECT"
+            };
+            Some((path, source))
+        } else {
+            oxc_tsconfig.map(|path| (path, "OXC_TSCONFIG_PATH"))
+        };
+        tracing::debug!(explicit_tsconfig = ?explicit_tsconfig);
+        explicit_tsconfig.map(|(path, source)| (PathBuf::from(path), source))
+    } else {
+        None
+    };
     let selected = explicit_tsconfig
         .map(|(tsconfig, source)| (absolute_tsconfig_path(&cwd, tsconfig), source));
     tsconfig_override.consumed = Some((cwd, selected.clone()));

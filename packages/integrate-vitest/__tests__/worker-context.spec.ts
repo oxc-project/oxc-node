@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "vitest";
+import { expect, onTestFinished, test } from "vitest";
 
 const CORE = fileURLToPath(new URL("../../core", import.meta.url));
 const FIELDS = `let writes = 0;
@@ -14,8 +14,9 @@ new Child();
 module.exports = writes;
 `;
 
-function fixture(files: Record<string, string>) {
+function fixture(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "oxc-worker-context-"));
+  onTestFinished(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, "node_modules", "@oxc-node"), { recursive: true });
   symlinkSync(CORE, join(root, "node_modules", "@oxc-node", "core"), "dir");
   const common: Record<string, string> = {
@@ -40,7 +41,7 @@ function fixture(files: Record<string, string>) {
   return root;
 }
 
-function environment(env: Record<string, string> = {}) {
+function environment(env: Record<string, string> = {}): NodeJS.ProcessEnv {
   return {
     ...process.env,
     NODE_OPTIONS: undefined,
@@ -53,7 +54,7 @@ function environment(env: Record<string, string> = {}) {
   };
 }
 
-function run(root: string, args: string[], env: Record<string, string> = {}) {
+function run(root: string, args: string[], env: Record<string, string> = {}): void {
   const result = spawnSync(process.execPath, args, {
     cwd: root,
     env: environment(env),
@@ -126,11 +127,7 @@ if (isMainThread) {
 }
 `,
   });
-  try {
-    run(root, ["./api.mjs"], { UV_THREADPOOL_SIZE: "1" });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+  run(root, ["./api.mjs"], { UV_THREADPOOL_SIZE: "1" });
 });
 
 test("registered workers use their own environment for aliases, transforms and dependency modes", () => {
@@ -202,15 +199,11 @@ try {
 }
 `,
   });
-  try {
-    run(root, ["--import", "@oxc-node/core/register", "./main.mjs"], {
-      TS_NODE_PROJECT: "parent.json",
-      OXC_TSCONFIG_PATH: "parent.json",
-      OXC_TRANSFORM_ALL: "typescript",
-    });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+  run(root, ["--import", "@oxc-node/core/register", "./main.mjs"], {
+    TS_NODE_PROJECT: "parent.json",
+    OXC_TSCONFIG_PATH: "parent.json",
+    OXC_TRANSFORM_ALL: "typescript",
+  });
 });
 
 test("raw transform APIs capture the worker environment at the first call, including async calls", () => {
@@ -257,9 +250,14 @@ if (isMainThread) {
     process.env.OXC_TSCONFIG_PATH = "one.json";
   }
   process.env.OXC_TRANSFORM_ALL = workerData.mode;
-  const run = workerData.method === "class"
-    ? (workerData.async ? transformer.transformAsync.bind(transformer) : transformer.transform.bind(transformer))
-    : (workerData.async ? transformAsync : transform);
+  let run;
+  if (workerData.method === "class") {
+    run = workerData.async
+      ? transformer.transformAsync.bind(transformer)
+      : transformer.transform.bind(transformer);
+  } else {
+    run = workerData.async ? transformAsync : transform;
+  }
   const result = run("fields.cts", source);
   // A queued async transform must use the environment at its call, rather than
   // the environment later observed by the shared libuv pool thread.
@@ -272,16 +270,12 @@ if (isMainThread) {
 }
 `,
   });
-  try {
-    run(root, ["./environment.mjs"], {
-      TS_NODE_PROJECT: "one.json",
-      OXC_TSCONFIG_PATH: "one.json",
-      OXC_TRANSFORM_ALL: "0",
-      UV_THREADPOOL_SIZE: "1",
-    });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+  run(root, ["./environment.mjs"], {
+    TS_NODE_PROJECT: "one.json",
+    OXC_TSCONFIG_PATH: "one.json",
+    OXC_TRANSFORM_ALL: "0",
+    UV_THREADPOOL_SIZE: "1",
+  });
 });
 
 test("asynchronous registration freezes the config before the main and hook threads can diverge", () => {
@@ -311,11 +305,7 @@ assert.equal(require("./fields.cts"), synchronous ? 0 : 1);
 console.log("ok");
 `,
   });
-  try {
-    run(root, ["./late.mjs"]);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+  run(root, ["./late.mjs"]);
 });
 
 test("a queued asynchronous transform freezes its caller's config before a later synchronous call", async () => {
@@ -379,6 +369,5 @@ console.log("ok");
     expect(stdout.trim()).toBe("release\nok");
   } finally {
     child.kill();
-    rmSync(root, { recursive: true, force: true });
   }
 });
