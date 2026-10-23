@@ -9,8 +9,8 @@ import {
   OxcTransformer,
   createResolve,
   enableWatchReport,
+  freezeTsconfig,
   freezeTransformDeps,
-  getTsconfigPath,
   initTracing,
   load as oxcLoad,
   takeWatchDependencies,
@@ -369,18 +369,19 @@ if (canRegisterSyncHooks()) {
       : { load, resolve },
   );
 } else {
-  // The hooks run on their own thread. The mode goes over as a snapshot: under
-  // WASI that thread's binding is a separate copy a later `setTransformDeps`
-  // could never reach, so the mode is frozen here first — a late call throws
-  // instead of diverging between the `require()` matcher on this binding and
-  // the ESM hooks on the other. The frozen mode is sent, not just an override,
-  // because the worker's env may be an older snapshot of process.env.
-  // `setTsconfigPath` rides the same snapshot. That thread has no
-  // `process.send`, so its watch reports come back through `watchPort`.
+  // The hook thread has its own loader context, both natively and under WASI.
+  // Freeze the effective settings here so a later setter cannot make CommonJS
+  // and ESM use different configs. Send explicit discovery too: the hook thread's
+  // environment can be an older snapshot than the registering worker's.
+  // That thread has no `process.send`, so its watch reports use `watchPort`.
   const watchPort = watch ? createRelay(watch, takeWatchDependencies) : undefined;
   register("@oxc-node/core/esm", {
     parentURL: import.meta.url,
-    data: { tsconfigPath: getTsconfigPath(), transformDeps: freezeTransformDeps(), watchPort },
+    data: {
+      tsconfig: freezeTsconfig(process.cwd()),
+      transformDeps: freezeTransformDeps(),
+      watchPort,
+    },
     transferList: watchPort ? [watchPort] : [],
   });
 }

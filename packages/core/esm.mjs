@@ -4,10 +4,10 @@ import { pathToFileURL } from "node:url";
 import { isMainThread, MessageChannel } from "node:worker_threads";
 
 import {
-  __napiBindingTarget,
   createResolve,
   enableWatchReport,
   initTracing,
+  initializeLoader,
   load as oxcLoad,
   setTransformDeps,
   setTsconfigPath,
@@ -148,16 +148,14 @@ function loadHook(url, context, nextLoad) {
  * Receives the `data` that `register.mjs` passes to `module.register()`. Absent when
  * this module is registered some other way.
  *
- * Only a WASI copy needs the replay: it starts with no state of its own. A native
- * worker thread shares the main thread's binding, so `data` would be a snapshot from
- * `module.register()` time — replaying it would overwrite a `setTsconfigPath` /
- * `setTransformDeps` made since, and a stale mode would throw once a different one
- * is already in use.
+ * Native threads and WASI copies have separate loader contexts. Apply the
+ * registering thread's frozen selection, including discovery without falling
+ * back to a parent worker's environment.
  *
  * The watch port is taken first, on every binding: a native one shares its queue
  * with the main thread but still needs someone to drain it after these hooks run.
  *
- * @param {{ tsconfigPath?: string | null, transformDeps?: string | null, watchPort?: import('node:worker_threads').MessagePort } | undefined} data
+ * @param {{ tsconfig?: { path?: string | null, source?: string | null }, tsconfigPath?: string | null, transformDeps?: string | null, watchPort?: import('node:worker_threads').MessagePort } | undefined} data
  */
 function initialize(data) {
   const port = data?.watchPort;
@@ -171,10 +169,10 @@ function initialize(data) {
     // A WASI copy has a recorder of its own; on native this repeats the main thread.
     enableWatchReport();
   }
-  if (__napiBindingTarget === "native") {
-    return;
-  }
-  if (data?.tsconfigPath != null) {
+  if (data?.tsconfig) {
+    initializeLoader(data.tsconfig.path, data.tsconfig.source);
+  } else if (data?.tsconfigPath != null) {
+    // Retain the old initialization shape for callers that register these hooks.
     setTsconfigPath(data.tsconfigPath);
   }
   if (data?.transformDeps != null) {

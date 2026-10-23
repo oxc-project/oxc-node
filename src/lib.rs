@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    cell::OnceCell,
+    cell::{OnceCell, RefCell},
     collections::{HashMap, HashSet},
     env,
     ffi::OsStr,
@@ -131,7 +131,7 @@ const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
 /// `oxc_resolver` offers two discovery strategies and they are not
 /// interchangeable, so the strategy chosen at startup has to be remembered:
 ///
-/// * [`TsconfigDiscovery::Manual`] pins one config for the whole process. It is
+/// * [`TsconfigDiscovery::Manual`] pins one config for the loader context. It is
 ///   also the only mode that [`Resolver::resolve`] consults, because that API
 ///   goes through `manual_tsconfig()` internally.
 /// * [`TsconfigDiscovery::Auto`] resolves a config per file, and [`Resolver::resolve`]
@@ -143,7 +143,7 @@ enum TsconfigSource {
     /// to every file, including files inside `node_modules`.
     ///
     /// `None` means the requested path does not exist. That deliberately leaves
-    /// the process with no config at all instead of falling back to discovery:
+    /// the loader context with no config at all instead of falling back to discovery:
     /// somebody who names a config file explicitly does not want a different
     /// one silently substituted.
     Manual(Option<Arc<TsConfig>>),
@@ -159,21 +159,6 @@ enum TsconfigSource {
 
 /// Extensions that TypeScript only treats as program inputs when `allowJs` is on.
 const JS_EXTENSIONS: [&str; 4] = ["js", "jsx", "mjs", "cjs"];
-
-/// The nearest-ancestor `tsconfig.json` per importer directory, memoized.
-///
-/// [`TsconfigSource::nearest`] runs once per (importer, specifier) edge, and
-/// its ancestor walk would otherwise repeat the same `stat` syscalls for every
-/// edge out of the same directory. Everything around it is already amortized
-/// for the process — oxc_resolver caches per-directory discovery, per-file
-/// results, file metadata and parsed configs — so memoize the terminal
-/// outcome the same way, with one exception: a config that does not parse is
-/// never memoized, because discovery's `get_or_try_init` does not cache parse
-/// errors either, and a corrected `tsconfig.json` must be picked up on the
-/// next resolution. A config *created* mid-process stays invisible, matching
-/// discovery's cached `None`s.
-static NEAREST_TSCONFIG: LazyLock<Mutex<HashMap<PathBuf, Option<Arc<TsConfig>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// The outcome of [`TsconfigSource::walk_nearest`].
 enum Nearest {
@@ -418,7 +403,7 @@ impl TsconfigSource {
     /// ownership) nor for specifiers that name a concrete target
     /// ([`is_bare_specifier`], see [`Self::for_importer`]).
     ///
-    /// The outcome is memoized per importer directory in [`NEAREST_TSCONFIG`];
+    /// The outcome is memoized per importer directory in the loader context;
     /// `resolve_tsconfig` parses, builds and caches the config, so repeated
     /// imports from the same tree cost one parse and one walk. A broken config
     /// is handled exactly as [`Self::discover`] handles it, through
@@ -438,8 +423,9 @@ impl TsconfigSource {
         // The walk depends only on the directory's ancestor chain (`skip(1)`
         // drops the file name), so one entry covers every importer in it.
         let directory = path.parent()?;
+        let context = loader_context();
         if let Some(cached) =
-            NEAREST_TSCONFIG.lock().unwrap_or_else(PoisonError::into_inner).get(directory)
+            context.nearest_tsconfig.lock().unwrap_or_else(PoisonError::into_inner).get(directory)
         {
             return cached.clone();
         }
@@ -451,7 +437,8 @@ impl TsconfigSource {
             Nearest::Found(tsconfig) => Some(tsconfig),
             Nearest::NotFound | Nearest::Unusable => None,
         };
-        NEAREST_TSCONFIG
+        context
+            .nearest_tsconfig
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(directory.to_path_buf(), outcome.clone());
@@ -700,7 +687,126 @@ impl FileSystem for WatchFs {
 /// file system and cache, so every condition resolver records too.
 type Resolver = ResolverGeneric<WatchFs>;
 
-static RESOLVER_AND_TSCONFIG: OnceLock<(Resolver, TsconfigSource)> = OnceLock::new();
+/// One JavaScript thread's loader state. Node.js workers have separate environments
+/// and can select different tsconfigs, even though they share this native library.
+#[derive(Default)]
+struct LoaderContext {
+    resolver_and_tsconfig: OnceLock<(Resolver, TsconfigSource)>,
+    tsconfig_override: Mutex<TsconfigOverride>,
+    transform_deps: Mutex<TransformDeps>,
+    /// Each export-condition/extension-order variant shares this context's base
+    /// resolver caches. Keeping them here prevents one Worker's first resolution
+    /// from choosing the tsconfig for other workers.
+    condition_resolvers: Mutex<Vec<ConditionResolver>>,
+    /// Memoize ancestor walks per importer directory, like the resolver's own
+    /// discovery cache. Invalid configs are not cached, so a corrected file is read
+    /// again; a newly created config stays invisible for this context's lifetime.
+    nearest_tsconfig: Mutex<HashMap<PathBuf, Option<Arc<TsConfig>>>>,
+}
+
+thread_local! {
+    static LOADER_CONTEXT: RefCell<Arc<LoaderContext>> =
+        RefCell::new(Arc::new(LoaderContext::default()));
+    static LOADER_ENVIRONMENT: RefCell<Option<LoaderEnvironment>> = const { RefCell::new(None) };
+}
+
+fn loader_context() -> Arc<LoaderContext> {
+    LOADER_CONTEXT.with(|context| Arc::clone(&context.borrow()))
+}
+
+/// Owned values from the calling JavaScript environment. A Worker's `process.env`
+/// can differ from the native process environment, even when a variable is absent.
+/// Keep this per invocation: configuration stays mutable until its existing deadline,
+/// and an async task must retain the values from its own caller.
+#[derive(Clone, Default)]
+struct LoaderEnvironment {
+    ts_node_project: Option<String>,
+    oxc_tsconfig_path: Option<String>,
+    oxc_transform_all: Option<String>,
+}
+
+impl LoaderEnvironment {
+    fn read(env: &Env) -> Result<Option<Self>> {
+        // Browser/WASI hosts can provide no Node.js process object. They retain
+        // their native/WASI environment; a real Worker's empty env stays empty.
+        let Some(process): Option<Object> = env.get_global()?.get_named_property("process")? else {
+            return Ok(None);
+        };
+        let Some(process_env): Option<Object> = process.get_named_property("env")? else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            ts_node_project: process_env.get_named_property("TS_NODE_PROJECT")?,
+            oxc_tsconfig_path: process_env.get_named_property("OXC_TSCONFIG_PATH")?,
+            oxc_transform_all: process_env.get_named_property("OXC_TRANSFORM_ALL")?,
+        }))
+    }
+
+    fn var(&self, name: &str) -> Option<String> {
+        match name {
+            "TS_NODE_PROJECT" => self.ts_node_project.clone(),
+            "OXC_TSCONFIG_PATH" => self.oxc_tsconfig_path.clone(),
+            "OXC_TRANSFORM_ALL" => self.oxc_transform_all.clone(),
+            _ => None,
+        }
+    }
+}
+
+struct LoaderEnvironmentGuard(Option<LoaderEnvironment>);
+
+impl LoaderEnvironmentGuard {
+    fn enter(environment: Option<LoaderEnvironment>) -> Self {
+        Self(LOADER_ENVIRONMENT.with(|current| current.replace(environment)))
+    }
+
+    fn from_env(env: &Env) -> Result<Self> {
+        Ok(Self::enter(LoaderEnvironment::read(env)?))
+    }
+}
+
+impl Drop for LoaderEnvironmentGuard {
+    fn drop(&mut self) {
+        LOADER_ENVIRONMENT.with(|current| {
+            current.replace(self.0.take());
+        });
+    }
+}
+
+/// Rust embedders without a JavaScript invocation retain the native environment.
+fn loader_env(name: &str) -> Option<String> {
+    LOADER_ENVIRONMENT.with(|current| match current.borrow().as_ref() {
+        Some(environment) => environment.var(name),
+        None => env::var(name).ok(),
+    })
+}
+
+// The public asynchronous transformer computes on a libuv pool thread. Carry the
+// caller's context into that job and restore the pool thread's prior context even
+// when the transform returns an error or panics.
+#[cfg(feature = "napi")]
+struct LoaderContextGuard {
+    previous: Arc<LoaderContext>,
+    _environment: LoaderEnvironmentGuard,
+}
+
+#[cfg(feature = "napi")]
+impl LoaderContextGuard {
+    fn enter(context: Arc<LoaderContext>, environment: Option<LoaderEnvironment>) -> Self {
+        Self {
+            previous: LOADER_CONTEXT.with(|current| current.replace(context)),
+            _environment: LoaderEnvironmentGuard::enter(environment),
+        }
+    }
+}
+
+#[cfg(feature = "napi")]
+impl Drop for LoaderContextGuard {
+    fn drop(&mut self) {
+        LOADER_CONTEXT.with(|current| {
+            current.replace(Arc::clone(&self.previous));
+        });
+    }
+}
 
 /// The tsconfig named through [`set_tsconfig_path`], and what [`init_resolver`]
 /// made of it once it has read it.
@@ -710,14 +816,21 @@ static RESOLVER_AND_TSCONFIG: OnceLock<(Resolver, TsconfigSource)> = OnceLock::n
 /// never accepted and then silently ignored.
 struct TsconfigOverride {
     path: Option<PathBuf>,
+    source: &'static str,
+    /// The loader passes the choice from this JavaScript thread's `process.env`.
+    /// Unlike Rust's process-wide environment, that can differ in each Worker.
+    use_process_env: bool,
     /// Set once [`init_resolver`] has read the override: the working directory
     /// it resolved relative paths against, and the explicit config it settled
     /// on, from this override or from the environment.
-    consumed: Option<(PathBuf, Option<PathBuf>)>,
+    consumed: Option<(PathBuf, Option<(PathBuf, &'static str)>)>,
 }
 
-static TSCONFIG_OVERRIDE: Mutex<TsconfigOverride> =
-    Mutex::new(TsconfigOverride { path: None, consumed: None });
+impl Default for TsconfigOverride {
+    fn default() -> Self {
+        Self { path: None, source: "setTsconfigPath()", use_process_env: true, consumed: None }
+    }
+}
 
 /// Pin one `tsconfig.json` for every file, as `OXC_TSCONFIG_PATH` does, but
 /// without touching `process.env` — so the user's script and the processes it
@@ -729,27 +842,66 @@ static TSCONFIG_OVERRIDE: Mutex<TsconfigOverride> =
 /// `undefined` or an empty string clears the override and goes back to the
 /// environment variables, then to discovery.
 ///
-/// The resolver and its tsconfig are shared by the whole process and created
-/// on the first transform or resolve, so this has to run before that. Calling
+/// The resolver and its tsconfig belong to the current loader context and are
+/// created on its first transform or resolve, so this has to run before that. Calling
 /// it afterwards throws, unless it names the config already in use, whether
-/// that came from here or from an environment variable.
+/// that came from here or from an environment variable. Asynchronous loader
+/// registration freezes the selection earlier so its hook thread uses the same config.
 #[cfg_attr(feature = "napi", napi)]
 pub fn set_tsconfig_path(path: Option<String>) -> Result<()> {
+    set_tsconfig_override(path, true, "setTsconfigPath()")
+}
+
+/// Initialize a loader from its JavaScript environment, already resolved by its
+/// wrapper. `None` selects discovery, without reading the parent process's env.
+pub fn initialize_loader(path: Option<String>) -> Result<()> {
+    set_tsconfig_override(path, false, "setTsconfigPath()")
+}
+
+#[cfg(feature = "napi")]
+#[napi(js_name = "initializeLoader")]
+/// Initialize this loader from a frozen tsconfig selection. A missing or empty path
+/// selects discovery without reading environment variables. The optional source
+/// preserves the original diagnostic label: `setTsconfigPath()`, `TS_NODE_PROJECT`,
+/// or `OXC_TSCONFIG_PATH`.
+pub fn initialize_loader_js(path: Option<String>, source: Option<String>) -> Result<()> {
+    let source = match source.as_deref() {
+        None | Some("setTsconfigPath()") => "setTsconfigPath()",
+        Some("TS_NODE_PROJECT") => "TS_NODE_PROJECT",
+        Some("OXC_TSCONFIG_PATH") => "OXC_TSCONFIG_PATH",
+        _ => return Err(Error::new(Status::InvalidArg, "Invalid tsconfig source")),
+    };
+    set_tsconfig_override(path, false, source)
+}
+
+fn set_tsconfig_override(
+    path: Option<String>,
+    use_process_env: bool,
+    source: &'static str,
+) -> Result<()> {
     // Kept as given: a relative path is joined to the loader's working directory
     // in `init_resolver`, exactly like the environment variables. The native
     // current directory is not that directory under WASI.
     let path = path.filter(|path| !path.is_empty()).map(PathBuf::from);
-    let mut tsconfig_override = TSCONFIG_OVERRIDE.lock().unwrap_or_else(PoisonError::into_inner);
+    let context = loader_context();
+    let mut tsconfig_override =
+        context.tsconfig_override.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some((cwd, active)) = &tsconfig_override.consumed {
         // Naming the config already in use is fine, wherever it came from.
         let same = match &path {
-            Some(path) => active.as_deref() == Some(&*absolute_tsconfig_path(cwd, path.clone())),
-            None => tsconfig_override.path.is_none(),
+            Some(path) => {
+                active.as_ref().map(|(path, _)| path.as_path())
+                    == Some(&*absolute_tsconfig_path(cwd, path.clone()))
+            }
+            None if use_process_env => tsconfig_override.path.is_none(),
+            None => active.is_none(),
         };
         if same {
             // Remember it, so `getTsconfigPath()` reports the accepted path even
             // when the environment chose it first.
             tsconfig_override.path = path;
+            tsconfig_override.source = source;
+            tsconfig_override.use_process_env = use_process_env;
             return Ok(());
         }
         return Err(Error::new(
@@ -758,18 +910,51 @@ pub fn set_tsconfig_path(path: Option<String>) -> Result<()> {
         ));
     }
     tsconfig_override.path = path;
+    tsconfig_override.source = source;
+    tsconfig_override.use_process_env = use_process_env;
     Ok(())
 }
 
 /// The path last passed to [`set_tsconfig_path`], exactly as given, or `null`.
 ///
-/// `register.mjs` hands it to the `module.register()` hook thread. Under WASI
-/// that thread instantiates its own copy of the binding, which starts out with
-/// no override of its own.
+/// A loader must pass this to its `module.register()` hook thread, whose context
+/// starts without an override. This also applies to a separate WASI binding.
 #[cfg_attr(feature = "napi", napi)]
 pub fn get_tsconfig_path() -> Option<String> {
-    let tsconfig_override = TSCONFIG_OVERRIDE.lock().unwrap_or_else(PoisonError::into_inner);
+    let context = loader_context();
+    let tsconfig_override =
+        context.tsconfig_override.lock().unwrap_or_else(PoisonError::into_inner);
     tsconfig_override.path.as_ref().map(|path| path.to_string_lossy().into_owned())
+}
+
+/// The selected tsconfig and its original source, sent to an asynchronous loader.
+/// `None` selects discovery explicitly, without consulting the receiving thread's env.
+#[napi(object)]
+pub struct FrozenTsconfig {
+    pub path: Option<String>,
+    pub source: Option<String>,
+}
+
+/// Freeze the selection without parsing the config or creating a resolver. Only the
+/// thread that actually resolves or transforms a file should emit config diagnostics.
+pub fn freeze_tsconfig(cwd: String) -> FrozenTsconfig {
+    match select_tsconfig(PathBuf::from(cwd)) {
+        Some((path, source)) => FrozenTsconfig {
+            path: Some(path.to_string_lossy().into_owned()),
+            source: Some(source.to_owned()),
+        },
+        None => FrozenTsconfig { path: None, source: None },
+    }
+}
+
+#[cfg(feature = "napi")]
+#[napi(js_name = "freezeTsconfig")]
+/// Freeze this thread's effective tsconfig path and diagnostic source for an
+/// asynchronous loader. An absent path means discovery. This does not parse the
+/// config or emit diagnostics; it prevents later changes to the selected config.
+pub fn freeze_tsconfig_js(env: Env, cwd: String) -> Result<FrozenTsconfig> {
+    let _environment = LoaderEnvironmentGuard::from_env(&env)?;
+    Ok(freeze_tsconfig(cwd))
 }
 
 /// Transform `node_modules` dependencies too, as `OXC_TRANSFORM_ALL` does, but
@@ -784,13 +969,12 @@ pub fn get_tsconfig_path() -> Option<String> {
 /// over the environment variable, as [`set_tsconfig_path`] does over its
 /// variables.
 ///
-/// The mode is read once per process, on the first transform or resolve, so
+/// The mode is read once per loader context, on the first transform or resolve, so
 /// this has to run before that. Calling it afterwards throws, unless it names
 /// the mode already in use, whether that came from here or from the
-/// environment variable. On WASI the deadline is earlier: the
-/// `module.register()` hook thread instantiates its own copy of the binding,
-/// so the mode is the one in effect when `@oxc-node/core/register` is
-/// imported.
+/// environment variable. With asynchronous loader hooks the deadline is earlier:
+/// registration sends a frozen mode to the `module.register()` hook thread, so
+/// the mode is the one in effect when `@oxc-node/core/register` is imported.
 #[cfg_attr(feature = "napi", napi)]
 pub fn set_transform_deps(mode: Option<String>) -> Result<()> {
     let mode = match mode {
@@ -811,7 +995,8 @@ pub fn set_transform_deps(mode: Option<String>) -> Result<()> {
             }
         }),
     };
-    let mut deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
+    let context = loader_context();
+    let mut deps = context.transform_deps.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(consumed) = deps.consumed {
         // Naming the mode already in use is fine, wherever it came from;
         // anything else — `null` asking for the variable's answer included —
@@ -840,12 +1025,12 @@ pub fn set_transform_deps(mode: Option<String>) -> Result<()> {
 /// send a wrapper that forwards the answer to another binding back to the
 /// environment variable instead.
 ///
-/// `register.mjs` hands it to the `module.register()` hook thread. Under WASI
-/// that thread instantiates its own copy of the binding, which starts out with
-/// no override of its own.
+/// A loader must pass this to its `module.register()` hook thread, whose context
+/// starts without an override. This also applies to a separate WASI binding.
 #[cfg_attr(feature = "napi", napi)]
 pub fn get_transform_deps() -> Option<String> {
-    let deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
+    let context = loader_context();
+    let deps = context.transform_deps.lock().unwrap_or_else(PoisonError::into_inner);
     deps.mode.map(|mode| {
         match mode {
             DepsMode::Off => "off",
@@ -861,9 +1046,19 @@ pub fn get_transform_deps() -> Option<String> {
 /// `OXC_TRANSFORM_ALL`'s grammar and the TypeScript-family extensions in one
 /// place, and — unlike a mode snapshotted at module evaluation — honours a
 /// `setTransformDeps` call made after `@oxc-node/core/register` loaded.
-#[cfg_attr(feature = "napi", napi)]
 pub fn transforms_dep(path: String) -> bool {
     deps_mode().transforms(Path::new(&path).extension().and_then(|ext| ext.to_str()))
+}
+
+#[cfg(feature = "napi")]
+#[napi(js_name = "transformsDep")]
+/// Whether this thread's dependency policy transforms the file at `path`.
+/// Before the first transform, resolve, or asynchronous loader registration, this
+/// honors `setTransformDeps` and this thread's `OXC_TRANSFORM_ALL`. After that point
+/// it uses the frozen policy.
+pub fn transforms_dep_js(env: Env, path: String) -> Result<bool> {
+    let _environment = LoaderEnvironmentGuard::from_env(&env)?;
+    Ok(transforms_dep(path))
 }
 
 /// Latch the dependency mode without a transform or resolve having run, and
@@ -875,9 +1070,9 @@ pub fn transforms_dep(path: String) -> bool {
 /// this binding and the ESM hooks on the other. Freezing also makes a later
 /// `setTransformDeps` throw instead of being silently ignored, and aligns
 /// the deadline on every `module.register()` runtime.
-#[cfg_attr(feature = "napi", napi)]
 pub fn freeze_transform_deps() -> String {
-    let mut deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
+    let context = loader_context();
+    let mut deps = context.transform_deps.lock().unwrap_or_else(PoisonError::into_inner);
     if deps.consumed.is_none() {
         deps.consumed = Some(deps.mode.unwrap_or_else(deps_mode_from_env));
     }
@@ -888,6 +1083,17 @@ pub fn freeze_transform_deps() -> String {
         DepsMode::All => "all",
     }
     .to_owned()
+}
+
+#[cfg(feature = "napi")]
+#[napi(js_name = "freezeTransformDeps")]
+/// Freeze this thread's dependency policy and return `"off"`, `"typescript"`, or
+/// `"all"`. Asynchronous loader registration sends this value to its hook thread so
+/// ESM and CommonJS use the same policy. Later calls to `setTransformDeps` cannot
+/// change the frozen policy.
+pub fn freeze_transform_deps_js(env: Env) -> Result<String> {
+    let _environment = LoaderEnvironmentGuard::from_env(&env)?;
+    Ok(freeze_transform_deps())
 }
 
 /// Node.js' `--preserve-symlinks` and `--preserve-symlinks-main`.
@@ -993,14 +1199,6 @@ fn preserve_symlinks(env: &Env) -> PreserveSymlinks {
     })
 }
 
-/// Resolvers for the export conditions, and the [`ExtensionOrder`], resolve
-/// requests have asked for so far, each cloned from the base [`RESOLVER_AND_TSCONFIG`] resolver so they all
-/// share its caches. Conditions are part of every request, so the base resolver
-/// must not keep whichever set its first caller happened to pass: a `require()`
-/// of a TypeScript file initialises it with none, and a later `import()` would
-/// then pick a package's `default` export over `import`.
-static CONDITION_RESOLVERS: Mutex<Vec<ConditionResolver>> = Mutex::new(Vec::new());
-
 /// A resolver for one set of export conditions, one [`ExtensionOrder`] and
 /// one answer to whether symlinks resolve to their real path.
 type ConditionResolver = (Vec<String>, ExtensionOrder, bool, Arc<Resolver>);
@@ -1028,7 +1226,8 @@ fn resolver_for_conditions(
     order: ExtensionOrder,
     symlinks: bool,
 ) -> Arc<Resolver> {
-    let mut resolvers = CONDITION_RESOLVERS.lock().unwrap_or_else(PoisonError::into_inner);
+    let context = loader_context();
+    let mut resolvers = context.condition_resolvers.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some((.., resolver)) = resolvers
         .iter()
         .find(|(names, o, s, _)| names == conditions && *o == order && *s == symlinks)
@@ -1164,9 +1363,9 @@ impl DepsMode {
 /// selects only the TypeScript dependencies, and any other value is `All`,
 /// which every previous truthy value already meant.
 fn deps_mode_from_env() -> DepsMode {
-    match env::var("OXC_TRANSFORM_ALL") {
-        Err(_) => DepsMode::Off,
-        Ok(value) => match value.as_str() {
+    match loader_env("OXC_TRANSFORM_ALL") {
+        None => DepsMode::Off,
+        Some(value) => match value.as_str() {
             "" | "0" | "false" => DepsMode::Off,
             "typescript" => DepsMode::Typescript,
             _ => DepsMode::All,
@@ -1180,6 +1379,7 @@ fn deps_mode_from_env() -> DepsMode {
 /// Both live behind one lock so that a call racing the resolver's
 /// initialisation either lands before it reads the mode or is rejected —
 /// never accepted and then silently ignored.
+#[derive(Default)]
 struct TransformDeps {
     mode: Option<DepsMode>,
     /// The mode in effect once [`init_resolver`] has run: the override, or
@@ -1187,13 +1387,11 @@ struct TransformDeps {
     consumed: Option<DepsMode>,
 }
 
-static TRANSFORM_DEPS: Mutex<TransformDeps> =
-    Mutex::new(TransformDeps { mode: None, consumed: None });
-
 /// Which dependencies get transformed: [`set_transform_deps`]'s choice, or
 /// `OXC_TRANSFORM_ALL`'s.
 fn deps_mode() -> DepsMode {
-    let deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
+    let context = loader_context();
+    let deps = context.transform_deps.lock().unwrap_or_else(PoisonError::into_inner);
     deps.mode.or(deps.consumed).unwrap_or_else(deps_mode_from_env)
 }
 
@@ -1523,10 +1721,16 @@ impl Output {
     }
 }
 
-#[cfg_attr(feature = "napi", napi)]
 pub fn transform(path: String, source: Either<String, &[u8]>) -> Result<Output> {
     let transformer = OxcTransformer::new(None, None);
     transformer.transform(path, source)
+}
+
+#[cfg(feature = "napi")]
+#[napi(js_name = "transform")]
+pub fn transform_js(env: Env, path: String, source: Either<String, &[u8]>) -> Result<Output> {
+    let _environment = LoaderEnvironmentGuard::from_env(&env)?;
+    transform(path, source)
 }
 
 /// The code `transformModuleRunner` hands to `@oxc-node/core/importer`.
@@ -1557,7 +1761,6 @@ pub struct ModuleRunnerOutput {
 /// `sync` emits static imports without `await`, for `require()` of an ES module without
 /// top-level await. Each line of the output starts on the line of the source it came
 /// from.
-#[cfg_attr(feature = "napi", napi)]
 pub fn transform_module_runner(
     path: String,
     source: Either<String, &[u8]>,
@@ -1566,7 +1769,9 @@ pub fn transform_module_runner(
     let cwd = env::current_dir()?;
     let src_path = Path::new(&path);
     let lookup_path = tsconfig_lookup_path(&cwd, src_path).into_owned();
-    let (resolver, tsconfig_source) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd));
+    let context = loader_context();
+    let (resolver, tsconfig_source) =
+        context.resolver_and_tsconfig.get_or_init(|| init_resolver(cwd));
     let resolved_tsconfig = tsconfig_source.for_path(resolver, &lookup_path);
     let is_es_module = is_module_file(src_path);
     let mut runner = ModuleRunner { sync: sync.unwrap_or(false), ..Default::default() };
@@ -1591,7 +1796,23 @@ pub fn transform_module_runner(
 }
 
 #[cfg(feature = "napi")]
-#[napi]
+#[napi(js_name = "transformModuleRunner")]
+/// Transform a file for `@oxc-node/core/importer`, using this thread's tsconfig.
+/// ES module imports, exports, and `import.meta` become calls the importer evaluates.
+/// CommonJS files retain `require`, `module`, and `exports`. With `sync: true`, static
+/// imports do not use `await`; the result still identifies top-level await. Generated
+/// lines retain their source line positions.
+pub fn transform_module_runner_js(
+    env: Env,
+    path: String,
+    source: Either<String, &[u8]>,
+    sync: Option<bool>,
+) -> Result<ModuleRunnerOutput> {
+    let _environment = LoaderEnvironmentGuard::from_env(&env)?;
+    transform_module_runner(path, source, sync)
+}
+
+#[cfg(feature = "napi")]
 pub fn transform_async(
     path: String,
     source: Either3<String, Uint8Array, Buffer>,
@@ -1601,7 +1822,20 @@ pub fn transform_async(
 }
 
 #[cfg(feature = "napi")]
+#[napi(js_name = "transformAsync")]
+pub fn transform_async_js(
+    env: Env,
+    path: String,
+    source: Either3<String, Uint8Array, Buffer>,
+) -> Result<AsyncTask<TransformTask>> {
+    let _environment = LoaderEnvironmentGuard::from_env(&env)?;
+    Ok(transform_async(path, source))
+}
+
+#[cfg(feature = "napi")]
 pub struct TransformTask {
+    context: Arc<LoaderContext>,
+    environment: Option<LoaderEnvironment>,
     cwd: String,
     helper_module_name: Option<String>,
     path: String,
@@ -1615,11 +1849,15 @@ impl Task for TransformTask {
     type JsValue = Output;
 
     fn compute(&mut self) -> Result<Self::Output> {
+        let _context =
+            LoaderContextGuard::enter(Arc::clone(&self.context), self.environment.clone());
         let src_path = Path::new(&self.path);
         let cwd = PathBuf::from(&self.cwd);
         // Worked out before `cwd` is moved into the initialiser.
         let lookup_path = tsconfig_lookup_path(&cwd, src_path).into_owned();
-        let (resolver, tsconfig_source) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd));
+        let context = loader_context();
+        let (resolver, tsconfig_source) =
+            context.resolver_and_tsconfig.get_or_init(|| init_resolver(cwd));
         let resolved_tsconfig = tsconfig_source.for_path(resolver, &lookup_path);
         oxc_transform(
             src_path,
@@ -1655,9 +1893,7 @@ pub struct OxcTransformer {
     helper_module_name: Option<String>,
 }
 
-#[cfg_attr(feature = "napi", napi)]
 impl OxcTransformer {
-    #[cfg_attr(feature = "napi", napi(constructor))]
     pub fn new(cwd: Option<String>, helper_module_name: Option<String>) -> Self {
         Self {
             cwd: match cwd {
@@ -1668,13 +1904,14 @@ impl OxcTransformer {
         }
     }
 
-    #[cfg_attr(feature = "napi", napi)]
     pub fn transform(&self, path: String, source: Either<String, &[u8]>) -> Result<Output> {
         let cwd = PathBuf::from(&self.cwd);
         let src_path = Path::new(&path);
         // Worked out before `cwd` is moved into the initialiser.
         let lookup_path = tsconfig_lookup_path(&cwd, src_path).into_owned();
-        let (resolver, tsconfig_source) = RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd));
+        let context = loader_context();
+        let (resolver, tsconfig_source) =
+            context.resolver_and_tsconfig.get_or_init(|| init_resolver(cwd));
         let resolved_tsconfig = tsconfig_source.for_path(resolver, &lookup_path);
         oxc_transform(
             src_path,
@@ -1690,18 +1927,55 @@ impl OxcTransformer {
     }
 
     #[cfg(feature = "napi")]
-    #[napi]
     pub fn transform_async(
         &self,
         path: String,
         source: Either3<String, Uint8Array, Buffer>,
     ) -> AsyncTask<TransformTask> {
+        // Freeze selection before queuing work. A later synchronous transform must
+        // not choose another config while this task waits for a libuv pool thread.
+        // Parsing and diagnostics still belong to the task's compute phase.
+        let _ = select_tsconfig(PathBuf::from(&self.cwd));
+        let _ = freeze_transform_deps();
         AsyncTask::new(TransformTask {
+            context: loader_context(),
+            environment: LOADER_ENVIRONMENT.with(|environment| environment.borrow().clone()),
             path,
             source,
             cwd: self.cwd.clone(),
             helper_module_name: self.helper_module_name.clone(),
         })
+    }
+}
+
+#[cfg(feature = "napi")]
+#[napi]
+impl OxcTransformer {
+    #[napi(constructor)]
+    pub fn new_js(cwd: Option<String>, helper_module_name: Option<String>) -> Self {
+        Self::new(cwd, helper_module_name)
+    }
+
+    #[napi(js_name = "transform")]
+    pub fn transform_js(
+        &self,
+        env: Env,
+        path: String,
+        source: Either<String, &[u8]>,
+    ) -> Result<Output> {
+        let _environment = LoaderEnvironmentGuard::from_env(&env)?;
+        self.transform(path, source)
+    }
+
+    #[napi(js_name = "transformAsync")]
+    pub fn transform_async_js(
+        &self,
+        env: Env,
+        path: String,
+        source: Either3<String, Uint8Array, Buffer>,
+    ) -> Result<AsyncTask<TransformTask>> {
+        let _environment = LoaderEnvironmentGuard::from_env(&env)?;
+        Ok(self.transform_async(path, source))
     }
 }
 
@@ -1893,8 +2167,9 @@ fn is_module_file(path: &Path) -> bool {
 
 /// The `type` of the nearest `package.json`, once the resolver is set up.
 fn package_type(path: &Path) -> Option<PackageType> {
+    let context = loader_context();
     let (Some((resolver, _)), Some(directory), Some(name)) = (
-        RESOLVER_AND_TSCONFIG.get(),
+        context.resolver_and_tsconfig.get(),
         path.parent(),
         path.file_name().and_then(|name| name.to_str()),
     ) else {
@@ -2552,6 +2827,7 @@ pub fn create_resolve<'env>(
         Either<ResolveFnOutput, PromiseRaw<'env, ResolveFnOutput>>,
     >,
 ) -> Result<Either<ResolveFnOutput, PromiseRaw<'env, ResolveFnOutput>>> {
+    let _environment = LoaderEnvironmentGuard::from_env(env)?;
     tracing::debug!(specifier = ?specifier, context = ?context);
     // The URL parser removes ASCII tab or newline characters before
     // parsing, so file-URL classification and conversion see the cleaned
@@ -2597,8 +2873,9 @@ pub fn create_resolve<'env>(
     #[cfg(not(target_family = "wasm"))]
     let cwd = env::current_dir()?;
 
+    let context_state = loader_context();
     let (base_resolver, tsconfig_source) =
-        RESOLVER_AND_TSCONFIG.get_or_init(|| init_resolver(cwd.clone()));
+        context_state.resolver_and_tsconfig.get_or_init(|| init_resolver(cwd.clone()));
 
     // A `file:` URL is an absolute path in every form Node.js hands over,
     // UNC `file://server/…` included. Schemes are case-insensitive, so
@@ -2991,7 +3268,9 @@ pub fn load<'env>(
     }
 
     let loaded = next_load.call((url.clone(), Some(context)).into())?;
-    let (resolver, tsconfig_source) = RESOLVER_AND_TSCONFIG
+    let context_state = loader_context();
+    let (resolver, tsconfig_source) = context_state
+        .resolver_and_tsconfig
         .get()
         .ok_or_else(|| Error::new(Status::GenericFailure, "Failed to get resolver and tsconfig"))?;
 
@@ -3617,10 +3896,10 @@ fn warn_once(message: String) {
 ///
 /// Continuous integration wrappers and `.env` files routinely export variables
 /// with an empty value. Without this, an empty `TS_NODE_PROJECT` counts as set,
-/// shadows a perfectly good `OXC_TSCONFIG_PATH`, and leaves the process with no
+/// shadows a perfectly good `OXC_TSCONFIG_PATH`, and leaves the loader context with no
 /// tsconfig at all.
 fn non_empty_env(name: &str) -> Option<String> {
-    env::var(name).ok().filter(|value| !value.is_empty())
+    loader_env(name).filter(|value| !value.is_empty())
 }
 
 /// The module format that `.ts` / `.tsx` files should default to, derived from
@@ -3645,44 +3924,55 @@ fn absolute_tsconfig_path(cwd: &Path, tsconfig: PathBuf) -> PathBuf {
     if tsconfig.is_absolute() { tsconfig } else { cwd.join(tsconfig) }
 }
 
+/// Select once for this context, before either its main thread or an asynchronous
+/// hook thread starts resolving files. Keep the source label for diagnostics.
+fn select_tsconfig(cwd: PathBuf) -> Option<(PathBuf, &'static str)> {
+    let context = loader_context();
+    let mut tsconfig_override =
+        context.tsconfig_override.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, selected)) = &tsconfig_override.consumed {
+        return selected.clone();
+    }
+    tracing::debug!(api_tsconfig = ?tsconfig_override.path);
+    let explicit_tsconfig =
+        tsconfig_override.path.clone().map(|path| (path, tsconfig_override.source)).or_else(|| {
+            if !tsconfig_override.use_process_env {
+                return None;
+            }
+            let oxc_tsconfig = non_empty_env("OXC_TSCONFIG_PATH");
+            let explicit_tsconfig = non_empty_env("TS_NODE_PROJECT")
+                .map(|path| {
+                    // `oxnode watch --tsconfig` sets both, so an env file cannot
+                    // override it (issue #876); warnings name the one it means.
+                    let source = if oxc_tsconfig.as_deref() == Some(path.as_str()) {
+                        "OXC_TSCONFIG_PATH"
+                    } else {
+                        "TS_NODE_PROJECT"
+                    };
+                    (path, source)
+                })
+                .or_else(|| oxc_tsconfig.map(|path| (path, "OXC_TSCONFIG_PATH")));
+            tracing::debug!(explicit_tsconfig = ?explicit_tsconfig);
+            explicit_tsconfig.map(|(path, source)| (PathBuf::from(path), source))
+        });
+    let selected = explicit_tsconfig
+        .map(|(tsconfig, source)| (absolute_tsconfig_path(&cwd, tsconfig), source));
+    tsconfig_override.consumed = Some((cwd, selected.clone()));
+    selected
+}
+
 fn init_resolver(cwd: PathBuf) -> (Resolver, TsconfigSource) {
-    // An explicitly requested config always wins over discovery, and one passed
-    // through the API wins over the environment.
-    let explicit_tsconfig_path = {
-        let mut tsconfig_override =
-            TSCONFIG_OVERRIDE.lock().unwrap_or_else(PoisonError::into_inner);
-        tracing::debug!(api_tsconfig = ?tsconfig_override.path);
-        let explicit_tsconfig =
-            tsconfig_override.path.clone().map(|path| (path, "setTsconfigPath()")).or_else(|| {
-                let oxc_tsconfig = non_empty_env("OXC_TSCONFIG_PATH");
-                let explicit_tsconfig = non_empty_env("TS_NODE_PROJECT")
-                    .map(|path| {
-                        // `oxnode watch --tsconfig` sets both, so an env file cannot
-                        // override it (issue #876); the warnings then name the one it means.
-                        let source = if oxc_tsconfig.as_deref() == Some(path.as_str()) {
-                            "OXC_TSCONFIG_PATH"
-                        } else {
-                            "TS_NODE_PROJECT"
-                        };
-                        (path, source)
-                    })
-                    .or_else(|| oxc_tsconfig.map(|path| (path, "OXC_TSCONFIG_PATH")));
-                tracing::debug!(explicit_tsconfig = ?explicit_tsconfig);
-                explicit_tsconfig.map(|(path, source)| (PathBuf::from(path), source))
-            });
-        let explicit_tsconfig_path = explicit_tsconfig
-            .map(|(tsconfig, source)| (absolute_tsconfig_path(&cwd, tsconfig), source));
-        tsconfig_override.consumed =
-            Some((cwd.clone(), explicit_tsconfig_path.as_ref().map(|(path, _)| path.clone())));
-        explicit_tsconfig_path
-    };
+    // Registration can freeze this choice before the first resolve. Parsing and
+    // diagnostics still wait for the first thread that actually uses a resolver.
+    let explicit_tsconfig_path = select_tsconfig(cwd);
     tracing::debug!(explicit_tsconfig_path = ?explicit_tsconfig_path);
 
     // The dependency mode is fixed by the same first transform or resolve, so
     // a later `setTransformDeps` call can never silently change behaviour. A
     // mode already frozen at `register()` stays frozen: env changes between
     // registration and now must not move the deadline back.
-    let mut deps = TRANSFORM_DEPS.lock().unwrap_or_else(PoisonError::into_inner);
+    let context = loader_context();
+    let mut deps = context.transform_deps.lock().unwrap_or_else(PoisonError::into_inner);
     if deps.consumed.is_none() {
         deps.consumed = Some(deps.mode.unwrap_or_else(deps_mode_from_env));
     }

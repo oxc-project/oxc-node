@@ -344,8 +344,15 @@ await import("@oxc-node/core/register");
 
 A path set this way takes precedence over both environment variables, and a
 relative path resolves against the working directory, just as theirs does. The
-config is read once per process, so call `setTsconfigPath` before the first
-transform or resolve; calling it later with a different path throws.
+config is read once per JavaScript thread, so call `setTsconfigPath` before the
+first transform or resolve. On the asynchronous `module.register()` path, call it
+before importing `@oxc-node/core/register`, which fixes the config for the hook
+thread. Calling it later with a different path throws.
+
+Each worker has independent configuration and resolver caches. A worker can select
+a different tsconfig or clear its config variables without changing its parent.
+The loader and programmatic transforms read the calling thread's `process.env`;
+native asynchronous transforms carry that selection onto the task thread.
 
 The supported `tsconfig.json` options are used for resolution and
 transformation. These include path aliases, module and JSX settings, legacy
@@ -372,13 +379,13 @@ await import("@oxc-node/core/register");
 The setter accepts `"typescript"`, `"all"` and `"off"` — the last keeps
 dependencies untouched even when the variable asks for more. A mode set this
 way takes precedence over `OXC_TRANSFORM_ALL`, and `null`
-clears the override. The mode is read once per process, so call
+clears the override. The mode is read once per JavaScript thread, so call
 `setTransformDeps` before the first transform or resolve; on the
 `module.register()` path the deadline is the `register` import itself, which
 fixes the mode for the hook thread. Calling it later with a different mode
-throws. On WASI the hook thread instantiates its own copy of the binding, so
-the mode in effect when `@oxc-node/core/register` is imported is the one the
-ESM hooks see.
+throws. Native hook threads and WASI copies both receive the mode in effect when
+`@oxc-node/core/register` is imported. Workers can choose different dependency
+policies without changing each other.
 
 `OXC_TRANSFORM_ALL=typescript` predates no older release: a version before
 this one reads any non-empty, non-`0`/`false` value as transform-all, so if an
