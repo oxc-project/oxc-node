@@ -227,7 +227,7 @@ jobs:
     steps:
       - uses: taiki-e/checkout-action@7d1e50e93dc4fb3bba58f85018fadf77898aee8b # v1.4.2
       - name: Download artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/download-artifact
         with:
           name: bindings-x86_64-unknown-freebsd
           path: ./packages/core
@@ -295,7 +295,7 @@ jobs:
           check-latest: true
           architecture: ${{ matrix.settings.architecture }}
           package-manager-cache: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: ./.github/actions/download-artifact
         with:
           name: cli
           path: ./packages/cli/dist
@@ -303,7 +303,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --force
       - name: Download artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/download-artifact
         with:
           name: bindings-${{ matrix.settings.target }}
           path: ./packages/core
@@ -380,7 +380,7 @@ jobs:
             }
           " >> $GITHUB_OUTPUT
           echo "PNPM_STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: ./.github/actions/download-artifact
         with:
           name: cli
           path: ./packages/cli/dist
@@ -388,7 +388,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --force
       - name: Download artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/download-artifact
         with:
           name: bindings-${{ matrix.target }}
           path: ./packages/core
@@ -434,14 +434,14 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: ./.github/actions/download-artifact
         with:
           name: cli
           path: ./packages/cli/dist
       - name: Install dependencies
         run: pnpm install --force
       - name: Download artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/download-artifact
         with:
           name: bindings-wasm32-wasip1-threads
           path: ./packages/core
@@ -478,7 +478,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install
       - name: Download all artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/download-artifact
         with:
           path: artifacts
       - name: Prepare publish
@@ -489,7 +489,7 @@ jobs:
       - name: List packages
         run: ls -R ./npm
         shell: bash
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: ./.github/actions/download-artifact
         with:
           name: cli
           path: ./packages/cli/dist
