@@ -40,17 +40,28 @@ export declare function createResolve(options: OxcResolveOptions, specifier: str
 export declare function enableWatchReport(): void
 
 /**
- * Latch the dependency mode without a transform or resolve having run, and
- * return it — `"off"`, `"typescript"` or `"all"`. The `module.register()`
- * path hands the mode to the hook thread as a snapshot: under WASI that
- * thread's binding is a separate copy whose own `env` is a stale snapshot of
- * the host's, so the frozen mode has to travel in the registration data —
- * an `env`-only choice would diverge between the `require()` matcher on
- * this binding and the ESM hooks on the other. Freezing also makes a later
- * `setTransformDeps` throw instead of being silently ignored, and aligns
- * the deadline on every `module.register()` runtime.
+ * Freeze this thread's dependency policy and return `"off"`, `"typescript"`, or
+ * `"all"`. Asynchronous loader registration sends this value to its hook thread so
+ * ESM and CommonJS use the same policy. Later calls to `setTransformDeps` cannot
+ * change the frozen policy.
  */
 export declare function freezeTransformDeps(): string
+
+/**
+ * Freeze this thread's effective tsconfig path and diagnostic source for an
+ * asynchronous loader. An absent path means discovery. This does not parse the
+ * config or emit diagnostics; it prevents later changes to the selected config.
+ */
+export declare function freezeTsconfig(cwd: string): FrozenTsconfig
+
+/**
+ * The selected tsconfig and its original source, sent to an asynchronous loader.
+ * `None` selects discovery explicitly, without consulting the receiving thread's env.
+ */
+export interface FrozenTsconfig {
+  path?: string
+  source?: string
+}
 
 /**
  * The mode last passed to [`set_transform_deps`] — `"off"`, `"typescript"`
@@ -59,20 +70,26 @@ export declare function freezeTransformDeps(): string
  * send a wrapper that forwards the answer to another binding back to the
  * environment variable instead.
  *
- * `register.mjs` hands it to the `module.register()` hook thread. Under WASI
- * that thread instantiates its own copy of the binding, which starts out with
- * no override of its own.
+ * A loader must pass this to its `module.register()` hook thread, whose context
+ * starts without an override. This also applies to a separate WASI binding.
  */
 export declare function getTransformDeps(): string | null
 
 /**
  * The path last passed to [`set_tsconfig_path`], exactly as given, or `null`.
  *
- * `register.mjs` hands it to the `module.register()` hook thread. Under WASI
- * that thread instantiates its own copy of the binding, which starts out with
- * no override of its own.
+ * A loader must pass this to its `module.register()` hook thread, whose context
+ * starts without an override. This also applies to a separate WASI binding.
  */
 export declare function getTsconfigPath(): string | null
+
+/**
+ * Initialize this loader from a frozen tsconfig selection. A missing or empty path
+ * selects discovery without reading environment variables. The optional source
+ * preserves the original diagnostic label: `setTsconfigPath()`, `TS_NODE_PROJECT`,
+ * or `OXC_TSCONFIG_PATH`.
+ */
+export declare function initializeLoader(path?: string | undefined | null, source?: string | undefined | null): void
 
 export declare function initTracing(): void
 
@@ -149,13 +166,12 @@ export interface ResolveFnOutput {
  * over the environment variable, as [`set_tsconfig_path`] does over its
  * variables.
  *
- * The mode is read once per process, on the first transform or resolve, so
+ * The mode is read once per loader context, on the first transform or resolve, so
  * this has to run before that. Calling it afterwards throws, unless it names
  * the mode already in use, whether that came from here or from the
- * environment variable. On WASI the deadline is earlier: the
- * `module.register()` hook thread instantiates its own copy of the binding,
- * so the mode is the one in effect when `@oxc-node/core/register` is
- * imported.
+ * environment variable. With asynchronous loader hooks the deadline is earlier:
+ * registration sends a frozen mode to the `module.register()` hook thread, so
+ * the mode is the one in effect when `@oxc-node/core/register` is imported.
  */
 export declare function setTransformDeps(mode?: string | undefined | null): void
 
@@ -170,10 +186,11 @@ export declare function setTransformDeps(mode?: string | undefined | null): void
  * `undefined` or an empty string clears the override and goes back to the
  * environment variables, then to discovery.
  *
- * The resolver and its tsconfig are shared by the whole process and created
- * on the first transform or resolve, so this has to run before that. Calling
+ * The resolver and its tsconfig belong to the current loader context and are
+ * created on its first transform or resolve, so this has to run before that. Calling
  * it afterwards throws, unless it names the config already in use, whether
- * that came from here or from an environment variable.
+ * that came from here or from an environment variable. Asynchronous loader
+ * registration freezes the selection earlier so its hook thread uses the same config.
  */
 export declare function setTsconfigPath(path?: string | undefined | null): void
 
@@ -188,27 +205,18 @@ export declare function transform(path: string, source: string | Uint8Array): Ou
 export declare function transformAsync(path: string, source: string | Uint8Array | Buffer): Promise<unknown>
 
 /**
- * The transform `@oxc-node/core/importer` runs files with: the one the load hook
- * applies, with the same tsconfig discovery, followed by oxc's module runner transform,
- * which turns `import`/`export` into calls the importer evaluates itself.
- *
- * A file is an ES module as Node.js decides it: by a `.mts`/`.mjs` extension or a
- * `"type": "module"` package, else by its syntax (`import`, `export`, `import.meta` or
- * top-level await). tsconfig's `module` does not make a file without module syntax an
- * ES module here, as the resolver's format does, so `module.exports = ...` keeps
- * working in a package without `"type"`.
- *
- * `sync` emits static imports without `await`, for `require()` of an ES module without
- * top-level await. Each line of the output starts on the line of the source it came
- * from.
+ * Transform a file for `@oxc-node/core/importer`, using this thread's tsconfig.
+ * ES module imports, exports, and `import.meta` become calls the importer evaluates.
+ * CommonJS files retain `require`, `module`, and `exports`. With `sync: true`, static
+ * imports do not use `await`; the result still identifies top-level await. Generated
+ * lines retain their source line positions.
  */
 export declare function transformModuleRunner(path: string, source: string | Uint8Array, sync?: boolean | undefined | null): ModuleRunnerOutput
 
 /**
- * Whether the mode in effect transforms a `node_modules` file at `path`, for
- * the `pirates` matcher in `register.mjs`. Asking the binding keeps
- * `OXC_TRANSFORM_ALL`'s grammar and the TypeScript-family extensions in one
- * place, and — unlike a mode snapshotted at module evaluation — honours a
- * `setTransformDeps` call made after `@oxc-node/core/register` loaded.
+ * Whether this thread's dependency policy transforms the file at `path`.
+ * Before the first transform, resolve, or asynchronous loader registration, this
+ * honors `setTransformDeps` and this thread's `OXC_TRANSFORM_ALL`. After that point
+ * it uses the frozen policy.
  */
 export declare function transformsDep(path: string): boolean

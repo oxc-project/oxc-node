@@ -22,7 +22,8 @@ default = ["napi"]
 #
 # The embedder writes its own thin `#[napi]` forwarders — for `create_resolve`,
 # `load`, `transform`, `OxcTransformer`, `set_tsconfig_path`,
-# `get_tsconfig_path`, `set_transform_deps`, `get_transform_deps`,
+# `get_tsconfig_path`, `initialize_loader`, `freeze_tsconfig`,
+# `set_transform_deps`, `get_transform_deps`,
 # `transforms_dep`, `freeze_transform_deps`, `transform_module_runner`, and for
 # watch mode `enable_watch_report` and `take_watch_dependencies` — compiling this crate against
 # the same napi 3.x version so the `Function`, `PromiseRaw`, `Either` and
@@ -39,7 +40,9 @@ default = ["napi"]
 # is a `#[napi]` class instead and loses `ToNapiValue`/`TypeName` with the
 # feature off, so `transform` results are handed to the host's own JS-facing
 # type through `source()`/`source_map()`; likewise `transform_async` and its
-# `Task` surface are compiled out entirely.
+# `Task` surface are compiled out entirely. For a custom task, call
+# `OxcTransformer::capture_context()` on the caller thread before queuing work,
+# then wrap its synchronous transform in `CapturedLoaderContext::with`.
 #
 # `napi` and `napi-derive` remain dependencies either way — core code uses
 # `napi` types (`Either`, `Function`, `PromiseRaw`, `Env`) throughout.
