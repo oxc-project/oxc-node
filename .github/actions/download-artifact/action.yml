@@ -1,0 +1,54 @@
+name: Download artifact with retries
+description: Retry complete artifact downloads with fresh URLs after transient failures
+
+inputs:
+  name:
+    description: Artifact name; omit to download all artifacts
+    required: false
+  path:
+    description: Destination directory
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The download action retries the same signed URL internally. Retrying the
+    # whole action after a delay obtains a fresh URL and keeps digest validation.
+    - name: Download artifact
+      id: first
+      continue-on-error: true
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        digest-mismatch: error
+
+    - name: Wait before retry
+      if: ${{ steps.first.outcome == 'failure' }}
+      shell: bash
+      run: sleep 30
+
+    - name: Retry download
+      id: second
+      if: ${{ steps.first.outcome == 'failure' }}
+      continue-on-error: true
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        digest-mismatch: error
+
+    - name: Wait before final retry
+      if: ${{ steps.second.outcome == 'failure' }}
+      shell: bash
+      run: sleep 60
+
+    # Let the final failure fail the job. Default success() guards also prevent
+    # retries after cancellation or an unrelated step failure.
+    - name: Final download attempt
+      if: ${{ steps.second.outcome == 'failure' }}
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        digest-mismatch: error
