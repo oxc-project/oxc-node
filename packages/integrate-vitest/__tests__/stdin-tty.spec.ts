@@ -19,6 +19,8 @@ const getFixturePath = (fixtureName: string) => {
 
 const oxnodePath = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
 
+// Kept on purpose: forcing `process.stdin.isTTY = false` in `@oxc-node/core/register`
+// fails only this test and its sibling TTY test; nothing else in the repo catches it.
 test("CLI preserves TTY properties when stdin is a TTY", () => {
   const fixturePath = getFixturePath("tty-check.ts");
 
@@ -111,6 +113,8 @@ test("CLI properly handles stdin piping", async () => {
   expect(actualOutput, "should echo the input correctly").toBe(testInput);
 });
 
+// Kept on purpose: forcing `process.stdin.isTTY = false` in `@oxc-node/core/register`
+// fails only this test and its sibling TTY test; nothing else in the repo catches it.
 test("CLI with node directly preserves TTY (baseline comparison)", () => {
   const fixturePath = getFixturePath("tty-check.ts");
 

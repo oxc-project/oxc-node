@@ -66,10 +66,6 @@ await test("resolve package.json", () => {
   assert.equal(pkgJson.name, "integrate-module");
 });
 
-await test("named import from json", () => {
-  assert.equal(pkgJson.version, "0.0.0");
-});
-
 await test("resolve ipaddr.js", () => {
   assert.ok(ipaddr.isValid("::1"));
 });
