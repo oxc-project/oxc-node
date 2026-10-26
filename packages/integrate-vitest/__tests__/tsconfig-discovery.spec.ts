@@ -795,7 +795,8 @@ await attempt("second");
 });
 
 // The transform API takes a path and a working directory, and nothing says the
-// path has to be absolute — the sibling `index.spec.ts` passes `"foo.ts"`.
+// path has to be absolute — integrate-module's `should resolve native addon`
+// passes `"index.ts"`.
 // Discovery only accepts absolute paths, so a relative one has to be joined
 // against the transformer's own `cwd` before the lookup.
 const RELATIVE_VS_ABSOLUTE = `import { readFileSync } from "node:fs";
