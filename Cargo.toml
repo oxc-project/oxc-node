@@ -71,7 +71,7 @@ yarn_pnp = ["oxc_resolver/yarn_pnp"]
 memchr = "2"
 napi = { version = "3.12.2", default-features = false, features = ["serde-json", "napi3"] }
 napi-derive = { version = "3.6.3", default-features = false, features = ["type-def"] }
-oxc = { version = "0.155.0", features = [
+oxc = { version = "0.156.0", features = [
   "ast_visit",
   "codegen",
   "transformer",
