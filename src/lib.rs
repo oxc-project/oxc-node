@@ -862,8 +862,7 @@ pub fn initialize_loader(path: Option<String>) -> Result<()> {
     set_tsconfig_override(path, false, "setTsconfigPath()")
 }
 
-#[cfg(feature = "napi")]
-#[napi(js_name = "initializeLoader")]
+#[cfg_attr(feature = "napi", napi(js_name = "initializeLoader"))]
 /// Initialize this loader from a frozen tsconfig selection. A missing or empty path
 /// selects discovery without reading environment variables. The optional source
 /// preserves the original diagnostic label: `setTsconfigPath()`, `TS_NODE_PROJECT`,
@@ -946,8 +945,7 @@ pub fn freeze_tsconfig(cwd: String) -> FrozenTsconfig {
     }
 }
 
-#[cfg(feature = "napi")]
-#[napi(js_name = "freezeTsconfig")]
+#[cfg_attr(feature = "napi", napi(js_name = "freezeTsconfig"))]
 /// Freeze this thread's effective tsconfig path and diagnostic source for an
 /// asynchronous loader. An absent path means discovery. This does not parse the
 /// config or emit diagnostics; it prevents later changes to the selected config.

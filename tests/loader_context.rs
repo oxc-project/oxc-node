@@ -13,7 +13,8 @@ use std::{
 
 use napi::Either;
 use oxc_node::{
-    CapturedLoaderContext, OxcTransformer, get_tsconfig_path, set_transform_deps, set_tsconfig_path,
+    CapturedLoaderContext, OxcTransformer, get_tsconfig_path, initialize_loader_js,
+    set_transform_deps, set_tsconfig_path,
 };
 
 const SOURCE: &str = r#"
@@ -174,4 +175,26 @@ fn nested_contexts_restore_after_errors_and_panics() {
         assert_eq!(setter_calls(&transform(&assign)), 1);
     });
     assert_eq!(get_tsconfig_path(), None);
+}
+
+#[test]
+fn embedders_initialize_loaders_from_a_frozen_selection() {
+    let fixture = Fixture::new();
+    thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                assert!(
+                    error_reason(initialize_loader_js(None, Some("unknown".into())))
+                        .contains("Invalid tsconfig source")
+                );
+                unwrap_oxc(initialize_loader_js(
+                    Some(fixture.config("assign")),
+                    Some("TS_NODE_PROJECT".into()),
+                ));
+                assert_eq!(get_tsconfig_path(), Some(fixture.config("assign")));
+                assert_eq!(setter_calls(&transform(&fixture.transformer())), 1);
+            })
+            .join()
+            .unwrap();
+    });
 }
