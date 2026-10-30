@@ -2201,7 +2201,7 @@ fn has_top_level_await(program: &Program<'_>) -> bool {
         }
 
         fn visit_variable_declaration(&mut self, it: &VariableDeclaration<'a>) {
-            self.0 |= it.kind.is_await();
+            self.0 |= it.kind.is_await_using();
             walk::walk_variable_declaration(self, it);
         }
 

@@ -15,7 +15,7 @@
     "@napi-rs/wasm-runtime": "^1.2.5",
     "@oxc-node/cli": "workspace:*",
     "@oxc-node/core": "workspace:*",
-    "@oxc-project/runtime": "^0.155.0",
+    "@oxc-project/runtime": "^0.156.0",
     "@types/node": "^26.6.4",
     "emnapi": "2.0.0-alpha.6",
     "lerna": "^10.0.1",
