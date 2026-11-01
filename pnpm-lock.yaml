@@ -187,7 +187,7 @@ importers:
         version: 3.10.8(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)(@types/node@26.6.4)(emnapi@2.0.0-alpha.6)(supports-color@7.2.0)
       '@napi-rs/wasm-runtime':
         specifier: ^1.2.5
-        version: 1.2.5(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)
+        version: 1.2.6(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)
       '@oxc-node/cli':
         specifier: workspace:*
         version: link:packages/cli
@@ -266,14 +266,14 @@ importers:
     dependencies:
       file-type:
         specifier: ^22.0.2
-        version: 22.2.0(supports-color@7.2.0)
+        version: 22.3.0(supports-color@7.2.0)
     devDependencies:
       '@napi-rs/tar':
         specifier: ^1.1.1
         version: 1.1.1
       '@napi-rs/wasm-runtime':
         specifier: ^1.2.3
-        version: 1.2.5(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)
+        version: 1.2.6(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)
       '@oxc-node/cli':
         specifier: workspace:*
         version: link:../cli
@@ -309,23 +309,23 @@ importers:
     dependencies:
       file-type:
         specifier: ^22.0.2
-        version: 22.2.0(supports-color@7.2.0)
+        version: 22.3.0(supports-color@7.2.0)
     devDependencies:
       '@napi-rs/tar':
         specifier: ^1.1.1
         version: 1.1.1
       '@napi-rs/wasm-runtime':
         specifier: ^1.2.3
-        version: 1.2.5(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)
+        version: 1.2.6(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)
       '@nestjs/common':
         specifier: ^12.0.1
-        version: 12.2.0(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0)
+        version: 12.3.2(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0)
       '@nestjs/core':
         specifier: ^12.0.1
-        version: 12.2.0(@nestjs/common@12.2.0(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/platform-express@12.2.0)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+        version: 12.3.2(@nestjs/common@12.3.2(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/platform-express@12.3.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@nestjs/platform-express':
         specifier: ^12.0.1
-        version: 12.2.0(@nestjs/common@12.2.0(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/core@12.2.0)(supports-color@7.2.0)
+        version: 12.3.2(@nestjs/common@12.3.2(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/core@12.3.2)(supports-color@7.2.0)
       '@oxc-node/cli':
         specifier: workspace:*
         version: link:../cli
@@ -1024,8 +1024,8 @@ packages:
   '@napi-rs/wasm-runtime@0.2.4':
     resolution: {integrity: sha512-9zESzOO5aDByvhIAsOy9TbpZ0Ur2AJbUI7UT73kcUTS2mxAMHOBaa1st/jAymNoCtvrit99kkzT1FZuXVcgfIQ==}
 
-  '@napi-rs/wasm-runtime@1.2.5':
-    resolution: {integrity: sha512-HshSvXzmBxNzqejd3k/KemgQ3hdREUYFRRrgxOZ+gPljDIsO2SDZrVZMd4Z/HsxudQbE62OVyVFE8z9BCurfjA==}
+  '@napi-rs/wasm-runtime@1.2.6':
+    resolution: {integrity: sha512-mRyDmEw9/fCDXCGfL1sbgIw/GUK0PVxRW4YwgPN61F3LQ+fSyoBFarJVzgGyhF6kRzEQZ0FejDqm4WLXSeqQmw==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=23.5.0}
     peerDependencies:
       '@emnapi/core': 2.0.0-alpha.6
@@ -1116,8 +1116,8 @@ packages:
     resolution: {integrity: sha512-VjHyKEqXAwYZK+HY7iJctYvRm3TFEbaQxeZwvAG1QRkoo1a39phMY8J6x9tUEqJI03W6MysB8F2jacI6wvcx+w==}
     engines: {node: '>= 12.22.0'}
 
-  '@nestjs/common@12.2.0':
-    resolution: {integrity: sha512-xC4tUL31tQ2eoZcHheHIjnCrhnqyAEDRMGGHMUrYsOdh0Kg1DvDlLn7zelisErMcpaNanSIApJH6m9AcnK3fQQ==}
+  '@nestjs/common@12.3.2':
+    resolution: {integrity: sha512-XPNu75rXiDBuQ/EECiA0urFJ7bAycA1/xTrKnKct5vEF7A5FE0LyOem/EhRZI0Cq1xAGPDuTB89sFMqeSPWjzQ==}
     peerDependencies:
       class-transformer: '>=0.4.1'
       class-validator: '>=0.13.2'
@@ -1129,8 +1129,8 @@ packages:
       class-validator:
         optional: true
 
-  '@nestjs/core@12.2.0':
-    resolution: {integrity: sha512-OTNlRALw/xlSJ/cXeIo7HzY/TqE9RSyv6uFS+OY41dDelDwMqnAjpRFiN5RVGOI/R4wAhaD0TJVjsfOrpZJCjA==}
+  '@nestjs/core@12.3.2':
+    resolution: {integrity: sha512-lCDN5iC4BoG9k5Sk/tG2EF4VAtoZABFjN4e0nk9xKK3ytD4eSMc9ma1Y092t/navenlf3roTtCDUZ/RIHzYjCw==}
     engines: {node: '>= 20'}
     peerDependencies:
       '@nestjs/common': ^12.0.0
@@ -1147,8 +1147,8 @@ packages:
       '@nestjs/websockets':
         optional: true
 
-  '@nestjs/platform-express@12.2.0':
-    resolution: {integrity: sha512-ZG4nRgFicwfFKnzz9CfmX6GhSL1Ov6ch25L+7yDFoPeOBZ0EoytsttyURQaDJPRigcIJXQ1E+Z5zWDwUGc9Yyg==}
+  '@nestjs/platform-express@12.3.2':
+    resolution: {integrity: sha512-wbe1zd6xWLW8qI6t3RP3SqqQnp32pVAfXKqttcp/geL5ys6xw6c/HkASXLNvwlf7IzMLxnpqANtHHwcF4waqRA==}
     peerDependencies:
       '@nestjs/common': ^12.0.0
       '@nestjs/core': ^12.0.0
@@ -1884,12 +1884,12 @@ packages:
     peerDependencies:
       '@testing-library/dom': '>=7.21.4'
 
-  '@tokenizer/inflate@0.4.1':
-    resolution: {integrity: sha512-2mAv+8pkG6GIZiF1kNg1jAjh27IDxEPKwdGul3snfztFerfPGI1LjDezZp3i7BElXompqEtPmoPx6c2wgtWsOA==}
-    engines: {node: '>=18'}
-
   '@tokenizer/inflate@0.5.1':
     resolution: {integrity: sha512-56U2O6fDLFtqokwWh597IdeUgtM7j+TT9tb1soybhgA6cy163gAcVmoQr8H4Ud/CkgCkViwcuLyqtn6wYqw59Q==}
+    engines: {node: '>=18'}
+
+  '@tokenizer/inflate@0.6.0':
+    resolution: {integrity: sha512-+0RDxhBkyT9xMnGdJAwmats9yxRLR8ypJrQgrnLqOu4Gv/aHlnxYgdGVy2QTwvBl6IF/w2Hr+ZNirH+iMUbVZA==}
     engines: {node: '>=18'}
 
   '@tokenizer/token@0.3.0':
@@ -2800,12 +2800,12 @@ packages:
     resolution: {integrity: sha512-d+l3qxjSesT4V7v2fh+QnmFnUWv9lSpjarhShNTgBOfA0ttejbQUAlHLitbjkoRiDulW0OPoQPYIGhIC8ohejg==}
     engines: {node: '>=18'}
 
-  file-type@22.1.1:
-    resolution: {integrity: sha512-sEB0oStmeLGtpmSAD88RDNuLsvhv4iC3u0lE25CUvfCULvj49xoQ3l3K525Vn+ZzsZ6DOLajQCV6RmhwwhqiJg==}
-    engines: {node: '>=22'}
-
   file-type@22.2.0:
     resolution: {integrity: sha512-XmEVJsRpQMVYC+sWFW+FKAVo2P7/lPctDdWH4UQ1r6oxhdrTobnowdM3z+ZJ93a4J8D3yDpxX0bEvRuFev0vUQ==}
+    engines: {node: '>=22'}
+
+  file-type@22.3.0:
+    resolution: {integrity: sha512-PrPedgnnWl5bWz3JHgar0QSzRvzeyFh7dZ9JpYOgcPZu4KALS9zw4MMa6qXRYyjeBsAlpaWB2boLuG991+0HIQ==}
     engines: {node: '>=22'}
 
   finalhandler@2.1.1:
@@ -3317,8 +3317,8 @@ packages:
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
 
-  multer@2.4.0:
-    resolution: {integrity: sha512-7dqa0ZcFfzbefdTuIkzOSMvZWC0J7FLqBOjJUZvDCXShIURWKxAyTT1wHhnE5q19c7jOJf43IYYKjBmZVZmvhg==}
+  multer@2.5.0:
+    resolution: {integrity: sha512-BsqOzYGVq49JcW2IzoSAxeKYRevb+dGGPPWleOR8Lrlk4igwxu1/9pwSXlByhCb7MVZDrNJFC0IBP5/O5nLYRw==}
     engines: {node: '>= 10.16.0'}
 
   mute-stream@3.0.0:
@@ -3847,8 +3847,8 @@ packages:
     resolution: {integrity: sha512-aulFJcD6YK8V1G7iRB5tigAP4TsHBZZrOV8pjV++zdUwmeV8uzbY7yn6h9MswN62adStNZFuCIx4haBnRuMDaw==}
     engines: {node: '>=18'}
 
-  strtok3@10.6.1:
-    resolution: {integrity: sha512-p8ynRS8lXnvA3tsdcUYFjbzwh2MsdBZgxrFT2G+Yb7vNvUfPF+GgHCt/0jkayfsRXA1TwtZstf+JA0V+iQXdHA==}
+  strtok3@10.6.3:
+    resolution: {integrity: sha512-MD8mENgyXMr2mDaDfzP3RWYDSyYQxIIou7HhCiCJiBekrsoDtUG0id3vYnjDfY9ndOEbazFXe13Qw6u/1AB8ew==}
     engines: {node: '>=18'}
 
   supports-color@7.2.0:
@@ -4547,7 +4547,7 @@ snapshots:
     dependencies:
       '@emnapi/core': 2.0.0-alpha.6
       '@emnapi/runtime': 2.0.0-alpha.6
-      '@napi-rs/wasm-runtime': 1.2.5(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)
+      '@napi-rs/wasm-runtime': 1.2.6(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)
     optional: true
 
   '@napi-rs/lzma-win32-arm64-msvc@1.5.1':
@@ -4619,7 +4619,7 @@ snapshots:
     dependencies:
       '@emnapi/core': 2.0.0-alpha.6
       '@emnapi/runtime': 2.0.0-alpha.6
-      '@napi-rs/wasm-runtime': 1.2.5(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)
+      '@napi-rs/wasm-runtime': 1.2.6(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)
     optional: true
 
   '@napi-rs/tar-win32-arm64-msvc@1.1.1':
@@ -4656,7 +4656,7 @@ snapshots:
       '@emnapi/runtime': 2.0.0-alpha.6
       '@tybys/wasm-util': 0.9.0
 
-  '@napi-rs/wasm-runtime@1.2.5(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)':
+  '@napi-rs/wasm-runtime@1.2.6(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)':
     dependencies:
       '@emnapi/core': 2.0.0-alpha.6
       '@emnapi/runtime': 2.0.0-alpha.6
@@ -4693,7 +4693,7 @@ snapshots:
     dependencies:
       '@emnapi/core': 2.0.0-alpha.6
       '@emnapi/runtime': 2.0.0-alpha.6
-      '@napi-rs/wasm-runtime': 1.2.5(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)
+      '@napi-rs/wasm-runtime': 1.2.6(@emnapi/core@2.0.0-alpha.6)(@emnapi/runtime@2.0.0-alpha.6)
     optional: true
 
   '@napi-rs/wasm-tools-win32-arm64-msvc@1.1.0':
@@ -4721,10 +4721,10 @@ snapshots:
       '@napi-rs/wasm-tools-win32-ia32-msvc': 1.1.0
       '@napi-rs/wasm-tools-win32-x64-msvc': 1.1.0
 
-  '@nestjs/common@12.2.0(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0)':
+  '@nestjs/common@12.3.2(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0)':
     dependencies:
       '@standard-schema/spec': 1.1.0
-      file-type: 22.1.1(supports-color@7.2.0)
+      file-type: 22.2.0(supports-color@7.2.0)
       iterare: 1.2.1
       load-esm: 1.0.3
       reflect-metadata: 0.2.2
@@ -4734,9 +4734,9 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@nestjs/core@12.2.0(@nestjs/common@12.2.0(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/platform-express@12.2.0)(reflect-metadata@0.2.2)(rxjs@7.8.2)':
+  '@nestjs/core@12.3.2(@nestjs/common@12.3.2(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/platform-express@12.3.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)':
     dependencies:
-      '@nestjs/common': 12.2.0(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0)
+      '@nestjs/common': 12.3.2(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0)
       fast-safe-stringify: 2.1.1
       iterare: 1.2.1
       path-to-regexp: 8.4.2
@@ -4745,15 +4745,15 @@ snapshots:
       tslib: 2.8.1
       uid: 2.0.2
     optionalDependencies:
-      '@nestjs/platform-express': 12.2.0(@nestjs/common@12.2.0(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/core@12.2.0)(supports-color@7.2.0)
+      '@nestjs/platform-express': 12.3.2(@nestjs/common@12.3.2(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/core@12.3.2)(supports-color@7.2.0)
 
-  '@nestjs/platform-express@12.2.0(@nestjs/common@12.2.0(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/core@12.2.0)(supports-color@7.2.0)':
+  '@nestjs/platform-express@12.3.2(@nestjs/common@12.3.2(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/core@12.3.2)(supports-color@7.2.0)':
     dependencies:
-      '@nestjs/common': 12.2.0(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0)
-      '@nestjs/core': 12.2.0(@nestjs/common@12.2.0(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/platform-express@12.2.0)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@nestjs/common': 12.3.2(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0)
+      '@nestjs/core': 12.3.2(@nestjs/common@12.3.2(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/platform-express@12.3.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       cors: 2.8.6
       express: 5.3.0(supports-color@7.2.0)
-      multer: 2.4.0
+      multer: 2.5.0
       path-to-regexp: 8.4.2
       tslib: 2.8.1
     transitivePeerDependencies:
@@ -5316,16 +5316,17 @@ snapshots:
     dependencies:
       '@testing-library/dom': 10.4.2
 
-  '@tokenizer/inflate@0.4.1(supports-color@7.2.0)':
+  '@tokenizer/inflate@0.5.1(supports-color@7.2.0)':
     dependencies:
       debug: 4.4.3(supports-color@7.2.0)
       token-types: 6.1.2
     transitivePeerDependencies:
       - supports-color
 
-  '@tokenizer/inflate@0.5.1(supports-color@7.2.0)':
+  '@tokenizer/inflate@0.6.0(supports-color@7.2.0)':
     dependencies:
       debug: 4.4.3(supports-color@7.2.0)
+      strtok3: 10.6.3
       token-types: 6.1.2
     transitivePeerDependencies:
       - supports-color
@@ -6153,19 +6154,19 @@ snapshots:
     dependencies:
       is-unicode-supported: 2.1.0
 
-  file-type@22.1.1(supports-color@7.2.0):
+  file-type@22.2.0(supports-color@7.2.0):
     dependencies:
-      '@tokenizer/inflate': 0.4.1(supports-color@7.2.0)
-      strtok3: 10.6.1
+      '@tokenizer/inflate': 0.5.1(supports-color@7.2.0)
+      strtok3: 10.6.3
       token-types: 6.1.2
       uint8array-extras: 1.6.0
     transitivePeerDependencies:
       - supports-color
 
-  file-type@22.2.0(supports-color@7.2.0):
+  file-type@22.3.0(supports-color@7.2.0):
     dependencies:
-      '@tokenizer/inflate': 0.5.1(supports-color@7.2.0)
-      strtok3: 10.6.1
+      '@tokenizer/inflate': 0.6.0(supports-color@7.2.0)
+      strtok3: 10.6.3
       token-types: 6.1.2
       uint8array-extras: 1.6.0
     transitivePeerDependencies:
@@ -6695,7 +6696,7 @@ snapshots:
 
   ms@2.1.3: {}
 
-  multer@2.4.0:
+  multer@2.5.0:
     dependencies:
       append-field: 1.0.0
       busboy: 1.6.0
@@ -7427,7 +7428,7 @@ snapshots:
 
   strip-final-newline@4.0.0: {}
 
-  strtok3@10.6.1:
+  strtok3@10.6.3:
     dependencies:
       '@tokenizer/token': 0.3.0
 
