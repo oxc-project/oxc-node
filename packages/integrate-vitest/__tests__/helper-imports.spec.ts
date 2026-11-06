@@ -131,10 +131,18 @@ describe("injected runtime helpers", () => {
     ["module", "entry.ts", "with an export"],
     ["commonjs", "entry.ts", "no module syntax"],
     ["commonjs", "entry.cts", "no module syntax"],
+    // A type-only import is erased with the types, so it is no module syntax: the file
+    // keeps the format the package gives it, and its helper is imported in that format.
+    ["module", "entry.ts", "with a type-only import"],
+    ["module", "entry.mts", "with a type-only import"],
+    ["commonjs", "entry.ts", "with a type-only import"],
   ])("a %s package loading %s (%s)", (type, entry, shape) => {
     const body = [...NEEDS_HELPER];
     if (shape === "with an export") {
       body.push("export const exported = true;");
+    }
+    if (shape === "with a type-only import") {
+      body.unshift('import type { Stats } from "node:fs";');
     }
     body.push("report();");
     // Prove the file really executed as the module kind the row claims: `require`
