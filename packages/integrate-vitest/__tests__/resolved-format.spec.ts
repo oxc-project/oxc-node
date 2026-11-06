@@ -325,3 +325,59 @@ describe("resolved module format (issue #797)", () => {
     );
   });
 });
+
+/**
+ * Under `node16`, `node18` and `nodenext`, `tsc` emits each `.ts` file in the format
+ * its `package.json` `"type"` gives it. The resolve hook reported every `.ts` and
+ * `.tsx` file as an ES module under those settings instead, so a CommonJS file that
+ * Node.js loads through the module hooks — the entry point, or a file an ES module
+ * imports — ran without `require` or `module`. A file with module syntax still runs
+ * as an ES module: the load hook finds its syntax, as it does without a tsconfig.
+ */
+describe("tsconfig node16, node18 and nodenext leave the format to the package", () => {
+  const COMMONJS = JSON.stringify({ name: "fx", private: true, type: "commonjs" });
+  const UNTYPED = JSON.stringify({ name: "fx", private: true });
+  const tsconfig = (module: string) => JSON.stringify({ compilerOptions: { module } });
+
+  test.each(["node16", "node18", "nodenext"])(
+    "`module: %s` keeps a .ts or .tsx file without module syntax in a type:commonjs package CommonJS",
+    (module) => {
+      const root = fixture({
+        "package.json": COMMONJS,
+        "tsconfig.json": tsconfig(module),
+        "entry.ts": `${probe("entry.ts")}\n`,
+        "dep.tsx": `${probe("dep.tsx")}\n`,
+        "loader.mts": 'await import("./dep.tsx");\n',
+      });
+      expect(run(root, "./entry.ts")).toContain("entry.ts: commonjs function object");
+      expect(run(root, "./loader.mts")).toContain("dep.tsx: commonjs function object");
+    },
+  );
+
+  test("a .ts file without module syntax in a package without a type is CommonJS", () => {
+    const root = fixture({
+      "package.json": UNTYPED,
+      "tsconfig.json": tsconfig("nodenext"),
+      "entry.ts": `${probe("entry.ts")}\n`,
+    });
+    expect(run(root, "./entry.ts")).toContain("entry.ts: commonjs function object");
+  });
+
+  test("a .ts file with module syntax in a package without a type still runs as an ES module", () => {
+    const root = fixture({
+      "package.json": UNTYPED,
+      "tsconfig.json": tsconfig("nodenext"),
+      "entry.ts": `${probe("entry.ts")}\nexport const ok = true;\n`,
+    });
+    expect(run(root, "./entry.ts")).toContain("entry.ts: module undefined undefined");
+  });
+
+  test("an ES `module` setting still makes a .ts file an ES module", () => {
+    const root = fixture({
+      "package.json": COMMONJS,
+      "tsconfig.json": tsconfig("esnext"),
+      "entry.ts": `${probe("entry.ts")}\n`,
+    });
+    expect(run(root, "./entry.ts")).toContain("entry.ts: module undefined undefined");
+  });
+});
