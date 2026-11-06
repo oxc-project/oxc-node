@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { statSync } from "node:fs";
 import * as NodeModule from "node:module";
 import { pathToFileURL } from "node:url";
 import { isMainThread } from "node:worker_threads";
@@ -58,15 +59,21 @@ const DEFAULT_EXTENSIONS = new Set([
 // resolves against the copy that emitted it.
 const HELPER_SPECIFIER_PREFIX = "@oxc-node/core/helpers/";
 const HELPER_TAGGED_PREFIX = "@oxc-node/core@";
-const HELPER_TAG =
-  "c" +
-  createHash("sha256")
-    .update(import.meta.url)
-    .digest("hex")
-    .slice(0, 12);
+/**
+ * The tag of the module at `url`, as `esm.mjs` computes its own.
+ *
+ * @param {string} url
+ * @returns {string}
+ */
+function helperTag(url) {
+  return "c" + createHash("sha256").update(url).digest("hex").slice(0, 12);
+}
+
+const HELPER_TAG = helperTag(import.meta.url);
 const HELPER_MODULE_NAME = `${HELPER_TAGGED_PREFIX}${HELPER_TAG}`;
 
 const requireHelper = createRequire(import.meta.url);
+const resolveHelper = (subpath) => requireHelper.resolve(`@oxc-node/core/${subpath}`);
 
 // Each copy's resolver lives in a realm-wide registry keyed by its tag. Tagged
 // specifiers take exactly their owner's resolver; untagged ones — emitted by older
@@ -74,7 +81,7 @@ const requireHelper = createRequire(import.meta.url);
 // newest registration first.
 const HELPER_RESOLVERS = Symbol.for("@oxc-node/core:helperResolvers");
 const helperResolvers = (globalThis[HELPER_RESOLVERS] ??= {});
-helperResolvers[HELPER_TAG] = (subpath) => requireHelper.resolve(`@oxc-node/core/${subpath}`);
+helperResolvers[HELPER_TAG] = resolveHelper;
 
 function isHelperSpecifier(specifier) {
   return (
@@ -150,8 +157,87 @@ Module._resolveFilename = function (request, parent, isMain, options) {
       }
     }
   }
-  return resolveFilename.call(this, request, parent, isMain, options);
+  let resolved;
+  try {
+    resolved = resolveFilename.call(this, request, parent, isMain, options);
+  } catch (error) {
+    // A TypeScript file is imported by its output's name — `./lib.js` for `lib.ts`,
+    // `./lib.mjs` for `lib.mts` — and an ES module compiled to CommonJS keeps that
+    // name in its `require()`. Node.js' CommonJS resolution knows only the output, so
+    // when it is missing the source is tried instead, as the ES module resolver does.
+    if (error?.code === "MODULE_NOT_FOUND") {
+      for (const candidate of typeScriptSources(request)) {
+        try {
+          return resolveFilename.call(this, candidate, parent, isMain, options);
+        } catch {
+          // Not this one either; the original error is the one to report.
+        }
+      }
+    }
+    throw error;
+  }
+  // Where the output exists too — compiled in place, or stale — Node.js' CommonJS
+  // resolution finds it first: `./lib.js` and `./lib` both name `lib.js`. A TypeScript
+  // importer resolves TypeScript first, as the ES module resolver does for it (#840).
+  return (resolvesSourceFirst(request, parent) && sourceBeside(resolved)) || resolved;
 };
+
+// The TypeScript files compiled output may come from, in the order the ES module
+// resolver tries them for a TypeScript importer.
+const TYPESCRIPT_SOURCES = {
+  ".js": [".ts", ".tsx"],
+  ".jsx": [".tsx", ".ts"],
+  ".mjs": [".mts"],
+  ".cjs": [".cts"],
+};
+
+const PATH_REQUEST = /^(?:\.{1,2}[\\/]|[\\/]|[a-zA-Z]:[\\/])/;
+
+/**
+ * Whether `parent` resolves `request` TypeScript first, as the ES module resolver
+ * decides: a relative or absolute request from a TypeScript or JSX file outside
+ * `node_modules`. The entry point has no parent and runs the file it names (#878).
+ *
+ * @param {string} request
+ * @param {{ filename?: string | null } | null | undefined} parent
+ * @returns {boolean}
+ */
+function resolvesSourceFirst(request, parent) {
+  const filename = parent?.filename;
+  return (
+    typeof filename === "string" &&
+    /\.(?:[cm]?ts|tsx|jsx)$/.test(filename) &&
+    !/[\\/]node_modules[\\/]/.test(filename) &&
+    PATH_REQUEST.test(request)
+  );
+}
+
+/**
+ * The TypeScript file a resolved JavaScript file may be compiled from, when it exists.
+ *
+ * @param {string} filename
+ * @returns {string | undefined}
+ */
+function sourceBeside(filename) {
+  return typeScriptSources(filename).find((source) =>
+    statSync(source, { throwIfNoEntry: false })?.isFile(),
+  );
+}
+
+/**
+ * The TypeScript files a relative or absolute request for compiled output may name.
+ *
+ * @param {string} request
+ * @returns {string[]}
+ */
+function typeScriptSources(request) {
+  if (!PATH_REQUEST.test(request)) {
+    return [];
+  }
+  const extension = /\.[cm]?jsx?$/.exec(request)?.[0];
+  const sources = extension && TYPESCRIPT_SOURCES[extension];
+  return sources ? sources.map((source) => request.slice(0, -extension.length) + source) : [];
+}
 
 if (typeof setSourceMapsSupport === "function") {
   setSourceMapsSupport(true, { nodeModules: true, generatedCode: true });
@@ -375,7 +461,12 @@ if (canRegisterSyncHooks()) {
   // environment can be an older snapshot than the registering worker's.
   // That thread has no `process.send`, so its watch reports use `watchPort`.
   const watchPort = watch ? createRelay(watch, takeWatchDependencies) : undefined;
-  register("@oxc-node/core/esm", {
+  // The hook thread tags the helpers it emits with its own module's URL. A file it
+  // compiles to CommonJS `require()`s them on this thread, so that tag resolves here
+  // too, against this same copy.
+  const esmHooks = import.meta.resolve("@oxc-node/core/esm");
+  helperResolvers[helperTag(esmHooks)] = resolveHelper;
+  register(esmHooks, {
     parentURL: import.meta.url,
     data: {
       tsconfig: freezeTsconfig(process.cwd()),

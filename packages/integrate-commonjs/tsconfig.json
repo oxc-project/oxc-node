@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "nodenext",
+    "strict": true,
+    "experimentalDecorators": true,
+    "types": ["node"]
+  },
+  "include": ["src"]
+}
