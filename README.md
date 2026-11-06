@@ -21,8 +21,9 @@ type checker, and it does not write build output to disk.
 - ESM and CommonJS, including `.mts`, `.cts`, `.mjs`, and `.cjs`
 - JSX and selected TypeScript compiler options
 - `tsconfig.json` path aliases and TypeScript-aware import resolution
-- Imports such as `./file.js` resolving to `./file.ts` or `./file.tsx`. From
-  JavaScript files and the entry point, `./file.js` itself runs when it exists
+- Imports and `require()` calls such as `./file.js` resolving to `./file.ts` or
+  `./file.tsx`. From JavaScript files and the entry point, `./file.js` itself runs
+  when it exists
 - Source-mapped stack traces
 - Importing TypeScript from a tool, without hooks (`@oxc-node/core/importer`)
 - Node features and flags such as watch mode, the test runner, and the
@@ -358,6 +359,62 @@ The supported `tsconfig.json` options are used for resolution and
 transformation. These include path aliases, module and JSX settings, legacy
 decorators and decorator metadata, class-field semantics, and relative import
 extension rewriting.
+
+### ES module syntax in a CommonJS package
+
+A `.ts`, `.tsx`, `.js` or `.jsx` file with `import`/`export` syntax in a
+`"type": "commonjs"` package is compiled to CommonJS when its tsconfig's `module`
+is `commonjs`, `node16`, `node18`, `node20` or `nodenext`, as `tsc` compiles it.
+The output takes `tsc`'s shape: an export of a local that is never reassigned is a
+plain, writable property of `exports`, so `mock.method(namespace, "name")` replaces
+it for every importer, as it does under `tsc`. Re-exports and reassigned locals
+stay live through getters.
+
+The package must say `"type": "commonjs"`: `tsc` also emits CommonJS for a package
+without a `"type"`, but there such a file runs as an ES module, as before, so a
+project relying on Node.js' syntax detection keeps working. A file also stays an
+ES module when it uses `import.meta` or top-level await, which have no CommonJS
+form, or declares a name the CommonJS wrapper takes (`exports`, `require`,
+`module`, `__filename`, `__dirname`). Outside that combination — no `"type"`,
+`"type": "module"`, or an ES `module` setting — a file with module syntax runs as
+an ES module, as before. A `.cts` file is not compiled this way; see
+[Programmatic transformation](#programmatic-transformation).
+
+With `node16`, `node18`, `node20` or `nodenext`, the package's `"type"` decides the
+format of a `.ts` or `.tsx` file without module syntax, as it does for `tsc`: in a
+`"type": "commonjs"` package, or one without a `"type"`, such a file is CommonJS,
+also when an ES module imports it. Earlier releases ran it as an ES module. Only an
+ES `module` setting, such as `esnext`, makes every `.ts` and `.tsx` file an ES
+module.
+
+An ES module that imports the compiled file gets what Node.js gives it for any
+CommonJS module:
+
+- Its named imports are the names Node.js' `cjs-module-lexer` finds: the file's
+  own exports, but not those it re-exports with `export *` from another TypeScript
+  file, because Node.js only follows re-exports into `.js` and `.cjs` files.
+- Its default import is `module.exports`, whose `default` property is the file's
+  default export: after `import lib from "./lib.js"`, the class `lib.ts` exports
+  as default is `lib.default`. TypeScript types the import the same way under
+  `nodenext`. Earlier releases ran the file as an ES module, whose default import
+  was its default export.
+
+The compiled file's relative `require()` calls resolve as its imports did:
+TypeScript first, by the file's own name or by its output's, so `./lib.js` and
+`./lib` find `lib.ts`, also when a compiled `lib.js` sits next to it, and
+`./lib.mjs` finds `lib.mts`. The relative `require()` calls of every TypeScript
+file outside `node_modules` resolve this way.
+
+Importing an ES module — an `.mts` or `.mjs` file, or a `"type": "module"`
+package — from the compiled file is `require()` of an ES module. Node.js loads the
+entry point, test files and files an ES module imports through the module hooks,
+together with the compiled files they `require()`, and `require()` of an ES module
+from a file loaded that way needs
+[nodejs/node#59679](https://github.com/nodejs/node/pull/59679), which the 22.x line
+has from 22.22.3. Earlier releases fail with `TypeError: Cannot read properties of
+undefined (reading 'exports')`.
+
+### Dependencies
 
 The loader does not transform files in `node_modules` by default. Set
 `OXC_TRANSFORM_ALL=typescript` to transform only the TypeScript dependencies —

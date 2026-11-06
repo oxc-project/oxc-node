@@ -16,13 +16,16 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use oxc::{
     allocator::{Allocator, CloneIn, TakeIn},
-    ast::ast::{
-        Argument, ArrowFunctionExpression, AwaitExpression, Class, Decorator, Expression,
-        ForOfStatement, ImportDeclarationSpecifier, Program, Statement, StringLiteral,
-        TSExternalModuleDeclaration, TSGlobalDeclaration, TSNamespaceDeclaration, TemplateLiteral,
-        VariableDeclaration,
+    ast::{
+        ast::{
+            Argument, ArrowFunctionExpression, AwaitExpression, Class, Decorator, Directive,
+            Expression, ForOfStatement, IdentifierReference, ImportDeclarationSpecifier,
+            ObjectPropertyKind, Program, Statement, StringLiteral, TSExternalModuleDeclaration,
+            TSGlobalDeclaration, TSNamespaceDeclaration, TemplateLiteral, VariableDeclaration,
+        },
+        builder::AstBuilder,
     },
-    ast_visit::{Visit, VisitMut, walk},
+    ast_visit::{Visit, VisitMut, walk, walk_mut},
     codegen::{Codegen, CodegenOptions, CodegenReturn},
     diagnostics::{
         Diagnostics, GraphicalReportHandler, GraphicalTheme, NamedSource, OxcDiagnostic,
@@ -2300,8 +2303,19 @@ fn oxc_transform<S: TryAsStr>(
     // the public API feed Node's CommonJS machinery, which has its own retry. Only the
     // ambiguous extensions may flip: `.cts`/`.cjs` are CommonJS by contract, and their
     // source type emits `require()` for helpers, which an ES module cannot run.
-    let flip_to_module =
-        only_module_parse || (allow_module_retry && parsed_as_esm(&program, &module_record));
+    //
+    // Where `tsc` would compile such a file to CommonJS, it is compiled to CommonJS here
+    // too (see `lowers_to_commonjs`) and stays one, on every path that targets CommonJS.
+    // The module runner keeps its own decision.
+    let lower_to_commonjs = module_runner.is_none()
+        && !is_es_module
+        && !only_module_parse
+        && source_type.is_unambiguous()
+        && matches!(module_target, Some(Module::Preserve | Module::CommonJS))
+        && parsed_as_esm(&program, &module_record)
+        && lowers_to_commonjs(src_path, compiler_options, &program, &module_record);
+    let flip_to_module = !lower_to_commonjs
+        && (only_module_parse || (allow_module_retry && parsed_as_esm(&program, &module_record)));
 
     // `Module::Esm` and `Module::Preserve` emit identically for ES module input; the only
     // difference is that `Esm` makes the `import =` / `export =` lowerings report a
@@ -2309,8 +2323,15 @@ fn oxc_transform<S: TryAsStr>(
     // crash at run time in a file Node.js runs as ESM. tsc rejects the same constructs in
     // ES module output (TS1202/TS1203), and Node's own type stripping rejects them at load
     // time. A `.cts` file keeps `Preserve` — its `import =` needs `require()`.
-    let effective_module =
-        if is_es_module || flip_to_module { Some(Module::Esm) } else { module_target };
+    let effective_module = if lower_to_commonjs {
+        Some(Module::CommonJS)
+    } else if is_es_module || flip_to_module {
+        Some(Module::Esm)
+    } else {
+        module_target
+    };
+    let mut commonjs_runner = ModuleRunner::commonjs();
+    let module_runner = if lower_to_commonjs { Some(&mut commonjs_runner) } else { module_runner };
 
     let output = transform_program(
         &allocator,
@@ -2523,6 +2544,9 @@ fn transform_program<'a>(
         if runner.sync && !runner.top_level_await {
             drop_import_awaits(allocator, program);
         }
+        if runner.commonjs {
+            lower_runner_to_commonjs(allocator, program);
+        }
     }
 
     let CodegenReturn { code, map, .. } = Codegen::new()
@@ -2550,6 +2574,16 @@ struct ModuleRunner {
     esm: bool,
     /// The ES module awaits at its top level.
     top_level_await: bool,
+    /// Compile the runner's output on to CommonJS (see [`lower_runner_to_commonjs`]).
+    /// Needs `sync`.
+    commonjs: bool,
+}
+
+impl ModuleRunner {
+    /// What compiling an ES module to CommonJS asks of the runner transform.
+    fn commonjs() -> Self {
+        Self { sync: true, commonjs: true, ..Default::default() }
+    }
 }
 
 const SSR_EXPORTS: &str = "__vite_ssr_exports__";
@@ -2560,30 +2594,412 @@ const SSR_IMPORT: &str = "__vite_ssr_import__";
 /// `export { a, b }` at the end of the file. Mapped, they would push the whole file
 /// down in [`retain_lines`]. They never throw, so they lose their mappings.
 fn unmap_hoisted_exports(program: &mut Program<'_>) {
-    struct Unmap;
-
-    impl<'a> VisitMut<'a> for Unmap {
-        fn visit_span(&mut self, span: &mut Span) {
-            *span = SPAN;
-        }
-    }
-
     for statement in &mut program.body {
-        let Statement::ExpressionStatement(expression) = statement else { break };
-        let Expression::CallExpression(call) = &expression.expression else { break };
-        let defines_export = call.callee.as_member_expression().is_some_and(|member| {
-            member.object().is_specific_id("Object")
-                && member.static_property_name().is_some_and(|name| name == "defineProperty")
-        }) && call
-            .arguments
-            .first()
-            .and_then(Argument::as_expression)
-            .is_some_and(|target| target.is_specific_id(SSR_EXPORTS));
-        if !defines_export {
+        if hoisted_export(statement).is_none() {
             break;
         }
         Unmap.visit_statement(statement);
     }
+}
+
+/// Clears every span it visits, so that generated code carries no mappings.
+struct Unmap;
+
+impl<'a> VisitMut<'a> for Unmap {
+    fn visit_span(&mut self, span: &mut Span) {
+        *span = SPAN;
+    }
+}
+
+/// The name and getter result of an export the runner transform hoists:
+/// `Object.defineProperty(__vite_ssr_exports__, "name", { ..., get() { return value; } })`.
+fn hoisted_export<'s, 'a>(statement: &'s Statement<'a>) -> Option<(&'s str, &'s Expression<'a>)> {
+    let Statement::ExpressionStatement(expression) = statement else { return None };
+    let Expression::CallExpression(call) = &expression.expression else { return None };
+    let defines_property = call.callee.as_member_expression().is_some_and(|member| {
+        member.object().is_specific_id("Object")
+            && member.static_property_name().is_some_and(|name| name == "defineProperty")
+    });
+    let [target, name, descriptor] = call.arguments.as_slice() else { return None };
+    if !defines_property || !target.as_expression().is_some_and(|t| t.is_specific_id(SSR_EXPORTS)) {
+        return None;
+    }
+    let Some(Expression::StringLiteral(name)) = name.as_expression() else { return None };
+    let Some(Expression::ObjectExpression(descriptor)) = descriptor.as_expression() else {
+        return None;
+    };
+    let value = descriptor.properties.iter().find_map(|property| {
+        let ObjectPropertyKind::ObjectProperty(property) = property else { return None };
+        if property.key.static_name().is_none_or(|key| key != "get") {
+            return None;
+        }
+        let Expression::FunctionExpression(getter) = &property.value else { return None };
+        match getter.body.as_ref()?.statements.as_slice() {
+            [Statement::ReturnStatement(ret)] => ret.argument.as_ref(),
+            _ => None,
+        }
+    })?;
+    Some((name.value.as_str()?, value))
+}
+
+const SSR_EXPORT_ALL: &str = "__vite_ssr_exportAll__";
+const SSR_DYNAMIC_IMPORT: &str = "__vite_ssr_dynamic_import__";
+
+/// The CommonJS wrapper's parameters, and the helpers [`lower_runner_to_commonjs`]
+/// declares. An ES module may declare any of them at its top level; as CommonJS that
+/// would redeclare a parameter or a helper, so such a module stays an ES module.
+const COMMONJS_RESERVED: [&str; 8] = [
+    "exports",
+    "require",
+    "module",
+    "__filename",
+    "__dirname",
+    "__importDefault",
+    "__importStar",
+    "__exportStar",
+];
+
+/// `tsc`'s helpers, as it emits them without `importHelpers`. A module is taken as-is
+/// when it is a transpiled ES module (`__esModule`) or a real one (`require()` of an ES
+/// module returns its namespace).
+const IMPORT_DEFAULT_HELPER: &str = "var __importDefault = function (mod) { return mod && \
+     (mod.__esModule || mod[Symbol.toStringTag] === \"Module\") ? mod : { default: mod }; };";
+const IMPORT_STAR_HELPER: &str = "var __importStar = function (mod) { if (mod && (mod.__esModule \
+     || mod[Symbol.toStringTag] === \"Module\")) return mod; var result = {}; if (mod != null) \
+     for (const k in mod) if (k !== \"default\" && Object.prototype.hasOwnProperty.call(mod, k)) \
+     Object.defineProperty(result, k, { enumerable: true, get: function () { return mod[k]; } }); \
+     result.default = mod; return result; };";
+const EXPORT_STAR_HELPER: &str = "var __exportStar = function (m, exports) { for (const p in m) \
+     if (p !== \"default\" && !Object.prototype.hasOwnProperty.call(exports, p)) \
+     Object.defineProperty(exports, p, { enumerable: true, get: function () { return m[p]; } }); };";
+
+/// Whether this ES module is compiled to CommonJS, as `tsc` compiles it, instead of
+/// running as an ES module: a file whose package is `"type": "commonjs"` and whose
+/// tsconfig `module` emits CommonJS for such a package. `tsc` also emits CommonJS for a
+/// package without a `"type"`, but there the file keeps running as an ES module, as
+/// Node.js' syntax detection runs it. The caller checks the extension is an ambiguous one. A module that cannot be CommonJS stays an
+/// ES module: one using `import.meta` or top-level await, or declaring a name the
+/// CommonJS wrapper or its helpers take (see [`COMMONJS_RESERVED`]).
+fn lowers_to_commonjs(
+    path: &Path,
+    compiler_options: Option<&CompilerOptions>,
+    program: &Program<'_>,
+    module_record: &ModuleRecord<'_>,
+) -> bool {
+    let emits_commonjs =
+        compiler_options.and_then(|options| options.module.as_deref()).is_some_and(|module| {
+            matches!(
+                module.to_ascii_lowercase().as_str(),
+                "commonjs" | "node16" | "node18" | "node20" | "nodenext"
+            )
+        });
+    emits_commonjs
+        && module_record.import_metas.is_empty()
+        && !has_top_level_await(program)
+        && matches!(package_type(path), Some(PackageType::CommonJs))
+        && {
+            let scoping = SemanticBuilder::new().build(program).semantic.into_scoping();
+            COMMONJS_RESERVED.iter().all(|&name| scoping.get_root_binding(name.into()).is_none())
+        }
+}
+
+/// Parses generated CommonJS into `allocator`, without mappings.
+fn parse_generated<'a>(
+    allocator: &'a Allocator,
+    source: &str,
+) -> (oxc::allocator::Vec<'a, Directive<'a>>, oxc::allocator::Vec<'a, Statement<'a>>) {
+    let source = allocator.alloc_str(source);
+    let ParserReturn { mut program, diagnostics, .. } =
+        Parser::new(allocator, source, SourceType::cjs()).parse();
+    debug_assert!(diagnostics.is_empty(), "{diagnostics:?} in {source}");
+    Unmap.visit_program(&mut program);
+    (program.directives, program.body)
+}
+
+/// `exports.name` for an export name, or `exports["name"]` when it is not an identifier.
+fn exports_member(name: &str) -> String {
+    if oxc::syntax::identifier::is_identifier_name(name) {
+        format!("exports.{name}")
+    } else {
+        format!("exports[{}]", serde_json::Value::from(name))
+    }
+}
+
+/// The source of a re-exported binding the runner reads through a getter: a local, or a
+/// property of an imported module.
+fn export_getter_source(expression: &Expression<'_>) -> Option<String> {
+    match expression {
+        Expression::Identifier(ident) => Some(ident.name.to_string()),
+        Expression::StaticMemberExpression(member) => {
+            let Expression::Identifier(object) = &member.object else { return None };
+            Some(format!("{}.{}", object.name, member.property.name))
+        }
+        Expression::ComputedMemberExpression(member) => {
+            let (Expression::Identifier(object), Expression::StringLiteral(property)) =
+                (&member.object, &member.expression)
+            else {
+                return None;
+            };
+            Some(format!("{}[{}]", object.name, serde_json::Value::from(property.value.as_str()?)))
+        }
+        _ => None,
+    }
+}
+
+/// The specifier and imported names of a runner import, `__vite_ssr_import__("x", {
+/// importedNames: [...] })`; no names for a namespace import or a side effect.
+fn runner_import<'s>(expression: &'s Expression<'_>) -> Option<(&'s str, Option<Vec<&'s str>>)> {
+    let Expression::CallExpression(call) = expression else { return None };
+    if !call.callee.is_specific_id(SSR_IMPORT) {
+        return None;
+    }
+    let Some(Expression::StringLiteral(specifier)) = call.arguments.first()?.as_expression() else {
+        return None;
+    };
+    let names = call.arguments.get(1).and_then(Argument::as_expression).and_then(|meta| {
+        let Expression::ObjectExpression(meta) = meta else { return None };
+        meta.properties.iter().find_map(|property| {
+            let ObjectPropertyKind::ObjectProperty(property) = property else { return None };
+            if property.key.static_name().is_none_or(|key| key != "importedNames") {
+                return None;
+            }
+            let Expression::ArrayExpression(names) = &property.value else { return None };
+            Some(
+                names
+                    .elements
+                    .iter()
+                    .filter_map(|name| match name.as_expression() {
+                        Some(Expression::StringLiteral(name)) => name.value.as_str(),
+                        _ => None,
+                    })
+                    .collect(),
+            )
+        })
+    });
+    Some((specifier.value.as_str()?, names))
+}
+
+/// The top-level bindings a statement declares, and whether it is a hoisted function.
+fn top_level_bindings<'s>(statement: &'s Statement<'_>) -> (Vec<&'s str>, bool) {
+    match statement {
+        Statement::VariableDeclaration(declaration) => (
+            declaration
+                .declarations
+                .iter()
+                .flat_map(|declarator| declarator.id.get_binding_identifiers())
+                .map(|ident| ident.name.as_str())
+                .collect(),
+            false,
+        ),
+        Statement::FunctionDeclaration(function) => {
+            (function.id.iter().map(|ident| ident.name.as_str()).collect(), true)
+        }
+        Statement::ClassDeclaration(class) => {
+            (class.id.iter().map(|ident| ident.name.as_str()).collect(), false)
+        }
+        _ => (Vec::new(), false),
+    }
+}
+
+/// Compiles the module runner's output for an ES module to CommonJS in the shape `tsc`
+/// emits, so that a `"type": "commonjs"` project runs as it does when built with `tsc`:
+///
+/// * An export of a local that is never reassigned is a plain data property, assigned
+///   after its declaration (`exports.a = void 0; ...; exports.a = a;`). It is writable and
+///   configurable, so `mock.method(namespace, "a")` can replace it and every importer,
+///   which reads it as `lib.a` at the call, sees the mock. A reassigned local and a
+///   re-export keep a getter, which is what keeps them live.
+/// * A named import is `require()`'s result itself; a default or namespace import goes
+///   through `__importDefault` / `__importStar`, `export *` through `__exportStar`.
+/// * Every export is spelled the way `cjs-module-lexer` detects, so an ES module
+///   importing this one gets its named exports.
+///
+/// Runs after the runner transform has hoisted the imports and exports and dropped the
+/// imports' awaits. The caller has ruled out `import.meta` and top-level await.
+fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<'a>) {
+    struct Rewrite<'a> {
+        ast: AstBuilder<'a>,
+    }
+
+    impl<'a> VisitMut<'a> for Rewrite<'a> {
+        fn visit_expression(&mut self, expression: &mut Expression<'a>) {
+            walk_mut::walk_expression(self, expression);
+            if let Expression::CallExpression(call) = expression
+                && call.callee.is_specific_id(SSR_DYNAMIC_IMPORT)
+                && let Some(source) =
+                    call.arguments.first_mut().and_then(Argument::as_expression_mut)
+            {
+                let source = source.take_in(&self.ast);
+                let options = call
+                    .arguments
+                    .get_mut(1)
+                    .and_then(Argument::as_expression_mut)
+                    .map(|options| options.take_in(&self.ast));
+                *expression =
+                    Expression::new_import_expression(call.span, source, options, None, &self.ast);
+            }
+        }
+
+        fn visit_identifier_reference(&mut self, ident: &mut IdentifierReference<'a>) {
+            if ident.name == SSR_EXPORTS {
+                ident.name = "exports".into();
+            }
+        }
+    }
+
+    let scoping = SemanticBuilder::new().build(program).semantic.into_scoping();
+    let hoisted = program.body.iter().take_while(|s| hoisted_export(s).is_some()).count();
+
+    // Where each top-level binding is declared, and the imports by binding.
+    let mut declared_at = HashMap::new();
+    let mut imports = HashMap::new();
+    for (index, statement) in program.body.iter().enumerate().skip(hoisted) {
+        let (names, hoisted_function) = top_level_bindings(statement);
+        for name in names {
+            declared_at.insert(name, (index, hoisted_function));
+        }
+        if let Statement::VariableDeclaration(declaration) = statement
+            && let [declarator] = declaration.declarations.as_slice()
+            && let Some(name) = declarator.id.get_binding_identifier()
+            && let Some(import) = declarator.init.as_ref().and_then(runner_import)
+        {
+            imports.insert(name.name.as_str(), import);
+        }
+    }
+    let reference_count = |name: &str| {
+        scoping
+            .get_root_binding(name.into())
+            .map_or(0, |symbol| scoping.get_resolved_references(symbol).count())
+    };
+
+    let mut prelude = String::from("\"use strict\";\n");
+    prelude.push_str("Object.defineProperty(exports, \"__esModule\", { value: true });\n");
+    let mut cleared = Vec::new();
+    let mut assigned_after: HashMap<usize, String> = HashMap::new();
+    let mut getters = String::new();
+    let mut kept = Vec::new();
+    for (index, statement) in program.body[..hoisted].iter().enumerate() {
+        let (name, value) = hoisted_export(statement).expect("counted above");
+        let member = exports_member(name);
+        let settled = match value {
+            Expression::Identifier(local) => scoping
+                .get_root_binding(local.name.as_str().into())
+                .filter(|&symbol| {
+                    !scoping.get_resolved_references(symbol).any(|reference| reference.is_write())
+                })
+                .and(declared_at.get(local.name.as_str()))
+                .map(|&(at, hoisted_function)| (local.name.as_str(), at, hoisted_function)),
+            _ => None,
+        };
+        match (settled, export_getter_source(value)) {
+            (Some((local, _, true)), _) => {
+                prelude.push_str(&format!("{member} = {local};\n"));
+            }
+            (Some((local, at, false)), _) => {
+                cleared.push(member.clone());
+                assigned_after.entry(at).or_default().push_str(&format!("{member} = {local};\n"));
+            }
+            (None, Some(getter)) => getters.push_str(&format!(
+                "Object.defineProperty(exports, {}, {{ enumerable: true, get: function () {{ \
+                 return {getter}; }} }});\n",
+                serde_json::Value::from(name)
+            )),
+            // Nothing the runner emits today; keep its own definition.
+            (None, None) => kept.push(index),
+        }
+    }
+    if !cleared.is_empty() {
+        prelude.push_str(&cleared.join(" = "));
+        prelude.push_str(" = void 0;\n");
+    }
+    prelude.push_str(&getters);
+
+    // Each import, and each `export *` whose module is not imported otherwise, becomes a
+    // `require()` the helpers above wrap as `tsc` would.
+    let (mut import_default, mut import_star, mut export_star) = (false, false, false);
+    let mut require = |specifier: &str, names: Option<&[&str]>| {
+        let call = format!("require({})", serde_json::Value::from(specifier));
+        match names {
+            Some(names) if !names.contains(&"default") => call,
+            Some(["default"]) => {
+                import_default = true;
+                format!("__importDefault({call})")
+            }
+            _ => {
+                import_star = true;
+                format!("__importStar({call})")
+            }
+        }
+    };
+    let mut replacements: HashMap<usize, String> = HashMap::new();
+    let mut inlined = HashSet::new();
+    for (index, statement) in program.body.iter().enumerate().skip(hoisted) {
+        if let Statement::ExpressionStatement(expression) = statement
+            && let Expression::CallExpression(call) = &expression.expression
+            && call.callee.is_specific_id(SSR_EXPORT_ALL)
+            && let Some(Expression::Identifier(source)) =
+                call.arguments.first().and_then(Argument::as_expression)
+        {
+            export_star = true;
+            let source = source.name.as_str();
+            let module = match imports.get(source) {
+                Some(&(specifier, _)) if reference_count(source) == 1 => {
+                    inlined.insert(source);
+                    format!("require({})", serde_json::Value::from(specifier))
+                }
+                _ => source.to_owned(),
+            };
+            replacements.insert(index, format!("__exportStar({module}, exports);\n"));
+        }
+    }
+    for (index, statement) in program.body.iter().enumerate().skip(hoisted) {
+        let Statement::VariableDeclaration(declaration) = statement else { continue };
+        let [declarator] = declaration.declarations.as_slice() else { continue };
+        let Some(name) = declarator.id.get_binding_identifier() else { continue };
+        let Some(&(specifier, ref names)) = imports.get(name.name.as_str()) else { continue };
+        let replacement = if inlined.contains(name.name.as_str()) {
+            String::new()
+        } else {
+            format!("const {} = {};\n", name.name, require(specifier, names.as_deref()))
+        };
+        replacements.insert(index, replacement);
+    }
+
+    let mut helpers = String::new();
+    for (used, helper) in [
+        (import_default, IMPORT_DEFAULT_HELPER),
+        (import_star, IMPORT_STAR_HELPER),
+        (export_star, EXPORT_STAR_HELPER),
+    ] {
+        if used {
+            helpers.push_str(helper);
+            helpers.push('\n');
+        }
+    }
+    prelude.insert_str(prelude.find("Object.defineProperty").unwrap_or(0), &helpers);
+
+    let (directives, prelude) = parse_generated(allocator, &prelude);
+    let mut body =
+        oxc::allocator::Vec::with_capacity_in(program.body.len() + prelude.len(), &allocator);
+    body.extend(prelude);
+    let original = program.body.take_in(&allocator);
+    for (index, statement) in original.into_iter().enumerate() {
+        if index < hoisted && !kept.contains(&index) {
+            continue;
+        }
+        match replacements.remove(&index) {
+            Some(replacement) => body.extend(parse_generated(allocator, &replacement).1),
+            None => body.push(statement),
+        }
+        if let Some(assignments) = assigned_after.remove(&index) {
+            body.extend(parse_generated(allocator, &assignments).1);
+        }
+    }
+    program.body = body;
+    if !program.directives.iter().any(|directive| directive.directive == "use strict") {
+        program.directives.extend(directives);
+    }
+    Rewrite { ast: AstBuilder::new(allocator) }.visit_program(program);
 }
 
 /// The runner transform drops the default binding of `import a, * as b from "x"`, so
@@ -3370,14 +3786,38 @@ fn load_commonjs_esm(
     if !(only_module_parse || parsed_as_esm(&program, &module_record)) {
         return Ok(None);
     }
-    // From here on the file is handed back as an ES module, so surface parse errors
-    // exactly as the source-bearing path would.
+    // From here on the file is handed back transformed, so surface parse errors exactly
+    // as the source-bearing path would.
     if !diagnostics.is_empty() {
         let msg = join_errors(diagnostics.into_vec(), source, &path);
         return Err(Error::new(
             Status::GenericFailure,
             format!("Failed to parse {}:\n{}", path.display(), msg),
         ));
+    }
+    // Where `tsc` would compile it to CommonJS, it stays CommonJS, compiled here and
+    // handed back with its source: `cjs-module-lexer` reads an ES module importer's named
+    // exports from that source, where the file on disk has none to find.
+    if !only_module_parse
+        && lowers_to_commonjs(&path, resolved_compiler_options, &program, &module_record)
+    {
+        let transformed = transform_program(
+            &allocator,
+            &path,
+            &mut program,
+            source,
+            resolved_compiler_options,
+            Some(Module::CommonJS),
+            false,
+            helper_module_name.as_deref(),
+            Some(&mut ModuleRunner::commonjs()),
+        )?;
+        tracing::debug!("loaded {} format: commonjs", url);
+        return Ok(Some(LoadFnOutput {
+            format: "commonjs".to_owned(),
+            source: Some(Either4::B(Uint8Array::from_string(code_with_inline_map(transformed)))),
+            response_url: Some(url.to_owned()),
+        }));
     }
     // A module keeps its top-level awaits, hence the last `false`. `Module::Esm` emits
     // identically to `Preserve` for ES module input but reports the `import =` /
@@ -3911,14 +4351,12 @@ fn non_empty_env(name: &str) -> Option<String> {
 /// Node cannot tell from a `.ts` extension alone whether a file is ESM or
 /// CommonJS. When the tsconfig that owns the file asks for an ES module output,
 /// say so explicitly; otherwise fall back to the resolver's own `package.json`
-/// `type` detection.
+/// `type` detection. That includes the `node*` modes: for those `tsc` itself
+/// emits whatever the `package.json` `type` says, so a `.ts` file in a
+/// `"type": "commonjs"` package is CommonJS.
 fn default_module_from_tsconfig(tsconfig: Option<&TsConfig>) -> Option<&'static str> {
     let module = tsconfig?.compiler_options.module.as_deref()?.to_ascii_lowercase();
-    matches!(
-        module.as_str(),
-        "nodenext" | "node16" | "node18" | "es6" | "es2015" | "es2020" | "es2022" | "esnext"
-    )
-    .then_some("module")
+    matches!(module.as_str(), "es6" | "es2015" | "es2020" | "es2022" | "esnext").then_some("module")
 }
 
 /// An explicitly named tsconfig path, made absolute against `cwd`.
@@ -4940,6 +5378,130 @@ mod tests {
         // is a file-name character.
         assert_eq!(file_url_to_path("file:///x/d\\a.ts"), Some(PathBuf::from("/x/d/a.ts")));
         assert_eq!(file_url_to_path("file:///x/d%5Ca.ts"), Some(PathBuf::from("/x/d\\a.ts")));
+    }
+
+    // An ES module that `tsc` compiles to CommonJS is compiled to CommonJS here too, in
+    // `tsc`'s shape; one that cannot be CommonJS, that `tsc` keeps an ES module, or whose
+    // package has no `"type"`, stays.
+    #[test]
+    fn commonjs_lowering() {
+        // Resolving a tsconfig records it for the watch report.
+        let _lock = watch_lock();
+        let root = env::temp_dir().join(format!("oxc-node-commonjs-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        for (dir, package, module) in [
+            ("cjs", r#"{ "type": "commonjs" }"#, "nodenext"),
+            ("commonjs", r#"{ "type": "commonjs" }"#, "commonjs"),
+            ("node16", r#"{ "type": "commonjs" }"#, "node16"),
+            ("node18", r#"{ "type": "commonjs" }"#, "node18"),
+            ("node20", r#"{ "type": "commonjs" }"#, "node20"),
+            // tsconfig option values are case-insensitive.
+            ("cased", r#"{ "type": "commonjs" }"#, "NodeNext"),
+            ("esnext", r#"{ "type": "commonjs" }"#, "esnext"),
+            ("preserve", r#"{ "type": "commonjs" }"#, "preserve"),
+            ("untyped", "{}", "nodenext"),
+        ] {
+            fs::create_dir_all(root.join(dir)).unwrap();
+            fs::write(root.join(dir).join("package.json"), package).unwrap();
+            fs::write(
+                root.join(dir).join("tsconfig.json"),
+                format!(r#"{{ "compilerOptions": {{ "module": "{module}" }} }}"#),
+            )
+            .unwrap();
+        }
+        let transformer = OxcTransformer::new(Some(root.to_string_lossy().into_owned()), None);
+        let run = |name: &str, source: &str| {
+            let path = root.join(name);
+            fs::write(&path, source).unwrap();
+            match transformer
+                .transform(path.to_string_lossy().into_owned(), Either::A(source.to_owned()))
+            {
+                Ok(output) => output.code,
+                // Dropping a napi `Error` calls into Node-API, which a test binary lacks.
+                Err(error) => panic!("{}", mem::ManuallyDrop::new(error).reason),
+            }
+        };
+        // The runner's bindings keep their names (`__vite_ssr_import_0__`,
+        // `__vite_ssr_export_default__`); none of its calls or objects may be left.
+        let lowered = |code: &str| {
+            code.contains("exports, \"__esModule\"")
+                && code.match_indices("__vite_ssr_").all(|(at, prefix)| {
+                    let rest = &code[at + prefix.len()..];
+                    rest.starts_with("export_default__")
+                        || rest
+                            .strip_prefix("import_")
+                            .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+                })
+        };
+
+        // A local that is never reassigned is a data property, assigned after it is declared.
+        let code = run("cjs/lib.ts", "export const compute = (n: number): number => n + 1;\n");
+        assert!(lowered(&code), "{code}");
+        assert!(code.contains("exports.compute = void 0;"), "{code}");
+        assert!(code.contains("exports.compute = compute;"), "{code}");
+        assert!(!code.contains("get"), "{code}");
+
+        let code = run(
+            "cjs/forms.ts",
+            "import def from './a';\nimport * as ns from './b';\nimport { named } from './c';\n\
+             export * from './e';\nexport { r } from './g';\nexport let counter = 0;\n\
+             export function bump() { counter++; return import('./dyn'); }\n\
+             export default def + ns.x + named;\n",
+        );
+        assert!(lowered(&code), "{code}");
+        // A named import is `require()`'s result itself; default and namespace imports
+        // get `tsc`'s interop, and `export *` the shape `cjs-module-lexer` follows.
+        assert!(code.contains("= __importDefault(require(\"./a\"))"), "{code}");
+        assert!(code.contains("= __importStar(require(\"./b\"))"), "{code}");
+        assert!(code.contains("= require(\"./c\")"), "{code}");
+        assert!(code.contains("__exportStar(require(\"./e\"), exports)"), "{code}");
+        // Re-exports and reassigned locals stay live through getters, without
+        // `configurable`, which `cjs-module-lexer` would not detect.
+        for export in ["\"r\"", "\"counter\""] {
+            assert!(
+                code.contains(&format!(
+                    "Object.defineProperty(exports, {export}, {{ enumerable: true, get: function() {{"
+                )),
+                "{code}"
+            );
+        }
+        // A hoisted function is exported up front; `import()` is CommonJS' own.
+        assert!(code.contains("exports.bump = bump;"), "{code}");
+        assert!(code.contains("import(\"./dyn\")"), "{code}");
+        assert!(code.contains("exports.default = "), "{code}");
+
+        // Every `module` that `tsc` compiles to CommonJS for a `"type": "commonjs"` package.
+        for dir in ["commonjs", "node16", "node18", "node20", "cased"] {
+            let code = run(&format!("{dir}/lib.ts"), "export const n = 1;\n");
+            assert!(lowered(&code) && code.contains("exports.n = n;"), "{dir}: {code}");
+        }
+
+        // What has no CommonJS form, or would clash with the CommonJS wrapper or its
+        // helpers, stays.
+        for (name, source) in [
+            ("cjs/meta.ts", "export const url = import.meta.url;\n"),
+            ("cjs/require.ts", "const require = 1;\nexport { require };\n"),
+            ("cjs/module.ts", "export const module = 1;\n"),
+            ("cjs/exports.ts", "const exports = {};\nexport default exports;\n"),
+            ("cjs/filename.ts", "export function __filename() {}\n"),
+            ("cjs/dirname.ts", "export const __dirname = '.';\n"),
+            ("cjs/helper.ts", "export class __importStar {}\n"),
+            // `tsc` itself emits an ES module for these.
+            ("esnext/lib.ts", "export const n = 1;\n"),
+            ("preserve/lib.ts", "export const n = 1;\n"),
+            ("cjs/lib.mts", "export const n = 1;\n"),
+            // `tsc` emits CommonJS for this one, but without a `"type"` the file runs as
+            // an ES module, as before.
+            ("untyped/lib.ts", "export const n = 1;\n"),
+        ] {
+            let code = run(name, source);
+            assert!(!lowered(&code) && code.contains("export "), "{name}: {code}");
+        }
+        // A file without module syntax is untouched CommonJS, as before.
+        let code = run("cjs/plain.ts", "module.exports = 1;\n");
+        assert!(!code.contains("__esModule"), "{code}");
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     // `@oxc-node/core/importer`'s transform: which files are ES modules, the form

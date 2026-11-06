@@ -33,6 +33,9 @@ if (!isMainThread) {
 // `oxnode` adds another), so each copy tags the module name it passes to the
 // transformer and registers a resolver for that tag: a tagged specifier only ever
 // resolves against the copy that emitted it.
+//
+// `register.mjs` computes this module's tag too: a file compiled to CommonJS here
+// `require()`s its helpers on the main thread, which has to resolve them.
 const HELPER_SPECIFIER_PREFIX = "@oxc-node/core/helpers/";
 const HELPER_TAGGED_PREFIX = "@oxc-node/core@";
 const HELPER_TAG =
