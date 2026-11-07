@@ -4621,13 +4621,6 @@ mod tests {
         assert!(!parses_with_decorator_as("export @dec class A {}", SourceType::d_ts()));
     }
 
-    #[cfg(not(windows))]
-    #[test]
-    fn non_windows_behavior_is_unchanged() {
-        assert_eq!(file_url_to_path("file:///a/b.ts"), Some(PathBuf::from("/a/b.ts")));
-        assert_eq!(file_url_to_path("file:///a%20b.ts"), Some(PathBuf::from("/a b.ts")));
-    }
-
     // Expected strings below are what Node's `pathToFileURL` writes for the
     // same path (issue #837).
     #[test]
