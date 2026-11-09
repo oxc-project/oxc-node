@@ -235,22 +235,261 @@ describe("a CommonJS package", () => {
     expect(run(root, "./entry.js")).toContain("meta: true");
   });
 
-  test("a file whose only module syntax is a type-only import runs as an ES module", () => {
-    // `import type` is erased, but the transform injects `export {}` so that the output
-    // stays a module — the CommonJS path never could run such a file (it crashed with
-    // ERR_REQUIRE_CYCLE_MODULE), so flipping to ESM is the only working behaviour. CJS
-    // globals were never available to it either way.
+  test.each([
+    ["an entry point", "./types-only.ts"],
+    ["an import", "./entry.mts"],
+    ["require()", "./main.cjs"],
+  ])("a file whose only module syntax is type-only stays CommonJS as %s", (_path, entry) => {
+    // Type erasure leaves no module syntax behind, so Node.js' type stripping runs such a
+    // file as CommonJS. oxc resolves it to a module, and compiled as one it would get an
+    // empty `export {}` that would make Node.js run it without `require` or `module`.
     const root = fixture({
       "package.json": COMMONJS,
-      "types.ts": "export type ExecPath = string;\n",
+      "types.ts": "export type Count = number;\n",
+      "types-only.ts": [
+        'import type { Count } from "./types";',
+        "type Doubled = Count;",
+        "export type { Doubled };",
+        'export type { Count as Total } from "./types";',
+        'export type * from "./types";',
+        "export type Tripled = Count;",
+        "export interface Box {",
+        "  count: Count;",
+        "}",
+        "export default interface Shape {",
+        "  sides: number;",
+        "}",
+        "export declare const declared: number;",
+        "export declare function measure(box: Box): Count;",
+        "export declare class Holder {",
+        "  value: Count;",
+        "}",
+        "export declare enum Mode {",
+        "  On,",
+        "}",
+        "export declare namespace Shapes {",
+        "  const corners: number;",
+        "}",
+        'const os = require("node:os");',
+        "const box: Box = { count: 2 };",
+        'console.log("ts format:", typeof module === "undefined" ? "module" : "commonjs", typeof os.platform);',
+        "module.exports = box;",
+      ].join("\n"),
+      "entry.mts": 'import box from "./types-only.ts";\nconsole.log("count:", box.count);\n',
+      "main.cjs": 'console.log("count:", require("./types-only.ts").count);\n',
+    });
+    const output = run(root, entry);
+    expect(output).toContain("ts format: commonjs function");
+    if (entry !== "./types-only.ts") {
+      expect(output).toContain("count: 2");
+    }
+  });
+
+  test("a file whose only module syntax is type-only is CommonJS in a package without a type", () => {
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true }),
       "entry.ts": [
-        'import type { ExecPath } from "./types";',
-        "const p: ExecPath = process.execPath;",
-        'console.log("type-only:", typeof require === "undefined", p.length > 0);',
+        'const os = require("node:os");',
+        "export type Platform = string;",
+        "const platform: Platform = os.platform();",
+        'console.log("format:", typeof module === "undefined" ? "module" : "commonjs", typeof platform);',
       ].join("\n"),
     });
-    expect(run(root, "./entry.ts")).toContain("type-only: true true");
+    expect(run(root, "./entry.ts")).toContain("format: commonjs string");
   });
+
+  test("a type-only import beside `export =` stays CommonJS", () => {
+    // The type-only import used to make the file an ES module, where `export =` is a
+    // transform error (TS1203).
+    const root = fixture({
+      "package.json": COMMONJS,
+      "types.ts": "export type Count = number;\n",
+      "counter.ts": [
+        'import type { Count } from "./types";',
+        "const count: Count = 2;",
+        "export = { count };",
+      ].join("\n"),
+      "main.cjs": 'console.log("count:", require("./counter.ts").count);\n',
+    });
+    expect(run(root, "./main.cjs")).toContain("count: 2");
+  });
+
+  test.each([
+    ["an inline `type` specifier", 'import { type Count as Total } from "./types";'],
+    ["a value export", "export const one = 1;"],
+    ["`import.meta`", "const url: string = import.meta.url;"],
+    ["top-level await", "await Promise.resolve();"],
+    ["an enum", "export enum Mode { On }"],
+    ["a class", "export class Holder {}"],
+    ["a function", "export function measure(): number { return 1; }"],
+    ["a namespace with a value", "export namespace Shapes { export const corners = 4; }"],
+  ])("a type-only import beside %s still runs as an ES module", (_what, line) => {
+    // Each of these is module syntax that type erasure leaves behind: an inline `type`
+    // specifier leaves `import {} from "./types"`, and an exported enum, class, function
+    // or namespace with a value is code unless it is `declare`d.
+    const root = fixture({
+      "package.json": COMMONJS,
+      "types.ts": "export type Count = number;\n",
+      "entry.ts": [
+        'import type { Count } from "./types";',
+        line,
+        "const n: Count = 1;",
+        'console.log("format:", typeof require === "undefined" ? "module" : "commonjs", n);',
+      ].join("\n"),
+    });
+    expect(run(root, "./entry.ts")).toContain("format: module 1");
+  });
+
+  test.each([
+    ["`const __dirname`", 'const __dirname = "/x";', "module"],
+    ["`class module`", "class module {}", "module"],
+    ["a destructured `require`", "const { a: require } = { a: 1 };", "module"],
+    ["`var exports`", "var exports = 1;", "commonjs"],
+  ])("a type-only file that redeclares %s runs as Node.js runs it", (_what, line, format) => {
+    // Run as CommonJS, a `let`/`const`/`class` binding of a name the wrapper binds is a
+    // redeclaration error, so Node.js' syntax detection runs the file as an ES module.
+    // `var` may redeclare it, so that file stays CommonJS.
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true }),
+      "entry.ts": [
+        "export type Count = number;",
+        line,
+        'console.log("format:", typeof require === "function" ? "commonjs" : "module");',
+      ].join("\n"),
+    });
+    expect(run(root, "./entry.ts")).toContain(`format: ${format}`);
+  });
+
+  test.each([
+    ["a `.mts` file", COMMONJS, "types-only.mts"],
+    [
+      "a `.ts` file in a module package",
+      JSON.stringify({ name: "fx", private: true, type: "module" }),
+      "types-only.ts",
+    ],
+  ])("%s whose only module syntax is type-only stays an ES module", (_what, pkg, file) => {
+    // The `pirates` hook compiles every `require()`d file without saying whether it is an
+    // ES module, but Node.js runs these as ES modules however they are loaded. Compiled
+    // as CommonJS for `require()`, the file would run a second time when imported.
+    const root = fixture({
+      "package.json": pkg,
+      [file]: [
+        "export type Count = number;",
+        "globalThis.runs = (globalThis.runs ?? 0) + 1;",
+        'console.log("format:", typeof require === "undefined" ? "module" : "commonjs");',
+      ].join("\n"),
+      "main.cjs": `require("./${file}");\nimport("./${file}").then(() => console.log("runs:", globalThis.runs));\n`,
+    });
+    const output = run(root, "./main.cjs");
+    expect(output).toContain("format: module");
+    expect(output).not.toContain("format: commonjs");
+    expect(output).toContain("runs: 1");
+  });
+
+  test("a type-only file stays an ES module when require()d under an ES tsconfig `module`", () => {
+    // The resolve hook reports a `.ts` file as an ES module under `module: esnext`, so
+    // `require()` must not compile it as CommonJS, or the file would run twice.
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { module: "esnext" } }),
+      "types-only.ts": [
+        "export type Count = number;",
+        "globalThis.runs = (globalThis.runs ?? 0) + 1;",
+        'console.log("format:", typeof require === "undefined" ? "module" : "commonjs");',
+      ].join("\n"),
+      "main.cjs":
+        'require("./types-only.ts");\nimport("./types-only.ts").then(() => console.log("runs:", globalThis.runs));\n',
+    });
+    const output = run(root, "./main.cjs");
+    expect(output).not.toContain("format: commonjs");
+    expect(output).toContain("runs: 1");
+  });
+
+  test.each([
+    ["beside top-level await runs as an ES module", "await Promise.resolve();", "format: module"],
+    ["beside `require` stays CommonJS", 'require("node:os");', "format: commonjs"],
+  ])("a type-only file with an `import C = N.C` alias %s", (_what, line, expected) => {
+    // An alias compiles to a plain binding, not to `require()`, so unlike
+    // `import x = require()` it does not hold the file to CommonJS.
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true }),
+      "entry.ts": [
+        'import type { Stats } from "node:fs";',
+        "namespace Shapes {",
+        "  export class Box {}",
+        "}",
+        "import Box = Shapes.Box;",
+        line,
+        'console.log("format:", typeof require === "function" ? "commonjs" : "module", typeof Box);',
+      ].join("\n"),
+    });
+    expect(run(root, "./entry.ts")).toContain(`${expected} function`);
+  });
+
+  test("the importer runs a type-only file as CommonJS with its helpers under an ES tsconfig `module`", () => {
+    // The importer decides from syntax and `package.json` alone, whatever the tsconfig
+    // says, so the helper the decorator needs must be `require()`d, not imported.
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { module: "esnext", experimentalDecorators: true },
+      }),
+      "types-only.ts": [
+        'import type { Stats } from "node:fs";',
+        "function noop(_target: object, _key: string) {}",
+        "class Box {",
+        "  @noop count = 1;",
+        "}",
+        "module.exports = { count: new Box().count };",
+      ].join("\n"),
+      "main.mjs": [
+        'import { createImporter } from "@oxc-node/core/importer";',
+        'const box = await createImporter(import.meta.url).import("./types-only.ts", { default: true });',
+        'console.log("count:", box.count);',
+      ].join("\n"),
+    });
+    expect(run(root, "./main.mjs")).toContain("count: 1");
+  });
+
+  test.each([
+    ["alone stays CommonJS", "", "format: commonjs"],
+    ["beside top-level await runs as an ES module", "await Promise.resolve();", "format: module"],
+  ])("`import type X = require()` %s", (_what, line, expected) => {
+    // `import type X = require()` is erased with the types, so it is no CommonJS
+    // construct, and top-level await still makes the file an ES module.
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true }),
+      "entry.ts": [
+        'import type FS = require("node:fs");',
+        line,
+        'console.log("format:", typeof require === "function" ? "commonjs" : "module");',
+      ].join("\n"),
+    });
+    expect(run(root, "./entry.ts")).toContain(expected);
+  });
+
+  test.each([
+    ["a.ts", 'import type { X } from "./x";\nmodule.exports = 1;\n', false],
+    ["b.ts", 'import { type X } from "./x";\nmodule.exports = 1;\n', true],
+    ["c.mts", 'import type { X } from "./x";\nconsole.log(1);\n', true],
+  ])(
+    "`transform()` of %s keeps `export {}` only when Node.js runs it as an ES module",
+    (file, source, keeps) => {
+      // The public API compiles a file whose only module syntax is type-only as CommonJS
+      // too, unless Node.js runs it as an ES module whatever its syntax.
+      const root = fixture({
+        "package.json": JSON.stringify({ name: "fx", private: true }),
+        [file]: source,
+        "dump.mjs": [
+          'import { readFileSync } from "node:fs";',
+          'import { transform } from "@oxc-node/core";',
+          `const file = ${JSON.stringify(file)};`,
+          'console.log(transform(file, readFileSync(file, "utf8")).source());',
+        ].join("\n"),
+      });
+      expect(/export\s*\{\s*\}/.test(run(root, "./dump.mjs"))).toBe(keeps);
+    },
+  );
 
   test("`require()` completes an extensionless TypeScript specifier", () => {
     // `module.registerHooks()` routes `require()` through the resolve hook, where

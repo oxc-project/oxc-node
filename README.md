@@ -453,8 +453,9 @@ installed in the process: no loader hooks, no `require.extensions`, nothing in
   `tsconfig.json` lookup: path aliases, enums, legacy decorators, JSX,
   extensionless imports, JSON, `.mts`/`.cts`, top-level await.
 - A file is an ES module when its extension or `package.json` says so, or when it
-  uses `import`, `export`, `import.meta` or top-level await. Other files run as
-  CommonJS, even when `tsconfig.json` sets an ES `module`.
+  uses `import`, `export`, `import.meta` or top-level await. Type-only imports and
+  exports such as `import type` do not count. Other files run as CommonJS, even
+  when `tsconfig.json` sets an ES `module`.
 - A CommonJS file can `require()` an ES module file, as on newer Node.js. A
   module with top-level await throws `ERR_REQUIRE_ASYNC_MODULE` instead.
 - Built-in modules, `@oxc-node/core` helpers and JavaScript files in
