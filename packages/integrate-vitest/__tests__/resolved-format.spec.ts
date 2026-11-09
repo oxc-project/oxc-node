@@ -333,14 +333,16 @@ describe("resolved module format (issue #797)", () => {
  * Node.js loads through the module hooks — the entry point, or a file an ES module
  * imports — ran without `require` or `module`. A file with module syntax still runs
  * as an ES module: the load hook finds its syntax, as it does without a tsconfig.
+ * `node20` was already right; it is listed so every `node*` setting is pinned to the
+ * same result.
  */
-describe("tsconfig node16, node18 and nodenext leave the format to the package", () => {
+describe("tsconfig node* module settings leave the format to the package (issue #907)", () => {
   const COMMONJS = JSON.stringify({ name: "fx", private: true, type: "commonjs" });
   const UNTYPED = JSON.stringify({ name: "fx", private: true });
   const tsconfig = (module: string) => JSON.stringify({ compilerOptions: { module } });
 
-  test.each(["node16", "node18", "nodenext"])(
-    "`module: %s` keeps a .ts or .tsx file without module syntax in a type:commonjs package CommonJS",
+  test.each(["node16", "node18", "node20", "nodenext"])(
+    "`module: %s`: a .ts or .tsx file without module syntax in a type:commonjs package runs as CommonJS",
     (module) => {
       const root = fixture({
         "package.json": COMMONJS,
@@ -361,6 +363,23 @@ describe("tsconfig node16, node18 and nodenext leave the format to the package",
       "entry.ts": `${probe("entry.ts")}\n`,
     });
     expect(run(root, "./entry.ts")).toContain("entry.ts: commonjs function object");
+  });
+
+  test("`import x = require()` and `export =` in a type:commonjs package run as CommonJS", () => {
+    const root = fixture({
+      "package.json": COMMONJS,
+      "tsconfig.json": tsconfig("nodenext"),
+      "entry.ts": [
+        'import os = require("node:os");',
+        probe("entry.ts"),
+        'console.log("os:", typeof os.platform);',
+        "export = {};",
+        "",
+      ].join("\n"),
+    });
+    const output = run(root, "./entry.ts");
+    expect(output).toContain("entry.ts: commonjs function object");
+    expect(output).toContain("os: function");
   });
 
   test("a .ts file with module syntax in a package without a type still runs as an ES module", () => {
