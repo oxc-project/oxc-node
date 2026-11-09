@@ -220,3 +220,20 @@ export declare function transformModuleRunner(path: string, source: string | Uin
  * it uses the frozen policy.
  */
 export declare function transformsDep(path: string): boolean
+
+/**
+ * The files a tsconfig `paths` alias or `baseUrl` maps a bare `require()` request to,
+ * in the order to try them. Not checked on disk: `register.mjs` resolves each one with
+ * Node.js' CommonJS resolution, ahead of the request itself.
+ *
+ * An import resolves through [`create_resolve`], which applies the importer's tsconfig
+ * itself, but `require()` stays on Node.js' own CommonJS resolution, which knows
+ * nothing of tsconfig. Without these, an ES module compiled to CommonJS loses the
+ * aliases it resolved as an ES module (#905).
+ *
+ * The config is the one [`create_resolve`] applies to `parent`
+ * ([`TsconfigSource::for_importer`]), and as there, nothing maps a request that is not
+ * bare ([`is_bare_specifier`]) or a request from inside `node_modules`. `cwd` is only
+ * read when this is the loader context's first resolution.
+ */
+export declare function tsconfigPathCandidates(cwd: string, parent: string, specifier: string): Array<string>

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import * as NodeModule from "node:module";
+import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isMainThread } from "node:worker_threads";
 
@@ -16,6 +17,7 @@ import {
   load as oxcLoad,
   takeWatchDependencies,
   transformsDep,
+  tsconfigPathCandidates,
 } from "./index.js";
 import { installSignalAck } from "./signal-ack.mjs";
 import { createRelay, flush, watchSink, withFlush } from "./watch-report.mjs";
@@ -35,6 +37,9 @@ if (watch) {
 
 // Destructure from NodeModule namespace to support older Node.js versions
 const { Module, createRequire, register, registerHooks, setSourceMapsSupport } = NodeModule;
+const isBuiltin =
+  NodeModule.isBuiltin ??
+  ((request) => NodeModule.builtinModules.includes(request.replace(/^node:/, "")));
 
 const DEFAULT_EXTENSIONS = new Set([
   ".js",
@@ -121,7 +126,7 @@ const resolveFilename = Module._resolveFilename;
 // process-wide via `Symbol.for`: with several copies registered, each one wraps the
 // previous function, and the inner call has to pass them all.
 const HELPER_RESOLVING = Symbol.for("@oxc-node/core:resolvingHelper");
-Module._resolveFilename = function (request, parent, isMain, options) {
+Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, options) {
   if (!globalThis[HELPER_RESOLVING] && isHelperSpecifier(request)) {
     if (request.startsWith(HELPER_TAGGED_PREFIX)) {
       globalThis[HELPER_RESOLVING] = true;
@@ -157,6 +162,28 @@ Module._resolveFilename = function (request, parent, isMain, options) {
       }
     }
   }
+  // Node.js' CommonJS resolution knows nothing of tsconfig `paths` and `baseUrl`. The
+  // ES module resolver, `tsc` and tsx try them before `node_modules`, so a bare
+  // request does here too: an ES module compiled to CommonJS finds what it imported as
+  // an ES module (#905). Each file an alias maps to resolves through this function, so
+  // the rules below apply to it as well.
+  if (mapsThroughTsconfig(request, parent)) {
+    const candidates = tsconfigPathCandidates(process.cwd(), parent.filename, request);
+    // Finding the importer's tsconfig reads it.
+    if (watch) {
+      flush(watch, takeWatchDependencies);
+    }
+    for (const candidate of candidates) {
+      try {
+        return oxcResolveFilename.call(this, candidate, parent, isMain, options);
+      } catch (error) {
+        // The next candidate, then the request itself, may still resolve.
+        if (error?.code !== "MODULE_NOT_FOUND") {
+          throw error;
+        }
+      }
+    }
+  }
   let resolved;
   try {
     resolved = resolveFilename.call(this, request, parent, isMain, options);
@@ -166,7 +193,7 @@ Module._resolveFilename = function (request, parent, isMain, options) {
     // name in its `require()`. Node.js' CommonJS resolution knows only the output, so
     // when it is missing the source is tried instead, as the ES module resolver does.
     if (error?.code === "MODULE_NOT_FOUND") {
-      for (const candidate of typeScriptSources(request)) {
+      for (const candidate of sourcesFor(request, MISSING_OUTPUT_SOURCES)) {
         try {
           return resolveFilename.call(this, candidate, parent, isMain, options);
         } catch {
@@ -176,22 +203,87 @@ Module._resolveFilename = function (request, parent, isMain, options) {
     }
     throw error;
   }
-  // Where the output exists too — compiled in place, or stale — Node.js' CommonJS
-  // resolution finds it first: `./lib.js` and `./lib` both name `lib.js`. A TypeScript
-  // importer resolves TypeScript first, as the ES module resolver does for it (#840).
-  return (resolvesSourceFirst(request, parent) && sourceBeside(resolved)) || resolved;
+  // A TypeScript importer resolves TypeScript first, as the ES module resolver does for
+  // it (#840), where Node.js' CommonJS resolution finds another file first: the output
+  // beside its source — compiled in place, or stale — that `./lib.js` and `./lib` both
+  // name, or `config.json` beside `config.ts` for `./config`. A package's files stay
+  // what it compiled, as they do for the ES module resolver.
+  if (resolvesSourceFirst(request, parent) && !inNodeModules(resolved)) {
+    return sourceBeside(resolved) ?? extensionlessSource(request, resolved) ?? resolved;
+  }
+  return resolved;
 };
 
-// The TypeScript files compiled output may come from, in the order the ES module
-// resolver tries them for a TypeScript importer.
-const TYPESCRIPT_SOURCES = {
+// The files the ES module resolver tries, for a TypeScript importer, ahead of the
+// compiled output a request names (`source_order` in `src/lib.rs`).
+const SOURCES_BEFORE_OUTPUT = {
   ".js": [".ts", ".tsx"],
   ".jsx": [".tsx", ".ts"],
   ".mjs": [".mts"],
   ".cjs": [".cts"],
 };
 
+// Every other file it tries for that request, which stand in for the output when it is
+// missing: those, then `.jsx` for `./x.js` and `.js` for `./x.jsx`, which it tries
+// after the named file.
+const MISSING_OUTPUT_SOURCES = {
+  ".js": [".ts", ".tsx", ".jsx"],
+  ".jsx": [".tsx", ".ts", ".js"],
+  ".mjs": [".mts"],
+  ".cjs": [".cts"],
+};
+
+// The extensions the ES module resolver tries for an extensionless request from a
+// TypeScript importer, in its order. Node.js' CommonJS resolution tries `.js`, `.json`
+// and `.node` first, then the extensions the `pirates` hook registers.
+const SOURCE_EXTENSIONS = [
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mts",
+  ".mjs",
+  ".cts",
+  ".cjs",
+  ".json",
+  ".node",
+];
+
 const PATH_REQUEST = /^(?:\.{1,2}[\\/]|[\\/]|[a-zA-Z]:[\\/])/;
+
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
+function inNodeModules(path) {
+  return /[\\/]node_modules[\\/]/.test(path);
+}
+
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
+function isFile(path) {
+  return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+}
+
+/**
+ * Whether the importer's tsconfig may map `request`, as the ES module resolver decides:
+ * a bare request that is not a built-in module, from a file outside `node_modules`.
+ *
+ * @param {string} request
+ * @param {{ filename?: string | null } | null | undefined} parent
+ * @returns {parent is { filename: string }}
+ */
+function mapsThroughTsconfig(request, parent) {
+  const filename = parent?.filename;
+  return (
+    typeof filename === "string" &&
+    !inNodeModules(filename) &&
+    !PATH_REQUEST.test(request) &&
+    !isBuiltin(request)
+  );
+}
 
 /**
  * Whether `parent` resolves `request` TypeScript first, as the ES module resolver
@@ -207,7 +299,7 @@ function resolvesSourceFirst(request, parent) {
   return (
     typeof filename === "string" &&
     /\.(?:[cm]?ts|tsx|jsx)$/.test(filename) &&
-    !/[\\/]node_modules[\\/]/.test(filename) &&
+    !inNodeModules(filename) &&
     PATH_REQUEST.test(request)
   );
 }
@@ -219,23 +311,48 @@ function resolvesSourceFirst(request, parent) {
  * @returns {string | undefined}
  */
 function sourceBeside(filename) {
-  return typeScriptSources(filename).find((source) =>
-    statSync(source, { throwIfNoEntry: false })?.isFile(),
-  );
+  return sourcesFor(filename, SOURCES_BEFORE_OUTPUT).find(isFile);
 }
 
 /**
- * The TypeScript files a relative or absolute request for compiled output may name.
+ * The file the ES module resolver would find for an extensionless `request` that
+ * Node.js resolved to `filename` by adding an extension it tries later, when one exists.
  *
  * @param {string} request
+ * @param {string} filename
+ * @returns {string | undefined}
+ */
+function extensionlessSource(request, filename) {
+  // A request that names its file's extension resolves to that very name.
+  const name = basename(request);
+  const file = basename(filename);
+  if (!file.startsWith(`${name}.`)) {
+    return undefined;
+  }
+  const added = file.slice(name.length);
+  const stem = filename.slice(0, -added.length);
+  // An extension the ES module resolver does not try (`.es6`, `.es`) keeps its file.
+  const index = SOURCE_EXTENSIONS.indexOf(added);
+  return index === -1
+    ? undefined
+    : SOURCE_EXTENSIONS.slice(0, index)
+        .map((extension) => stem + extension)
+        .find(isFile);
+}
+
+/**
+ * The files a relative or absolute request for compiled output may name, from `table`.
+ *
+ * @param {string} request
+ * @param {Record<string, string[]>} table
  * @returns {string[]}
  */
-function typeScriptSources(request) {
+function sourcesFor(request, table) {
   if (!PATH_REQUEST.test(request)) {
     return [];
   }
   const extension = /\.[cm]?jsx?$/.exec(request)?.[0];
-  const sources = extension && TYPESCRIPT_SOURCES[extension];
+  const sources = extension && table[extension];
   return sources ? sources.map((source) => request.slice(0, -extension.length) + source) : [];
 }
 

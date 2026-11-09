@@ -2771,12 +2771,14 @@ const COMMONJS_RESERVED: [&str; 8] = [
 
 /// `tsc`'s helpers, as it emits them without `importHelpers`. A module is taken as-is
 /// when it is a transpiled ES module (`__esModule`) or a real one (`require()` of an ES
-/// module returns its namespace).
+/// module returns its namespace). A namespace import copies every own property name,
+/// enumerable or not, as `tsc`'s `__importStar` does: an ES module's namespace import of
+/// a CommonJS module has an `Object.defineProperty(exports, "a", { value })` export too.
 const IMPORT_DEFAULT_HELPER: &str = "var __importDefault = function (mod) { return mod && \
      (mod.__esModule || mod[Symbol.toStringTag] === \"Module\") ? mod : { default: mod }; };";
 const IMPORT_STAR_HELPER: &str = "var __importStar = function (mod) { if (mod && (mod.__esModule \
      || mod[Symbol.toStringTag] === \"Module\")) return mod; var result = {}; if (mod != null) \
-     for (const k in mod) if (k !== \"default\" && Object.prototype.hasOwnProperty.call(mod, k)) \
+     for (const k of Object.getOwnPropertyNames(mod)) if (k !== \"default\") \
      Object.defineProperty(result, k, { enumerable: true, get: function () { return mod[k]; } }); \
      result.default = mod; return result; };";
 const EXPORT_STAR_HELPER: &str = "var __exportStar = function (m, exports) { for (const p in m) \
@@ -3340,6 +3342,70 @@ impl FromNapiValue for OxcResolveOptions {
     unsafe fn from_napi_value(_: sys::napi_env, _value: sys::napi_value) -> Result<Self> {
         Ok(OxcResolveOptions { get_current_directory: None })
     }
+}
+
+/// The files a tsconfig `paths` alias or `baseUrl` maps a bare `require()` request to,
+/// in the order to try them. Not checked on disk: `register.mjs` resolves each one with
+/// Node.js' CommonJS resolution, ahead of the request itself.
+///
+/// An import resolves through [`create_resolve`], which applies the importer's tsconfig
+/// itself, but `require()` stays on Node.js' own CommonJS resolution, which knows
+/// nothing of tsconfig. Without these, an ES module compiled to CommonJS loses the
+/// aliases it resolved as an ES module (#905).
+///
+/// The config is the one [`create_resolve`] applies to `parent`
+/// ([`TsconfigSource::for_importer`]), and as there, nothing maps a request that is not
+/// bare ([`is_bare_specifier`]) or a request from inside `node_modules`. `cwd` is only
+/// read when this is the loader context's first resolution.
+#[cfg_attr(feature = "napi", napi)]
+pub fn tsconfig_path_candidates(
+    env: Env,
+    cwd: String,
+    parent: String,
+    specifier: String,
+) -> Result<Vec<String>> {
+    let _environment = LoaderEnvironmentGuard::from_env(&env)?;
+    Ok(path_alias_candidates(PathBuf::from(cwd), Path::new(&parent), &specifier)
+        .into_iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect())
+}
+
+fn path_alias_candidates(cwd: PathBuf, parent: &Path, specifier: &str) -> Vec<PathBuf> {
+    if !is_bare_specifier(specifier)
+        || parent.components().any(|component| component.as_os_str() == "node_modules")
+    {
+        return Vec::new();
+    }
+    let context = loader_context();
+    let (resolver, tsconfig_source) =
+        context.resolver_and_tsconfig.get_or_init(|| init_resolver(cwd));
+    let Some(tsconfig) = tsconfig_source.for_importer(resolver, parent, specifier) else {
+        return Vec::new();
+    };
+    // A config found by discovery is already the referenced project that claims the
+    // file. An explicitly named one maps the aliases of the project it references that
+    // holds the file, as `oxc_resolver` does for it.
+    let project = match tsconfig_source {
+        TsconfigSource::Manual(_) => tsconfig
+            .references_resolved
+            .iter()
+            .find(|project| parent.starts_with(project.directory()))
+            .unwrap_or(&tsconfig),
+        TsconfigSource::Auto => &tsconfig,
+    };
+    let mut candidates = project.resolve_path_alias_or_base_url(specifier);
+    // That adds `baseUrl` only when no alias matches. The resolver also tries it when
+    // an alias's files are all missing.
+    if let Some(base_url) = tsconfig.compiler_options.base_url.as_deref()
+        && base_url.is_absolute()
+    {
+        let path = base_url.join(specifier);
+        if !candidates.contains(&path) {
+            candidates.push(path);
+        }
+    }
+    candidates
 }
 
 #[cfg_attr(feature = "napi", napi)]
