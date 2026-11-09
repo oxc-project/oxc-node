@@ -2034,14 +2034,17 @@ fn target_has_native_class_fields(target: &str) -> bool {
 }
 
 /// Whether the file is an ES module whose output keeps ECMAScript module syntax — an
-/// `import`/`export` declaration, `import.meta`, or top-level await. Node.js's own syntax
-/// detection counts top-level await as module syntax, and oxc resolves it to a module.
+/// `import`/`export` declaration that type erasure leaves behind, `import.meta`, or
+/// top-level await. Node.js's own syntax detection counts top-level await as module
+/// syntax, and oxc resolves it to a module.
 ///
 /// The parser's module record is not enough on its own: TypeScript's CommonJS constructs
 /// (`import =`, `export =`) report a module too, but they compile to `require` /
-/// `module.exports`, which only run when the file stays CommonJS. So do type-only
-/// `import`/`export` declarations, which are erased with the types: Node.js' type
-/// stripping runs a file whose only module syntax they are as CommonJS.
+/// `module.exports`, which only run when the file stays CommonJS. Type-only
+/// `import`/`export` declarations report a module too, but type erasure removes them
+/// whole, and Node.js' type stripping runs a file whose only module syntax they are as
+/// CommonJS — unless it also has top-level await, or redeclares a name the CommonJS
+/// wrapper binds.
 fn parsed_as_esm(program: &Program<'_>, module_record: &ModuleRecord<'_>) -> bool {
     let ts_cjs_construct = program.body.iter().any(|statement| {
         matches!(
@@ -2053,7 +2056,34 @@ fn parsed_as_esm(program: &Program<'_>, module_record: &ModuleRecord<'_>) -> boo
         || (program.source_type.is_module()
             && !ts_cjs_construct
             && (!program.body.iter().any(is_type_only_module_declaration)
-                || has_top_level_await(program)))
+                || has_top_level_await(program)
+                || redeclares_commonjs_binding(program)))
+}
+
+/// Whether the file binds, at its top level and with `let`, `const`, `using` or `class`,
+/// a name the CommonJS wrapper already binds. Run as CommonJS that is a redeclaration
+/// error, so Node.js' syntax detection runs such a file as an ES module. `var` and
+/// `function` may redeclare the name, and a `declare`d binding is erased.
+fn redeclares_commonjs_binding(program: &Program<'_>) -> bool {
+    let is_wrapper_name =
+        |name: &str| matches!(name, "require" | "module" | "exports" | "__filename" | "__dirname");
+    program.body.iter().any(|statement| match statement {
+        Statement::VariableDeclaration(decl) => {
+            !decl.declare
+                && decl.kind.is_lexical()
+                && decl.declarations.iter().any(|declarator| {
+                    declarator
+                        .id
+                        .get_binding_identifiers()
+                        .iter()
+                        .any(|id| is_wrapper_name(id.name.as_str()))
+                })
+        }
+        Statement::ClassDeclaration(class) => {
+            !class.declare && class.id.as_ref().is_some_and(|id| is_wrapper_name(id.name.as_str()))
+        }
+        _ => false,
+    })
 }
 
 /// Whether the file carries ECMAScript module syntax — an `import`/`export` declaration
@@ -2102,9 +2132,9 @@ fn is_type_only_module_declaration(statement: &Statement<'_>) -> bool {
     }
 }
 
-/// Whether `declaration` has no run-time code: a type alias, an interface, or an ambient
-/// declaration (`declare`, or a function overload signature). An enum or a namespace
-/// without `declare` is code.
+/// Whether `declaration` has no run-time code: a type alias, an interface, a `declare`d
+/// declaration, or a function overload signature. An enum or a namespace without
+/// `declare` counts as code, even a namespace that holds only types.
 fn is_type_only_declaration(declaration: &Declaration<'_>) -> bool {
     match declaration {
         Declaration::TSTypeAliasDeclaration(_)
@@ -2350,15 +2380,20 @@ fn oxc_transform<S: TryAsStr>(
     let flip_to_module =
         only_module_parse || (allow_module_retry && parsed_as_esm(&program, &module_record));
     // oxc resolves a file whose only `import`/`export` declarations are type-only to a
-    // module, but nothing of them is left once the types are erased, and Node.js runs
-    // such a file as CommonJS. Compile it as a `.cts` file is compiled: as a module, the
+    // module, but none of them is left once the types are erased, and Node.js runs such a
+    // file as CommonJS. Compile it as a `.cts` file is compiled: as a module, the
     // transform would append an empty `export {}` and import its helpers, and Node.js
-    // would run the output as an ES module, without `require` or `module`.
+    // would run the output as an ES module, without `require` or `module`. Not a file
+    // Node.js runs as an ES module whatever its syntax (`.mts`, or a `.ts` file in a
+    // `"type": "module"` package): the `pirates` hook and the public API pass
+    // `is_es_module: false` for every file. On the load-hook path, `!flip_to_module`
+    // already means the file has no ES module syntax left.
     if !is_es_module
         && !flip_to_module
         && program.source_type.is_module()
         && program.body.iter().any(is_type_only_module_declaration)
-        && !parsed_as_esm(&program, &module_record)
+        && (allow_module_retry || !parsed_as_esm(&program, &module_record))
+        && !is_module_file(src_path)
     {
         program.source_type = program.source_type.with_commonjs(true);
     }

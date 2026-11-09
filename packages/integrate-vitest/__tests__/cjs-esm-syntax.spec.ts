@@ -242,7 +242,7 @@ describe("a CommonJS package", () => {
   ])("a file whose only module syntax is type-only stays CommonJS as %s", (_path, entry) => {
     // Type erasure leaves no module syntax behind, so Node.js' type stripping runs such a
     // file as CommonJS. oxc resolves it to a module, and compiled as one it would get an
-    // empty `export {}` that made Node.js run it without `require` or `module`.
+    // empty `export {}` that would make Node.js run it without `require` or `module`.
     const root = fixture({
       "package.json": COMMONJS,
       "types.ts": "export type Count = number;\n",
@@ -339,6 +339,75 @@ describe("a CommonJS package", () => {
     });
     expect(run(root, "./entry.ts")).toContain("format: module 1");
   });
+
+  test.each([
+    ["`const __dirname`", 'const __dirname = "/x";', "module"],
+    ["`class module`", "class module {}", "module"],
+    ["a destructured `require`", "const { a: require } = { a: 1 };", "module"],
+    ["`var exports`", "var exports = 1;", "commonjs"],
+  ])("a type-only file that redeclares %s runs as Node.js runs it", (_what, line, format) => {
+    // Run as CommonJS, a `let`/`const`/`class` binding of a name the wrapper binds is a
+    // redeclaration error, so Node.js' syntax detection runs the file as an ES module.
+    // `var` may redeclare it, so that file stays CommonJS.
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true }),
+      "entry.ts": [
+        "export type Count = number;",
+        line,
+        'console.log("format:", typeof require === "function" ? "commonjs" : "module");',
+      ].join("\n"),
+    });
+    expect(run(root, "./entry.ts")).toContain(`format: ${format}`);
+  });
+
+  test.each([
+    ["a `.mts` file", COMMONJS, "types-only.mts"],
+    [
+      "a `.ts` file in a module package",
+      JSON.stringify({ name: "fx", private: true, type: "module" }),
+      "types-only.ts",
+    ],
+  ])("%s whose only module syntax is type-only stays an ES module", (_what, pkg, file) => {
+    // The `pirates` hook compiles every `require()`d file without saying whether it is an
+    // ES module, but Node.js runs these as ES modules however they are loaded. Compiled
+    // as CommonJS for `require()`, the file would run a second time when imported.
+    const root = fixture({
+      "package.json": pkg,
+      [file]: [
+        "export type Count = number;",
+        "globalThis.runs = (globalThis.runs ?? 0) + 1;",
+        'console.log("format:", typeof require === "undefined" ? "module" : "commonjs");',
+      ].join("\n"),
+      "main.cjs": `require("./${file}");\nimport("./${file}").then(() => console.log("runs:", globalThis.runs));\n`,
+    });
+    const output = run(root, "./main.cjs");
+    expect(output).toContain("format: module");
+    expect(output).not.toContain("format: commonjs");
+    expect(output).toContain("runs: 1");
+  });
+
+  test.each([
+    ["a.ts", 'import type { X } from "./x";\nmodule.exports = 1;\n', false],
+    ["b.ts", 'import { type X } from "./x";\nmodule.exports = 1;\n', true],
+    ["c.mts", 'import type { X } from "./x";\nconsole.log(1);\n', true],
+  ])(
+    "`transform()` of %s keeps `export {}` only when Node.js runs it as an ES module",
+    (file, source, keeps) => {
+      // The public API compiles a file whose only module syntax is type-only as CommonJS
+      // too, unless Node.js runs it as an ES module whatever its syntax.
+      const root = fixture({
+        "package.json": JSON.stringify({ name: "fx", private: true }),
+        [file]: source,
+        "dump.mjs": [
+          'import { readFileSync } from "node:fs";',
+          'import { transform } from "@oxc-node/core";',
+          `const file = ${JSON.stringify(file)};`,
+          'console.log(transform(file, readFileSync(file, "utf8")).source());',
+        ].join("\n"),
+      });
+      expect(/export\s*\{\s*\}/.test(run(root, "./dump.mjs"))).toBe(keeps);
+    },
+  );
 
   test("`require()` completes an extensionless TypeScript specifier", () => {
     // `module.registerHooks()` routes `require()` through the resolve hook, where
