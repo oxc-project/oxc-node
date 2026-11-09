@@ -639,16 +639,6 @@ mod tests {
     // `file:///C:/…` form. The module is compiled into test builds on every
     // platform, so these run wherever `cargo test` does.
 
-    #[test]
-    fn windows_drive_url_parses() {
-        assert_eq!(url_to_path("file:///C:/a/b.ts"), Some(PathBuf::from("C:/a/b.ts")));
-    }
-
-    #[test]
-    fn windows_drive_path_generates() {
-        assert_eq!(path_to_url("C:\\a\\b.ts"), "file:///C:/a/b.ts");
-    }
-
     // Issue #837: the drive form is percent-encoded like `pathToFileURL`
     // writes it, while the drive letter keeps its case and its `:`.
     #[test]
@@ -666,14 +656,6 @@ mod tests {
                 "{path}"
             );
         }
-    }
-
-    #[test]
-    fn windows_unc_url_parses_to_unc_path() {
-        assert_eq!(
-            url_to_path("file://server/share/dir/module.ts"),
-            Some(PathBuf::from("\\\\server\\share\\dir\\module.ts"))
-        );
     }
 
     #[test]

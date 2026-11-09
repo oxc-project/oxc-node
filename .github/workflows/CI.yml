@@ -171,7 +171,8 @@ jobs:
           package-manager-cache: false
       - uses: oxc-project/setup-rust@3d6fb132fbe7cdcb66bf8ec193911c2945369d12 # v1.0.17
         with:
-          cache-key: ${{ matrix.settings.target }}-${{ matrix.settings.host }}
+          # napi-cross uses clang for Linux x64; do not restore the previous GCC/CMake cache.
+          cache-key: ${{ matrix.settings.target }}-${{ matrix.settings.host }}${{ matrix.settings.target == 'x86_64-unknown-linux-gnu' && '-napi-cross-clang' || '' }}
           save-cache: ${{ github.ref_name == 'main' }}
       - name: Install
         run: rustup target add ${{ matrix.settings.target }}

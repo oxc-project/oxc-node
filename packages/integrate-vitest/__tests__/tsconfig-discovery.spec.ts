@@ -113,6 +113,52 @@ const emit = (root: string, cwd: string, entry: string, env?: Record<string, str
 const runWithHooks = (cwd: string, entry: string, env?: Record<string, string | undefined>) =>
   runNode(cwd, ["--import", "@oxc-node/core/register", entry], env);
 
+test.each([false, true])(
+  "resolve follows chdir and parentURL after initialization with a parent: %s",
+  (initializeWithParent) => {
+    const root = createProject({
+      "tsconfig.json": "{}",
+      "first/dep.ts": "",
+      "second/dep.ts": "",
+      "resolve.mjs": `import { realpathSync } from "node:fs";
+import { relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createResolve } from "@oxc-node/core";
+const root = realpathSync.native(process.cwd());
+function resolveDep(parentURL) {
+  const result = createResolve(
+    { getCurrentDirectory: () => process.cwd() },
+    "./dep.ts",
+    { conditions: ["node", "import"], importAttributes: {}, parentURL },
+    (url) => ({ url }),
+  );
+  return relative(root, realpathSync.native(fileURLToPath(result.url)));
+}
+process.chdir("first");
+const parent = pathToFileURL(resolve("entry.ts")).href;
+const first = resolveDep(${initializeWithParent ? "parent" : "undefined"});
+process.chdir("../second");
+console.log(JSON.stringify([first, resolveDep(), resolveDep(parent)]));
+`,
+    });
+    try {
+      const ran = runNode(root, ["resolve.mjs"], {
+        TS_NODE_PROJECT: undefined,
+        OXC_TSCONFIG_PATH: undefined,
+      });
+      expect(ran.status, ran.stderr).toBe(0);
+      expect(ran.stderr).toBe("");
+      expect(JSON.parse(ran.stdout)).toEqual([
+        join("first", "dep.ts"),
+        join("second", "dep.ts"),
+        join("first", "dep.ts"),
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
 test("a sub-project with no tsconfig inherits the nearest ancestor that claims it", () => {
   const root = createProject({ "tsconfig.json": DECORATORS_TSCONFIG, "sub/entry.ts": DECORATED });
   try {
@@ -359,6 +405,22 @@ test("a directory named tsconfig.json does not stop the ancestor walk", () => {
   try {
     const emitted = emit(root, join(root, "mid"), "./entry.ts");
     expect(emitted.stdout, "the walk should continue past the directory").toContain("_decorate");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.platform === "win32")("a tsconfig symlink to a regular file is applied", () => {
+  const root = createProject({
+    "sub/settings.json": DECORATORS_TSCONFIG,
+    "sub/entry.ts": DECORATED,
+  });
+  symlinkSync("settings.json", join(root, "sub", "tsconfig.json"));
+  try {
+    const ran = runWithHooks(join(root, "sub"), "./entry.ts");
+    expect(ran.status, ran.stderr).toBe(0);
+    expect(ran.stderr).toBe("");
+    expect(ran.stdout.trim()).toBe("DECORATOR:legacy");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

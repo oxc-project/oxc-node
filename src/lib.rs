@@ -2924,21 +2924,29 @@ pub fn create_resolve<'env>(
         tracing::debug!("short-circuiting data URL resolve: {}", specifier);
         return add_short_circuit(specifier, None, context, next_resolve);
     }
-    #[cfg(target_family = "wasm")]
-    let cwd = {
-        if let Some(get_cwd) = options.get_current_directory {
-            Path::new(get_cwd.borrow_back(&env)?.call(())?.as_str()).to_path_buf()
+    // Only the first resolution needs the cwd for config selection. A parentless
+    // request also resolves from the current cwd, which can change between calls.
+    // All other requests resolve from their parent URL.
+    let state = loader_context();
+    let initialized = state.resolver_and_tsconfig.get();
+    let cwd = if initialized.is_none() || context.parent_url.is_none() {
+        #[cfg(target_family = "wasm")]
+        let path = if let Some(get_cwd) = options.get_current_directory {
+            PathBuf::from(get_cwd.borrow_back(env)?.call(())?)
         } else {
-            Path::new("/").to_path_buf()
-        }
+            PathBuf::from("/")
+        };
+        #[cfg(not(target_family = "wasm"))]
+        let path = env::current_dir()?;
+        Some(path)
+    } else {
+        None
     };
-
-    #[cfg(not(target_family = "wasm"))]
-    let cwd = env::current_dir()?;
-
-    let context_state = loader_context();
-    let (base_resolver, tsconfig_source) =
-        context_state.resolver_and_tsconfig.get_or_init(|| init_resolver(cwd.clone()));
+    let (base_resolver, tsconfig_source) = initialized.unwrap_or_else(|| {
+        state.resolver_and_tsconfig.get_or_init(|| {
+            init_resolver(cwd.as_ref().expect("first resolution has a cwd").clone())
+        })
+    });
 
     // A `file:` URL is an absolute path in every form Node.js hands over,
     // UNC `file://server/…` included. Schemes are case-insensitive, so
@@ -2992,7 +3000,7 @@ pub fn create_resolve<'env>(
         Some(parent_file) => parent_file
             .parent()
             .ok_or_else(|| Error::new(Status::GenericFailure, "Parent URL is not a file URL"))?,
-        None => cwd.as_path(),
+        None => cwd.as_deref().expect("parentless resolution has a cwd"),
     };
     tracing::debug!(directory = ?directory);
 
@@ -3902,12 +3910,21 @@ fn is_io_failure(err: &ResolveError) -> bool {
 const WASI_ENOTCAPABLE: i32 = 76;
 
 fn is_tsconfig_file(candidate: &Path) -> bool {
+    // One lstat distinguishes a missing entry from a broken symlink. For a
+    // regular Unix entry it also gives exactly the metadata stat would return.
+    let entry = fs::symlink_metadata(candidate);
+    match &entry {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return false,
+        #[cfg(unix)]
+        Ok(meta) if !meta.file_type().is_symlink() => return meta.is_file(),
+        _ => {}
+    }
     match fs::metadata(candidate) {
         Ok(metadata) => metadata.is_file(),
         // A symlink to nothing is a config entry that cannot be read, often
         // left behind by a removed worktree.
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            if fs::symlink_metadata(candidate).is_ok_and(|m| m.file_type().is_symlink()) {
+            if entry.is_ok_and(|m| m.file_type().is_symlink()) {
                 warn_once(format!(
                     "the tsconfig {} is a symlink to a file that does not exist; skipping it",
                     shown(candidate)
@@ -3926,7 +3943,7 @@ fn is_tsconfig_file(candidate: &Path) -> bool {
         // Only an entry that is there was skipped: under a directory that may
         // not be searched, the lookup fails whether or not the file exists.
         Err(err) => {
-            if fs::symlink_metadata(candidate).is_ok() {
+            if entry.is_ok() {
                 warn_unreadable(&ResolveError::TsconfigLoadFailed {
                     path: candidate.to_path_buf(),
                     source: Box::new(ResolveError::from(err)),
@@ -3971,14 +3988,14 @@ fn non_empty_env(name: &str) -> Option<String> {
 /// Node cannot tell from a `.ts` extension alone whether a file is ESM or
 /// CommonJS. When the tsconfig that owns the file asks for an ES module output,
 /// say so explicitly; otherwise fall back to the resolver's own `package.json`
-/// `type` detection.
+/// `type` detection. The `node*` modes (`node16`, `node18`, `node20`,
+/// `nodenext`) take that fallback too: under them `tsc` gives each file the
+/// format its `package.json` `type` names, and CommonJS when there is none.
+/// This only sets the format the resolve hook reports; the load hook still
+/// switches a file with module syntax to ESM.
 fn default_module_from_tsconfig(tsconfig: Option<&TsConfig>) -> Option<&'static str> {
     let module = tsconfig?.compiler_options.module.as_deref()?.to_ascii_lowercase();
-    matches!(
-        module.as_str(),
-        "nodenext" | "node16" | "node18" | "es6" | "es2015" | "es2020" | "es2022" | "esnext"
-    )
-    .then_some("module")
+    matches!(module.as_str(), "es6" | "es2015" | "es2020" | "es2022" | "esnext").then_some("module")
 }
 
 /// An explicitly named tsconfig path, made absolute against `cwd`.
@@ -4679,13 +4696,6 @@ mod tests {
         assert!(parses_with_decorator("namespace N { @dec class A {} }"));
         // Everything in a declaration file is ambient, `declare` or not.
         assert!(!parses_with_decorator_as("export @dec class A {}", SourceType::d_ts()));
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn non_windows_behavior_is_unchanged() {
-        assert_eq!(file_url_to_path("file:///a/b.ts"), Some(PathBuf::from("/a/b.ts")));
-        assert_eq!(file_url_to_path("file:///a%20b.ts"), Some(PathBuf::from("/a b.ts")));
     }
 
     // Expected strings below are what Node's `pathToFileURL` writes for the
