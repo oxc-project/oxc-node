@@ -20,7 +20,7 @@ use oxc::{
         Argument, ArrowFunctionExpression, AwaitExpression, Class, Declaration, Decorator,
         ExportDefaultDeclarationKind, Expression, ForOfStatement, ImportDeclarationSpecifier,
         Program, Statement, StringLiteral, TSExternalModuleDeclaration, TSGlobalDeclaration,
-        TSNamespaceDeclaration, TemplateLiteral, VariableDeclaration,
+        TSModuleReference, TSNamespaceDeclaration, TemplateLiteral, VariableDeclaration,
     },
     ast_visit::{Visit, VisitMut, walk},
     codegen::{Codegen, CodegenOptions, CodegenReturn},
@@ -2046,10 +2046,14 @@ fn target_has_native_class_fields(target: &str) -> bool {
 /// CommonJS — unless it also has top-level await, or redeclares a name the CommonJS
 /// wrapper binds.
 fn parsed_as_esm(program: &Program<'_>, module_record: &ModuleRecord<'_>) -> bool {
-    // `import type X = require()` is erased with the types, so it leaves no `require`.
+    // `import type X = require()` is erased with the types, so it leaves no `require`, and
+    // an alias such as `import C = N.C` compiles to a plain binding.
     let ts_cjs_construct = program.body.iter().any(|statement| match statement {
         Statement::TSExportAssignment(_) => true,
-        Statement::TSImportEqualsDeclaration(decl) => !decl.import_kind.is_type(),
+        Statement::TSImportEqualsDeclaration(decl) => {
+            !decl.import_kind.is_type()
+                && matches!(decl.module_reference, TSModuleReference::ExternalModuleReference(_))
+        }
         _ => false,
     });
     has_esm_syntax(program, module_record)

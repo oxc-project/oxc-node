@@ -405,6 +405,27 @@ describe("a CommonJS package", () => {
     expect(output).toContain("runs: 1");
   });
 
+  test.each([
+    ["beside top-level await runs as an ES module", "await Promise.resolve();", "format: module"],
+    ["beside `require` stays CommonJS", 'require("node:os");', "format: commonjs"],
+  ])("a type-only file with an `import C = N.C` alias %s", (_what, line, expected) => {
+    // An alias compiles to a plain binding, not to `require()`, so unlike
+    // `import x = require()` it does not hold the file to CommonJS.
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true }),
+      "entry.ts": [
+        'import type { Stats } from "node:fs";',
+        "namespace Shapes {",
+        "  export class Box {}",
+        "}",
+        "import Box = Shapes.Box;",
+        line,
+        'console.log("format:", typeof require === "function" ? "commonjs" : "module", typeof Box);',
+      ].join("\n"),
+    });
+    expect(run(root, "./entry.ts")).toContain(`${expected} function`);
+  });
+
   test("the importer runs a type-only file as CommonJS with its helpers under an ES tsconfig `module`", () => {
     // The importer decides from syntax and `package.json` alone, whatever the tsconfig
     // says, so the helper the decorator needs must be `require()`d, not imported.
