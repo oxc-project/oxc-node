@@ -3928,14 +3928,14 @@ fn non_empty_env(name: &str) -> Option<String> {
 /// Node cannot tell from a `.ts` extension alone whether a file is ESM or
 /// CommonJS. When the tsconfig that owns the file asks for an ES module output,
 /// say so explicitly; otherwise fall back to the resolver's own `package.json`
-/// `type` detection.
+/// `type` detection. The `node*` modes (`node16`, `node18`, `node20`,
+/// `nodenext`) take that fallback too: under them `tsc` gives each file the
+/// format its `package.json` `type` names, and CommonJS when there is none.
+/// This only sets the format the resolve hook reports; the load hook still
+/// switches a file with module syntax to ESM.
 fn default_module_from_tsconfig(tsconfig: Option<&TsConfig>) -> Option<&'static str> {
     let module = tsconfig?.compiler_options.module.as_deref()?.to_ascii_lowercase();
-    matches!(
-        module.as_str(),
-        "nodenext" | "node16" | "node18" | "es6" | "es2015" | "es2020" | "es2022" | "esnext"
-    )
-    .then_some("module")
+    matches!(module.as_str(), "es6" | "es2015" | "es2020" | "es2022" | "esnext").then_some("module")
 }
 
 /// An explicitly named tsconfig path, made absolute against `cwd`.
