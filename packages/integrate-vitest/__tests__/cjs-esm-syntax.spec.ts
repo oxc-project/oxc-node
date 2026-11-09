@@ -386,6 +386,42 @@ describe("a CommonJS package", () => {
     expect(output).toContain("runs: 1");
   });
 
+  test("a type-only file stays an ES module when require()d under an ES tsconfig `module`", () => {
+    // The resolve hook reports a `.ts` file as an ES module under `module: esnext`, so
+    // `require()` must not compile it as CommonJS, or the file would run twice.
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { module: "esnext" } }),
+      "types-only.ts": [
+        "export type Count = number;",
+        "globalThis.runs = (globalThis.runs ?? 0) + 1;",
+        'console.log("format:", typeof require === "undefined" ? "module" : "commonjs");',
+      ].join("\n"),
+      "main.cjs":
+        'require("./types-only.ts");\nimport("./types-only.ts").then(() => console.log("runs:", globalThis.runs));\n',
+    });
+    const output = run(root, "./main.cjs");
+    expect(output).not.toContain("format: commonjs");
+    expect(output).toContain("runs: 1");
+  });
+
+  test.each([
+    ["alone stays CommonJS", "", "format: commonjs"],
+    ["beside top-level await runs as an ES module", "await Promise.resolve();", "format: module"],
+  ])("`import type X = require()` %s", (_what, line, expected) => {
+    // `import type X = require()` is erased with the types, so it is no CommonJS
+    // construct, and top-level await still makes the file an ES module.
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true }),
+      "entry.ts": [
+        'import type FS = require("node:fs");',
+        line,
+        'console.log("format:", typeof require === "function" ? "commonjs" : "module");',
+      ].join("\n"),
+    });
+    expect(run(root, "./entry.ts")).toContain(expected);
+  });
+
   test.each([
     ["a.ts", 'import type { X } from "./x";\nmodule.exports = 1;\n', false],
     ["b.ts", 'import { type X } from "./x";\nmodule.exports = 1;\n', true],

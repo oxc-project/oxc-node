@@ -2046,11 +2046,11 @@ fn target_has_native_class_fields(target: &str) -> bool {
 /// CommonJS — unless it also has top-level await, or redeclares a name the CommonJS
 /// wrapper binds.
 fn parsed_as_esm(program: &Program<'_>, module_record: &ModuleRecord<'_>) -> bool {
-    let ts_cjs_construct = program.body.iter().any(|statement| {
-        matches!(
-            statement,
-            Statement::TSExportAssignment(_) | Statement::TSImportEqualsDeclaration(_)
-        )
+    // `import type X = require()` is erased with the types, so it leaves no `require`.
+    let ts_cjs_construct = program.body.iter().any(|statement| match statement {
+        Statement::TSExportAssignment(_) => true,
+        Statement::TSImportEqualsDeclaration(decl) => !decl.import_kind.is_type(),
+        _ => false,
     });
     has_esm_syntax(program, module_record)
         || (program.source_type.is_module()
@@ -2113,14 +2113,15 @@ fn has_module_declaration_statement(statement: &Statement<'_>) -> bool {
 }
 
 /// Whether `statement` is an `import`/`export` declaration that type erasure removes
-/// whole, as Node.js' type stripping does: `import type`, `export type { … }` with or
-/// without `from`, `export type *`, and the export of a type alias, an interface or an
-/// ambient declaration. A declaration whose specifiers are each marked `type`, such as
+/// whole, as Node.js' type stripping does: `import type` (`import type X = require()`
+/// too), `export type { … }` with or without `from`, `export type *`, and the export of a
+/// type alias, an interface or an ambient declaration. A declaration whose specifiers are each marked `type`, such as
 /// `import { type X } from "x"`, is not one: it leaves `import {} from "x"` behind,
 /// which is module syntax to Node.js.
 fn is_type_only_module_declaration(statement: &Statement<'_>) -> bool {
     match statement {
         Statement::ImportDeclaration(decl) => decl.import_kind.is_type(),
+        Statement::TSImportEqualsDeclaration(decl) => decl.import_kind.is_type(),
         Statement::ExportNamedDeclaration(decl) => decl.export_kind.is_type(),
         Statement::ExportFromDeclaration(decl) => decl.export_kind.is_type(),
         Statement::ExportAllDeclaration(decl) => decl.export_kind.is_type(),
@@ -2384,16 +2385,21 @@ fn oxc_transform<S: TryAsStr>(
     // file as CommonJS. Compile it as a `.cts` file is compiled: as a module, the
     // transform would append an empty `export {}` and import its helpers, and Node.js
     // would run the output as an ES module, without `require` or `module`. Not a file
-    // Node.js runs as an ES module whatever its syntax (`.mts`, or a `.ts` file in a
-    // `"type": "module"` package): the `pirates` hook and the public API pass
-    // `is_es_module: false` for every file. On the load-hook path, `!flip_to_module`
-    // already means the file has no ES module syntax left.
+    // the import path runs as an ES module whatever its syntax — `.mts`, a `.ts` file in
+    // a `"type": "module"` package, or one whose tsconfig sets an ES `module` (see
+    // `default_module_from_tsconfig`): the `pirates` hook and the public API pass
+    // `is_es_module: false` for every file, and a file compiled one way for `require()`
+    // and the other for `import` would run twice. On the load-hook path,
+    // `!flip_to_module` already means the file has no ES module syntax left.
     if !is_es_module
         && !flip_to_module
         && program.source_type.is_module()
         && program.body.iter().any(is_type_only_module_declaration)
         && (allow_module_retry || !parsed_as_esm(&program, &module_record))
         && !is_module_file(src_path)
+        && !compiler_options
+            .and_then(|options| options.module.as_deref())
+            .is_some_and(is_es_module_setting)
     {
         program.source_type = program.source_type.with_commonjs(true);
     }
@@ -4029,8 +4035,19 @@ fn non_empty_env(name: &str) -> Option<String> {
 /// This only sets the format the resolve hook reports; the load hook still
 /// switches a file with module syntax to ESM.
 fn default_module_from_tsconfig(tsconfig: Option<&TsConfig>) -> Option<&'static str> {
-    let module = tsconfig?.compiler_options.module.as_deref()?.to_ascii_lowercase();
-    matches!(module.as_str(), "es6" | "es2015" | "es2020" | "es2022" | "esnext").then_some("module")
+    tsconfig?
+        .compiler_options
+        .module
+        .as_deref()
+        .is_some_and(is_es_module_setting)
+        .then_some("module")
+}
+
+/// Whether a tsconfig `module` value asks for ES module output.
+fn is_es_module_setting(module: &str) -> bool {
+    ["es6", "es2015", "es2020", "es2022", "esnext"]
+        .iter()
+        .any(|setting| module.eq_ignore_ascii_case(setting))
 }
 
 /// An explicitly named tsconfig path, made absolute against `cwd`.
