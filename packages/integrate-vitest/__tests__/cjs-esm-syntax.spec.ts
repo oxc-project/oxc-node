@@ -405,6 +405,31 @@ describe("a CommonJS package", () => {
     expect(output).toContain("runs: 1");
   });
 
+  test("the importer runs a type-only file as CommonJS with its helpers under an ES tsconfig `module`", () => {
+    // The importer decides from syntax and `package.json` alone, whatever the tsconfig
+    // says, so the helper the decorator needs must be `require()`d, not imported.
+    const root = fixture({
+      "package.json": JSON.stringify({ name: "fx", private: true }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { module: "esnext", experimentalDecorators: true },
+      }),
+      "types-only.ts": [
+        'import type { Stats } from "node:fs";',
+        "function noop(_target: object, _key: string) {}",
+        "class Box {",
+        "  @noop count = 1;",
+        "}",
+        "module.exports = { count: new Box().count };",
+      ].join("\n"),
+      "main.mjs": [
+        'import { createImporter } from "@oxc-node/core/importer";',
+        'const box = await createImporter(import.meta.url).import("./types-only.ts", { default: true });',
+        'console.log("count:", box.count);',
+      ].join("\n"),
+    });
+    expect(run(root, "./main.mjs")).toContain("count: 1");
+  });
+
   test.each([
     ["alone stays CommonJS", "", "format: commonjs"],
     ["beside top-level await runs as an ES module", "await Promise.resolve();", "format: module"],

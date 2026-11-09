@@ -2386,8 +2386,8 @@ fn oxc_transform<S: TryAsStr>(
     // transform would append an empty `export {}` and import its helpers, and Node.js
     // would run the output as an ES module, without `require` or `module`. Not a file
     // the import path runs as an ES module whatever its syntax — `.mts`, a `.ts` file in
-    // a `"type": "module"` package, or one whose tsconfig sets an ES `module` (see
-    // `default_module_from_tsconfig`): the `pirates` hook and the public API pass
+    // a `"type": "module"` package, or, outside the importer, one whose tsconfig sets an
+    // ES `module` (see `default_module_from_tsconfig`): the `pirates` hook and the public API pass
     // `is_es_module: false` for every file, and a file compiled one way for `require()`
     // and the other for `import` would run twice. On the load-hook path,
     // `!flip_to_module` already means the file has no ES module syntax left.
@@ -2397,9 +2397,12 @@ fn oxc_transform<S: TryAsStr>(
         && program.body.iter().any(is_type_only_module_declaration)
         && (allow_module_retry || !parsed_as_esm(&program, &module_record))
         && !is_module_file(src_path)
-        && !compiler_options
-            .and_then(|options| options.module.as_deref())
-            .is_some_and(is_es_module_setting)
+        // The importer (`module_runner`) decides from syntax and `package.json` alone,
+        // whatever the tsconfig says, so it keeps the switch.
+        && (module_runner.is_some()
+            || !compiler_options
+                .and_then(|options| options.module.as_deref())
+                .is_some_and(is_es_module_setting))
     {
         program.source_type = program.source_type.with_commonjs(true);
     }
