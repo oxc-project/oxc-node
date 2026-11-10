@@ -241,6 +241,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
     // the aliases of the extension Node.js added come after it.
     source =
       directoryMainSource(request, parent.filename, resolved) ??
+      directoryMainOrderSource(request, parent.filename, resolved) ??
       directoryIndexSource(request, parent.filename, resolved) ??
       extensionlessSource(request, named) ??
       sourceBeside(named) ??
@@ -250,6 +251,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
     const named = requested(request, parent.filename, resolved);
     source =
       directoryMainSource(request, parent.filename, resolved) ??
+      directoryMainOrderSource(request, parent.filename, resolved) ??
       directoryIndexSource(request, parent.filename, resolved) ??
       extensionlessSource(request, named) ??
       extensionlessSource(request, resolved);
@@ -444,6 +446,23 @@ function directoryIndexSource(request, filename, resolved) {
 }
 
 /**
+ * The file the ES module resolver would find for a directory whose `package.json` names
+ * an extensionless `main` that Node.js completed with an extension it tries later —
+ * `./src/entry` to `entry.json` beside `entry.ts`, say — when one exists.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {string | undefined}
+ */
+function directoryMainOrderSource(request, filename, resolved) {
+  const main = directoryMain(resolvePath(dirname(filename), request));
+  return main !== undefined && extname(main) === "" && resolved.startsWith(`${main}.`)
+    ? extensionlessSource(main, resolved)
+    : undefined;
+}
+
+/**
  * Whether a bare `request` from a TypeScript or JSX `parent` outside `node_modules`
  * mapped to a file of the project, through a package's `imports` or `exports`.
  *
@@ -510,6 +529,11 @@ function mappedFile(error, request) {
  * @returns {string | undefined}
  */
 function resolveNative(request, filename) {
+  // `#`, `?` and `%` are part of a CommonJS file name, but the ES module resolver reads
+  // a fragment, a query or an escape there, and would find another file.
+  if (/[#?%]/.test(request)) {
+    return undefined;
+  }
   try {
     const { url } = /** @type {{ url: string }} */ (
       createResolve(
