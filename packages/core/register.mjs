@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import * as NodeModule from "node:module";
-import { basename } from "node:path";
+import { basename, isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isMainThread } from "node:worker_threads";
 
@@ -200,13 +200,26 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
           // Not this one either; the original error is the one to report.
         }
       }
-      // A package `imports` entry (`#value`) or a self-reference through `exports` names
-      // compiled output too, which Node.js looks for only after mapping the request.
-      // The ES module resolver maps it and then tries the source, so it is asked here.
-      if (mapsThroughTsconfig(request, parent)) {
-        const mapped = resolveMapped(request, parent.filename);
-        if (mapped !== undefined) {
-          return mapped;
+      const filename = parent?.filename;
+      if (typeof filename === "string" && !inNodeModules(filename) && !isBuiltin(request)) {
+        const found = PATH_REQUEST.test(request)
+          ? // The ES module resolver's other candidates — `index.ts` in a directory, say
+            // — and its report of them to watch mode, so creating one restarts the app.
+            resolveNative(request, filename)
+          : // A package `imports` entry (`#value`) or a self-reference through `exports`
+            // names compiled output too. Node.js has mapped it, with every active
+            // condition, and names the file it found missing.
+            sourcesFor(mappedFile(error, request), MISSING_OUTPUT_SOURCES)
+              .map((candidate) => {
+                try {
+                  return resolveFilename.call(this, candidate, parent, isMain, options);
+                } catch {
+                  return undefined;
+                }
+              })
+              .find((resolved) => resolved !== undefined);
+        if (found !== undefined) {
+          return found;
         }
       }
     }
@@ -346,14 +359,28 @@ function compiledFromEsm(request, parent) {
 }
 
 /**
- * The file the ES module resolver finds for a bare `request` from `filename`, with the
- * `require` condition, when Node.js' CommonJS resolution found none.
+ * The missing file Node.js mapped a bare `request` to through a package's `imports` or
+ * `exports`, as its error names it, or `""`. A package that is not there at all is
+ * named by the request itself.
+ *
+ * @param {{ message?: unknown }} error
+ * @param {string} request
+ * @returns {string}
+ */
+function mappedFile(error, request) {
+  const mapped = /^Cannot find module '(.+)'/.exec(String(error.message))?.[1];
+  return mapped !== undefined && mapped !== request && isAbsolute(mapped) ? mapped : "";
+}
+
+/**
+ * The file the ES module resolver finds for a relative or absolute `request` from
+ * `filename`, when Node.js' CommonJS resolution found none.
  *
  * @param {string} request
  * @param {string} filename
  * @returns {string | undefined}
  */
-function resolveMapped(request, filename) {
+function resolveNative(request, filename) {
   try {
     const { url } = /** @type {{ url: string }} */ (
       createResolve(
@@ -364,7 +391,7 @@ function resolveMapped(request, filename) {
           importAttributes: {},
           parentURL: pathToFileURL(filename).href,
         },
-        // Called with what the request maps to, or with the request itself.
+        // Called with the file it found, or with the request itself.
         (url) => ({ url }),
       )
     );
@@ -372,7 +399,7 @@ function resolveMapped(request, filename) {
   } catch {
     return undefined;
   } finally {
-    // Resolving reads the package.json and tsconfig it maps through.
+    // Resolving records the files it looked for, and the tsconfig it read.
     if (watch) {
       flush(watch, takeWatchDependencies);
     }

@@ -49,20 +49,24 @@ function fixture(
   return root;
 }
 
-function run(root: string, entry: string): string {
-  const result = spawnSync(process.execPath, ["--import", "@oxc-node/core/register", entry], {
-    cwd: root,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      NODE_OPTIONS: undefined,
-      OXC_LOG: undefined,
-      OXC_TRANSFORM_ALL: undefined,
-      TS_NODE_PROJECT: undefined,
-      OXC_TSCONFIG_PATH: undefined,
+function run(root: string, entry: string, nodeArgs: string[] = []): string {
+  const result = spawnSync(
+    process.execPath,
+    [...nodeArgs, "--import", "@oxc-node/core/register", entry],
+    {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NODE_OPTIONS: undefined,
+        OXC_LOG: undefined,
+        OXC_TRANSFORM_ALL: undefined,
+        TS_NODE_PROJECT: undefined,
+        OXC_TSCONFIG_PATH: undefined,
+      },
+      timeout: 30_000,
     },
-    timeout: 30_000,
-  });
+  );
   const output = `${result.stdout}${result.stderr}`;
   expect(result.error, result.error?.message).toBeFalsy();
   expect(result.status, output).toBe(0);
@@ -198,6 +202,22 @@ describe("a TypeScript file in a CommonJS package", () => {
       "main.ts": `import { value } from ${JSON.stringify(specifier)};\nconsole.log("value:", value);\n`,
     });
     expect(run(root, "./main.ts")).toContain("value: ts");
+  });
+
+  test("resolves a package `imports` entry with the active conditions", () => {
+    // Node.js picks `./dev.js` under `--conditions=development`, so its source is
+    // `dev.ts`, not the `default` target's.
+    const root = fixture({
+      "package.json": JSON.stringify({
+        ...JSON.parse(COMMONJS),
+        imports: { "#value": { development: "./dev.js", default: "./prod.js" } },
+      }),
+      "dev.ts": 'export const value: string = "dev";\n',
+      "prod.ts": 'export const value: string = "prod";\n',
+      "main.ts": 'import { value } from "#value";\nconsole.log("value:", value);\n',
+    });
+    expect(run(root, "./main.ts")).toContain("value: prod");
+    expect(run(root, "./main.ts", ["--conditions=development"])).toContain("value: dev");
   });
 
   test("resolves a compiled JavaScript file's extensionless import TypeScript first", () => {

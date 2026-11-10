@@ -167,6 +167,21 @@ ${KEEP}`,
     await o.editUntil(join(root, "gen/deep/x.ts"), () => value("x"), runLine("later x"));
   });
 
+  test("creating a missing index file an import compiled to CommonJS names", async () => {
+    // `require("./barrel")` from a file compiled to CommonJS reports `barrel/index.ts`
+    // too, as the import did when the file ran as an ES module (#905).
+    const root = project({
+      "package.json": JSON.stringify({ private: true, type: "commonjs" }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { module: "nodenext" } }),
+      "main.ts": `import { v } from "./barrel";\nconsole.log("RUN", v, process.pid);\n${KEEP}`,
+      "barrel/other.ts": value("other"),
+    });
+    const o = startOxnode(["watch", "main.ts"], root);
+    await o.waitFor(/\[oxnode\] exited with code 1 — waiting for changes/);
+    await o.watched(join(root, "barrel/index.ts"));
+    await o.editUntil(join(root, "barrel/index.ts"), () => value("made"), runLine("made"));
+  });
+
   test("tsconfig.json and the config it extends", async () => {
     const paths = (dir: string) => ({ paths: { "@lib/*": [`./${dir}/*`] } });
     const root = project({
