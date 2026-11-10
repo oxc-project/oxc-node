@@ -368,10 +368,11 @@ is `commonjs`, `node16`, `node18`, `node20` or `nodenext`, as `tsc` compiles it.
 The output takes `tsc`'s shape. An exported local is a plain, writable property of
 `exports`, so `mock.method(namespace, "name")` replaces it for every CommonJS
 importer, as it does under `tsc`. A local that is never reassigned is assigned once
-it is declared; a reassigned one is `exports.name` itself, so it stays live. A
-re-export, and a reassigned local exported under two names, declared by
-destructuring or set to an anonymous function, stays live through a getter
-instead, which a test cannot replace. In an import cycle, an export that has not
+it is declared; a reassigned one is `exports.name` itself, so it stays live, and
+so is each binding of an `export const [a, b] = …` pattern. A re-export, and a
+reassigned local exported under two names, declared by a pattern with a binding
+that is not exported, or set to an anonymous function, stays live through a
+getter instead, which a test cannot replace. In an import cycle, an export that has not
 been set yet reads as `undefined`, as under `tsc`; function declarations are
 exported before the file runs. A file's imports run before the rest of it, as in
 an ES module.
@@ -426,7 +427,9 @@ Otherwise TypeScript comes first, by the file's own name or by its output's:
 it, `./lib.mjs` finds `lib.mts`, and `./config` finds `config.ts` before
 `config.json`. When no `lib.js` exists, `./lib.js` finds `lib.jsx` too. tsconfig
 `paths` and `baseUrl` are tried before `node_modules`, and a package `imports`
-entry or a self-reference that names missing output finds its source. The
+entry or a self-reference that names output finds its source the same way. The
+source is looked for beside the name a request reaches, before a symlink there is
+followed. The
 `require()` calls of every TypeScript file outside `node_modules` resolve this
 way, and so do the extensionless ones of a `.js` file compiled from an ES module;
 a file a package ships keeps its compiled `.js`.

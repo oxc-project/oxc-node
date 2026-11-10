@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import * as NodeModule from "node:module";
-import { basename, isAbsolute } from "node:path";
+import { basename, dirname, extname, isAbsolute, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isMainThread } from "node:worker_threads";
 
@@ -232,11 +232,23 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
   // what it compiled, as they do for the ES module resolver. A JavaScript file compiled
   // from an ES module resolves an extensionless request the same way, as it did as an
   // ES module; one that names its file keeps it.
+  // The output may be a symlink: Node.js has followed it, and the source sits beside
+  // the name the request reaches, as the ES module resolver looks for it.
   let source;
   if (resolvesSourceFirst(request, parent) && !inNodeModules(resolved)) {
-    source = sourceBeside(resolved) ?? extensionlessSource(request, resolved);
+    const named = requested(request, parent.filename, resolved);
+    source =
+      sourceBeside(named) ??
+      extensionlessSource(request, named) ??
+      sourceBeside(resolved) ??
+      extensionlessSource(request, resolved);
   } else if (compiledFromEsm(request, parent) && !inNodeModules(resolved)) {
-    source = extensionlessSource(request, resolved);
+    const named = requested(request, parent.filename, resolved);
+    source = extensionlessSource(request, named) ?? extensionlessSource(request, resolved);
+  } else if (mapsToProjectFile(request, parent, resolved)) {
+    // A package `imports` entry or a self-reference that maps to compiled output beside
+    // its source: the ES module resolver tried the source first after mapping.
+    source = sourceBeside(resolved);
   }
   // Node.js' own resolution gives the source its real path, as it gave `resolved`, so a
   // symlinked source is one module whichever name reaches it.
@@ -333,6 +345,50 @@ function resolvesSourceFirst(request, parent) {
     /\.(?:[cm]?ts|tsx|jsx)$/.test(filename) &&
     !inNodeModules(filename) &&
     PATH_REQUEST.test(request)
+  );
+}
+
+/**
+ * The file a relative or absolute `request` from `filename` names before Node.js follows
+ * a symlink to `resolved`: the request itself, or with the extension Node.js added to
+ * it. `resolved` when the request reached it some other way, such as a directory.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {string}
+ */
+function requested(request, filename, resolved) {
+  const path = resolvePath(dirname(filename), request);
+  if (path === resolved) {
+    return resolved;
+  }
+  if (extname(path) !== "" && isFile(path)) {
+    return path;
+  }
+  const withExtension = path + extname(resolved);
+  return isFile(withExtension) ? withExtension : resolved;
+}
+
+/**
+ * Whether a bare `request` from a TypeScript or JSX `parent` outside `node_modules`
+ * mapped to a file of the project, through a package's `imports` or `exports`.
+ *
+ * @param {string} request
+ * @param {{ filename?: string | null } | null | undefined} parent
+ * @param {string} resolved
+ * @returns {boolean}
+ */
+function mapsToProjectFile(request, parent, resolved) {
+  const filename = parent?.filename;
+  return (
+    typeof filename === "string" &&
+    /\.(?:[cm]?ts|tsx|jsx)$/.test(filename) &&
+    !inNodeModules(filename) &&
+    !PATH_REQUEST.test(request) &&
+    !isBuiltin(request) &&
+    isAbsolute(resolved) &&
+    !inNodeModules(resolved)
   );
 }
 

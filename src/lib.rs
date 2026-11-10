@@ -18,12 +18,13 @@ use oxc::{
     allocator::{Allocator, CloneIn, TakeIn},
     ast::{
         ast::{
-            Argument, ArrowFunctionExpression, AssignmentTarget, AssignmentTargetMaybeDefault,
-            AssignmentTargetProperty, AwaitExpression, CallExpression, Class, Declaration,
-            Decorator, Directive, ExportDefaultDeclarationKind, Expression, ForOfStatement,
-            FunctionType, IdentifierReference, ImportDeclarationSpecifier, ObjectProperty,
-            ObjectPropertyKind, Program, SimpleAssignmentTarget, Statement, StringLiteral,
-            TSExternalModuleDeclaration, TSGlobalDeclaration, TSModuleReference,
+            Argument, ArrowFunctionExpression, AssignmentOperator, AssignmentTarget,
+            AssignmentTargetMaybeDefault, AssignmentTargetProperty, AssignmentTargetRest,
+            AwaitExpression, BindingPattern, BindingRestElement, CallExpression, Class,
+            Declaration, Decorator, Directive, ExportDefaultDeclarationKind, Expression,
+            ForOfStatement, FunctionType, IdentifierReference, ImportDeclarationSpecifier,
+            ObjectProperty, ObjectPropertyKind, Program, SimpleAssignmentTarget, Statement,
+            StringLiteral, TSExternalModuleDeclaration, TSGlobalDeclaration, TSModuleReference,
             TSNamespaceDeclaration, TaggedTemplateExpression, TemplateLiteral, VariableDeclaration,
         },
         builder::AstBuilder,
@@ -3049,9 +3050,20 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
         }
     }
     let mut plain_declarations: HashMap<&str, bool> = HashMap::new();
+    // `export const [a = 1, b = f()] = v;` exports `a` before `f()` runs. `tsc` makes it
+    // `[exports.a = 1, exports.b = f()] = v;`, which takes every binding of the pattern
+    // being exported, each under one name.
+    let mut destructured: HashSet<&str> = HashSet::new();
     for statement in program.body.iter().skip(hoisted) {
         let Statement::VariableDeclaration(declaration) = statement else { continue };
         for declarator in &declaration.declarations {
+            let names = declarator.id.get_binding_identifiers();
+            if declarator.id.get_binding_identifier().is_none()
+                && declarator.init.is_some()
+                && names.iter().all(|ident| export_names.get(ident.name.as_str()) == Some(&1))
+            {
+                destructured.extend(names.iter().map(|ident| ident.name.as_str()));
+            }
             let plain = declarator.id.get_binding_identifier().is_some()
                 && !declarator
                     .init
@@ -3091,6 +3103,10 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
                     local
                 };
                 prelude.push_str(&format!("{member} = {local};\n"));
+            }
+            (Some(local), Some((_, false)), Some(symbol)) if destructured.contains(local) => {
+                cleared.push(member.clone());
+                members.insert(symbol, member);
             }
             (Some(local), Some((at, false)), _) if !written => {
                 cleared.push(member.clone());
@@ -3223,7 +3239,9 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
             None => match statement {
                 Statement::VariableDeclaration(declaration)
                     if declaration.declarations.iter().any(|declarator| {
-                        binding_symbol(declarator).is_some_and(|s| members.contains_key(&s))
+                        declarator.id.get_binding_identifiers().iter().any(|ident| {
+                            ident.symbol_id.get().is_some_and(|s| members.contains_key(&s))
+                        })
                     }) =>
                 {
                     body.extend(exported_declarations(allocator, declaration.unbox(), &members));
@@ -3308,6 +3326,26 @@ fn exported_declarations<'a>(
     let kind = declaration.kind.as_str();
     let mut statements = Vec::new();
     for mut declarator in declaration.declarations {
+        if declarator.id.get_binding_identifier().is_none()
+            && let Some(init) = declarator.init.take()
+        {
+            // Every binding of the pattern is a member: `[exports.a = 1] = v;`.
+            let builder = AstBuilder::new(allocator);
+            let target = pattern_target(allocator, declarator.id, members);
+            let assignment = Expression::new_assignment_expression(
+                declarator.span,
+                AssignmentOperator::Assign,
+                target,
+                init,
+                &builder,
+            );
+            statements.push(Statement::new_expression_statement(
+                declarator.span,
+                assignment,
+                &builder,
+            ));
+            continue;
+        }
         match binding_symbol(&declarator).and_then(|symbol| members.get(&symbol)) {
             Some(member) => {
                 let Some(init) = declarator.init.take() else { continue };
@@ -3335,6 +3373,90 @@ fn exported_declarations<'a>(
         }
     }
     statements
+}
+
+/// `pattern` as an assignment target, its bindings replaced by the `exports` members
+/// they became.
+fn pattern_target<'a>(
+    allocator: &'a Allocator,
+    pattern: BindingPattern<'a>,
+    members: &HashMap<SymbolId, String>,
+) -> AssignmentTarget<'a> {
+    let builder = AstBuilder::new(allocator);
+    let maybe_default = |pattern: BindingPattern<'a>| match pattern {
+        BindingPattern::AssignmentPattern(assignment) => {
+            let assignment = assignment.unbox();
+            AssignmentTargetMaybeDefault::new_assignment_target_with_default(
+                assignment.span,
+                pattern_target(allocator, assignment.left, members),
+                assignment.right,
+                &builder,
+            )
+        }
+        pattern => AssignmentTargetMaybeDefault::from(pattern_target(allocator, pattern, members)),
+    };
+    let rest = |rest: Option<oxc::allocator::Box<'a, BindingRestElement<'a>>>| {
+        rest.map(|rest| {
+            let rest = rest.unbox();
+            AssignmentTargetRest::boxed(
+                rest.span,
+                pattern_target(allocator, rest.argument, members),
+                &builder,
+            )
+        })
+    };
+    match pattern {
+        BindingPattern::BindingIdentifier(ident) => {
+            let member = ident
+                .symbol_id
+                .get()
+                .and_then(|symbol| members.get(&symbol))
+                .expect("every binding of the pattern is a member");
+            let (_, mut body) = parse_generated(allocator, &format!("{member} = 0;"));
+            match body.pop() {
+                Some(Statement::ExpressionStatement(statement)) => {
+                    match statement.unbox().expression {
+                        Expression::AssignmentExpression(assignment) => assignment.unbox().left,
+                        _ => unreachable!("an assignment"),
+                    }
+                }
+                _ => unreachable!("an expression statement"),
+            }
+        }
+        BindingPattern::ArrayPattern(array) => {
+            let array = array.unbox();
+            let mut elements =
+                oxc::allocator::Vec::with_capacity_in(array.elements.len(), &allocator);
+            elements.extend(array.elements.into_iter().map(|element| element.map(maybe_default)));
+            AssignmentTarget::new_array_assignment_target(
+                array.span,
+                elements,
+                rest(array.rest),
+                &builder,
+            )
+        }
+        BindingPattern::ObjectPattern(object) => {
+            let object = object.unbox();
+            let mut properties =
+                oxc::allocator::Vec::with_capacity_in(object.properties.len(), &allocator);
+            properties.extend(object.properties.into_iter().map(|property| {
+                AssignmentTargetProperty::new_assignment_target_property_property(
+                    property.span,
+                    property.key,
+                    maybe_default(property.value),
+                    property.computed,
+                    &builder,
+                )
+            }));
+            AssignmentTarget::new_object_assignment_target(
+                object.span,
+                properties,
+                rest(object.rest),
+                &builder,
+            )
+        }
+        BindingPattern::AssignmentPattern(_) => unreachable!("only inside an array or object"),
+    }
 }
 
 /// Reads and writes of a binding that became `exports.name` go through `exports.name`.
@@ -6022,6 +6144,21 @@ mod tests {
         assert!(code.contains("exports.a = a;"), "{code}");
         assert!(code.find("exports.a = a;") < code.find("b = a + 1"), "{code}");
         assert!(code.contains("(0, exports.tag)`x`"), "{code}");
+
+        // A destructuring export assigns `exports` members as the pattern runs, as `tsc`
+        // emits it, and the pattern's own reads go through them.
+        let code = run(
+            "cjs/patterns.ts",
+            "const v: number[] = [];\nexport const [a = 1, b = a] = v;\n\
+             export const { c, d: [e = c], ...f } = { c: 1, d: [] as number[] };\n",
+        );
+        assert!(lowered(&code), "{code}");
+        assert!(code.contains("[exports.a = 1, exports.b = exports.a] = v;"), "{code}");
+        assert!(
+            code.contains("({c: exports.c, d: [exports.e = exports.c], ...exports.f} ="),
+            "{code}"
+        );
+        assert!(!code.contains("const [a"), "{code}");
 
         // A side-effect import is a bare `require()`, as `tsc` emits it.
         let code = run("cjs/side.ts", "import './b';\nexport const n = 1;\n");

@@ -4,6 +4,10 @@ import * as self from "./declarators";
 export const first = 1,
   second = self.first;
 
+// …and each binding of a pattern before the next default runs.
+const none: number[] = [];
+export const [third = 3, fourth = self.third] = none;
+
 function initial(_strings: TemplateStringsArray): string {
   return "initial";
 }

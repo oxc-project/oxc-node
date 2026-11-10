@@ -204,6 +204,20 @@ describe("a TypeScript file in a CommonJS package", () => {
     expect(run(root, "./main.ts")).toContain("value: ts");
   });
 
+  test.each([
+    ["a package `imports` entry", "#value", { imports: { "#value": "./value.js" } }],
+    ["a self-reference through `exports`", "fx/value", { exports: { "./value": "./value.js" } }],
+  ])("resolves %s to its source before compiled output beside it", (_what, specifier, fields) => {
+    // The ES module resolver tried `value.ts` before `value.js` after mapping it.
+    const root = fixture({
+      "package.json": JSON.stringify({ ...JSON.parse(COMMONJS), ...fields }),
+      "value.js": 'exports.value = "js";\n',
+      "value.ts": 'export const value: string = "ts";\n',
+      "main.ts": `import { value } from ${JSON.stringify(specifier)};\nconsole.log("value:", value);\n`,
+    });
+    expect(run(root, "./main.ts")).toContain("value: ts");
+  });
+
   test("resolves a package `imports` entry with the active conditions", () => {
     // Node.js picks `./dev.js` under `--conditions=development`, so its source is
     // `dev.ts`, not the `default` target's.
@@ -259,6 +273,23 @@ describe("a TypeScript file in a CommonJS package", () => {
       });
       symlinkSync("real.ts", join(root, "alias.ts"));
       expect(run(root, "./main.ts")).toContain("same: true");
+    },
+  );
+
+  // Windows lets only elevated processes create file symlinks.
+  test.skipIf(process.platform === "win32")(
+    "finds the source beside a symlinked output, not beside its target",
+    () => {
+      const root = fixture({
+        "build/real.js": 'exports.where = "build/real.js";\n',
+        "alias.ts": 'export const where: string = "alias.ts";\n',
+        "main.ts":
+          'import { where } from "./alias.js";\n' +
+          'import { where as extensionless } from "./alias";\n' +
+          'console.log("where:", where, extensionless);\n',
+      });
+      symlinkSync(join("build", "real.js"), join(root, "alias.js"));
+      expect(run(root, "./main.ts")).toContain("where: alias.ts alias.ts");
     },
   );
 });
