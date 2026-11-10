@@ -2759,10 +2759,12 @@ fn hoisted_export<'s, 'a>(statement: &'s Statement<'a>) -> Option<(&'s str, &'s 
 const SSR_EXPORT_ALL: &str = "__vite_ssr_exportAll__";
 const SSR_DYNAMIC_IMPORT: &str = "__vite_ssr_dynamic_import__";
 
-/// The CommonJS wrapper's parameters, and the helpers [`lower_runner_to_commonjs`]
-/// declares. An ES module may declare any of them at its top level; as CommonJS that
-/// would redeclare a parameter or a helper, so such a module stays an ES module.
-const COMMONJS_RESERVED: [&str; 8] = [
+/// The CommonJS wrapper's parameters, the helpers [`lower_runner_to_commonjs`]
+/// declares, and the globals they and its prelude read. An ES module may declare any of
+/// them at its top level; as CommonJS that would redeclare a parameter or a helper, or
+/// hand the helpers the module's own `Object` or `Symbol` before it is initialized, so
+/// such a module stays an ES module.
+const COMMONJS_RESERVED: [&str; 10] = [
     "exports",
     "require",
     "module",
@@ -2771,6 +2773,8 @@ const COMMONJS_RESERVED: [&str; 8] = [
     "__importDefault",
     "__importStar",
     "__exportStar",
+    "Object",
+    "Symbol",
 ];
 
 /// `tsc`'s helpers, as it emits them without `importHelpers`. A module is taken as-is
@@ -6203,6 +6207,8 @@ mod tests {
             ("cjs/filename.ts", "export function __filename() {}\n"),
             ("cjs/dirname.ts", "export const __dirname = '.';\n"),
             ("cjs/helper.ts", "export class __importStar {}\n"),
+            ("cjs/symbol.ts", "import * as fs from 'node:fs';\nexport class Symbol {}\nvoid fs;\n"),
+            ("cjs/object.ts", "export const Object = 1;\n"),
             // `tsc` itself emits an ES module for these.
             ("esnext/lib.ts", "export const n = 1;\n"),
             ("preserve/lib.ts", "export const n = 1;\n"),

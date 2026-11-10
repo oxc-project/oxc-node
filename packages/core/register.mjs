@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import * as NodeModule from "node:module";
-import { basename, dirname, extname, isAbsolute, resolve as resolvePath } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isMainThread } from "node:worker_threads";
 
@@ -238,13 +238,17 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
   if (resolvesSourceFirst(request, parent) && !inNodeModules(resolved)) {
     const named = requested(request, parent.filename, resolved);
     source =
+      directoryMainSource(request, parent.filename, resolved) ??
       sourceBeside(named) ??
       extensionlessSource(request, named) ??
       sourceBeside(resolved) ??
       extensionlessSource(request, resolved);
   } else if (compiledFromEsm(request, parent) && !inNodeModules(resolved)) {
     const named = requested(request, parent.filename, resolved);
-    source = extensionlessSource(request, named) ?? extensionlessSource(request, resolved);
+    source =
+      directoryMainSource(request, parent.filename, resolved) ??
+      extensionlessSource(request, named) ??
+      extensionlessSource(request, resolved);
   } else if (mapsToProjectFile(request, parent, resolved)) {
     // A package `imports` entry or a self-reference that maps to compiled output beside
     // its source: the ES module resolver tried the source first after mapping.
@@ -368,6 +372,36 @@ function requested(request, filename, resolved) {
   }
   const withExtension = path + extname(resolved);
   return isFile(withExtension) ? withExtension : resolved;
+}
+
+/**
+ * The source of a directory's `package.json` `main` when Node.js found that output
+ * missing and fell back to the directory's `index` file, as it does for `./lib` with
+ * `"main": "./src/main.js"` and only `src/main.ts`. The ES module resolver tried the
+ * source of `main` before the index.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {string | undefined}
+ */
+function directoryMainSource(request, filename, resolved) {
+  const directory = resolvePath(dirname(filename), request);
+  if (dirname(resolved) !== directory || !basename(resolved).startsWith("index.")) {
+    return undefined;
+  }
+  let main;
+  try {
+    main = JSON.parse(readFileSync(join(directory, "package.json"), "utf8")).main;
+  } catch {
+    // No `package.json` there, or one Node.js would have rejected already.
+    return undefined;
+  }
+  if (typeof main !== "string" || main === "") {
+    return undefined;
+  }
+  const target = resolvePath(directory, main);
+  return isFile(target) ? undefined : sourcesFor(target, MISSING_OUTPUT_SOURCES).find(isFile);
 }
 
 /**

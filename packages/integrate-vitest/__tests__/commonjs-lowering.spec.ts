@@ -218,6 +218,18 @@ describe("a TypeScript file in a CommonJS package", () => {
     expect(run(root, "./main.ts")).toContain("value: ts");
   });
 
+  test("resolves a directory's `main` to its source before the directory's index", () => {
+    // Node.js finds `main` missing and falls back to `index.js`; the ES module resolver
+    // tried `src/main.ts` for it first.
+    const root = fixture({
+      "lib/package.json": JSON.stringify({ type: "commonjs", main: "./src/main.js" }),
+      "lib/src/main.ts": 'export const where: string = "src/main.ts";\n',
+      "lib/index.js": 'exports.where = "index.js";\n',
+      "main.ts": 'import { where } from "./lib";\nconsole.log("where:", where);\n',
+    });
+    expect(run(root, "./main.ts")).toContain("where: src/main.ts");
+  });
+
   test("resolves a package `imports` entry with the active conditions", () => {
     // Node.js picks `./dev.js` under `--conditions=development`, so its source is
     // `dev.ts`, not the `default` target's.
