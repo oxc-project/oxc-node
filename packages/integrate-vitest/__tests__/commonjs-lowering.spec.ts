@@ -263,6 +263,27 @@ describe("a TypeScript file in a CommonJS package", () => {
     expect(run(root, "./main.ts")).toMatch(/^where: entry\.ts$/m);
   });
 
+  test("resolves a directory-valued `main` to its index in the ES module resolver's order", () => {
+    const root = fixture({
+      "lib/package.json": JSON.stringify({ type: "commonjs", main: "./src" }),
+      "lib/src/index.ts": 'export const where: string = "src/index.ts";\n',
+      "lib/src/index.json": JSON.stringify({ where: "src/index.json" }),
+      "main.ts": 'import { where } from "./lib";\nconsole.log("where:", where);\n',
+    });
+    expect(run(root, "./main.ts")).toMatch(/^where: src\/index\.ts$/m);
+  });
+
+  test("keeps `./foo/` on the directory, not a `foo.ts` beside it", () => {
+    // A trailing slash names the directory only, for Node.js and `tsc` alike.
+    const root = fixture({
+      "foo.ts": 'export const where: string = "foo.ts";\n',
+      "foo.js": 'exports.where = "foo.js";\n',
+      "foo/index.js": 'exports.where = "foo/index.js";\n',
+      "main.ts": 'import { where } from "./foo/";\nconsole.log("where:", where);\n',
+    });
+    expect(run(root, "./main.ts")).toMatch(/^where: foo\/index\.js$/m);
+  });
+
   test("keeps `#` in a require()'s file name, as Node.js does", () => {
     // `dep.js#missing` names a file that is not there, not `dep.js` with a fragment.
     const root = fixture({

@@ -369,6 +369,10 @@ function resolvesSourceFirst(request, parent) {
  * @returns {string}
  */
 function requested(request, filename, resolved) {
+  // `./foo/` names the directory only, never a `foo.js` beside it.
+  if (/[\\/]$/.test(request)) {
+    return resolved;
+  }
   const path = resolvePath(dirname(filename), request);
   if (path === resolved) {
     return resolved;
@@ -457,8 +461,15 @@ function directoryIndexSource(request, filename, resolved) {
  */
 function directoryMainOrderSource(request, filename, resolved) {
   const main = directoryMain(resolvePath(dirname(filename), request));
-  return main !== undefined && extname(main) === "" && resolved.startsWith(`${main}.`)
-    ? extensionlessSource(main, resolved)
+  if (main === undefined || extname(main) !== "") {
+    return undefined;
+  }
+  if (resolved.startsWith(`${main}.`)) {
+    return extensionlessSource(main, resolved);
+  }
+  // A `main` that names a directory, completed with that directory's index.
+  return dirname(resolved) === main && basename(resolved).startsWith("index.")
+    ? extensionlessSource("index", resolved)
     : undefined;
 }
 
