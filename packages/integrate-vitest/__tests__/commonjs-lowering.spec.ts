@@ -398,6 +398,20 @@ describe("a TypeScript file in a CommonJS package", () => {
     },
   );
 
+  // Windows lets only elevated processes create file symlinks.
+  test.skipIf(process.platform === "win32")(
+    "finds the source for `./dep` whose `dep.js` links to another extension",
+    () => {
+      const root = fixture({
+        "build/real.cjs": 'exports.where = "build/real.cjs";\n',
+        "dep.ts": 'export const where: string = "dep.ts";\n',
+        "main.ts": 'import { where } from "./dep";\nconsole.log("where:", where);\n',
+      });
+      symlinkSync(join("build", "real.cjs"), join(root, "dep.js"));
+      expect(run(root, "./main.ts")).toContain("where: dep.ts\n");
+    },
+  );
+
   test("resolves an extensionless entry compiled to CommonJS TypeScript first", () => {
     const root = fixture({
       "tsconfig.cjs.json": JSON.stringify({ compilerOptions: { module: "commonjs" } }),

@@ -383,8 +383,8 @@ project relying on Node.js' syntax detection keeps working. A file also stays an
 ES module when it uses `import.meta` or top-level await, which have no CommonJS
 form, or declares a value named like one the CommonJS wrapper or the compiled
 output uses (`exports`, `require`, `module`, `__filename`, `__dirname`,
-`__importDefault`, `__importStar`, `__exportStar`, `Object`, `Symbol`); a type of
-that name is fine. Removing `"type": "commonjs"` turns the compilation off.
+`__importDefault`, `__importStar`, `__exportStar`, `Object`, `Symbol`) at its top
+level, or `exports` anywhere, a parameter included; a type of that name is fine. Removing `"type": "commonjs"` turns the compilation off.
 Outside that combination — no `"type"`, `"type": "module"`, or an ES `module`
 setting — a file with module syntax runs as an ES module, as before. A `.cts`
 file is not compiled this way; see

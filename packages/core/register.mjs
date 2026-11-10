@@ -411,7 +411,22 @@ function requested(request, filename, resolved) {
     return path;
   }
   const withExtension = path + extname(resolved);
-  return isFile(withExtension) ? withExtension : resolved;
+  if (isFile(withExtension)) {
+    return withExtension;
+  }
+  // A symlink Node.js followed: `./dep` found `dep.js`, linking to `build/real.cjs`. The
+  // extension it added is the first, in its order, whose file reaches `resolved`.
+  for (const extension of Object.keys(Module._extensions)) {
+    const candidate = path + extension;
+    try {
+      if (isFile(candidate) && realpathSync(candidate) === resolved) {
+        return candidate;
+      }
+    } catch {
+      // A dangling link; Node.js did not take it either.
+    }
+  }
+  return resolved;
 }
 
 /**

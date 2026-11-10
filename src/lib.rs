@@ -2800,8 +2800,9 @@ const EXPORT_STAR_HELPER: &str = "var __exportStar = function (m, exports) { for
 /// Node.js' syntax detection runs it. The caller checks the extension is an ambiguous
 /// one. A module that cannot be CommonJS stays an ES module: one using `import.meta` or
 /// top-level await, or declaring a value named as the CommonJS wrapper's parameters or
-/// its helpers are (see [`COMMONJS_RESERVED`]). A `declare`d or type-only declaration
-/// of such a name is erased, so it does not count.
+/// its helpers are (see [`COMMONJS_RESERVED`]), or one naming a value `exports` in any
+/// scope. A `declare`d or type-only declaration of such a name is erased, so it does not
+/// count.
 fn lowers_to_commonjs(
     path: &Path,
     compiler_options: Option<&CompilerOptions>,
@@ -2821,12 +2822,18 @@ fn lowers_to_commonjs(
         && !has_top_level_await(program)
         && {
             let scoping = SemanticBuilder::new().build(program).semantic.into_scoping();
-            COMMONJS_RESERVED.iter().all(|&name| {
-                scoping.get_root_binding(name.into()).is_none_or(|symbol| {
-                    let flags = scoping.symbol_flags(symbol);
-                    flags.is_ambient() || flags.is_type_import() || !flags.is_value()
-                })
-            })
+            let erased = |symbol| {
+                let flags = scoping.symbol_flags(symbol);
+                flags.is_ambient() || flags.is_type_import() || !flags.is_value()
+            };
+            COMMONJS_RESERVED
+                .iter()
+                .all(|&name| scoping.get_root_binding(name.into()).is_none_or(erased))
+                // `exports.x` is written inside functions too, where a parameter or local
+                // named `exports` would take it.
+                && scoping
+                    .symbol_ids()
+                    .all(|symbol| scoping.symbol_name(symbol) != "exports" || erased(symbol))
         }
 }
 
@@ -2955,6 +2962,11 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
             walk_mut::walk_expression(self, expression);
             if let Expression::CallExpression(call) = expression
                 && call.callee.is_specific_id(SSR_DYNAMIC_IMPORT)
+                // The runner's helper is a free variable; a parameter of that name is not it.
+                && !matches!(&call.callee, Expression::Identifier(callee)
+                    if callee.reference_id.get().is_some_and(|reference| {
+                        self.scoping.get_reference(reference).symbol_id().is_some()
+                    }))
                 && let Some(source) =
                     call.arguments.first_mut().and_then(Argument::as_expression_mut)
             {
@@ -6376,6 +6388,14 @@ mod tests {
         assert!(code.contains("function default_1(__vite_ssr_export_default__)"), "{code}");
         assert!(code.contains("return __vite_ssr_export_default__;"), "{code}");
 
+        // A parameter named like the runner's `import()` helper is called, not imported.
+        let code = run(
+            "cjs/import-shadow.ts",
+            "export function f(__vite_ssr_dynamic_import__: any) {\n  return __vite_ssr_dynamic_import__(\"node:path\");\n}\n",
+        );
+        assert!(code.contains("exports, \"__esModule\""), "{code}");
+        assert!(code.contains("return __vite_ssr_dynamic_import__(\"node:path\");"), "{code}");
+
         // A side-effect import is a bare `require()`, as `tsc` emits it.
         let code = run("cjs/side.ts", "import './b';\nexport const n = 1;\n");
         assert!(lowered(&code) && code.contains("require(\"./b\");"), "{code}");
@@ -6431,6 +6451,11 @@ mod tests {
             ("cjs/helper.ts", "export class __importStar {}\n"),
             ("cjs/symbol.ts", "import * as fs from 'node:fs';\nexport class Symbol {}\nvoid fs;\n"),
             ("cjs/object.ts", "export const Object = 1;\n"),
+            // `exports.n` written inside `inc` would go to its parameter.
+            (
+                "cjs/nested-exports.ts",
+                "export let n = 0;\nexport function inc(exports: { n: number }) { n++; }\n",
+            ),
             // `tsc` itself emits an ES module for these.
             ("esnext/lib.ts", "export const n = 1;\n"),
             ("preserve/lib.ts", "export const n = 1;\n"),
