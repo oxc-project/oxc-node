@@ -331,6 +331,22 @@ describe("a TypeScript file in a CommonJS package", () => {
     );
   });
 
+  test.each([
+    ["a file with a dot in its name", "./src/entry.prod", "src/entry.prod"],
+    ["a directory with a dot in its name", "./src.v1", "src.v1/index"],
+  ])(
+    "resolves a directory's `main` naming %s in the ES module resolver's order",
+    (_what, main, stem) => {
+      const root = fixture({
+        "lib/package.json": JSON.stringify({ type: "commonjs", main }),
+        [`lib/${stem}.ts`]: `export const where: string = "${stem}.ts";\n`,
+        [`lib/${stem}.json`]: JSON.stringify({ where: `${stem}.json` }),
+        "main.ts": 'import { where } from "./lib";\nconsole.log("where:", where);\n',
+      });
+      expect(run(root, "./main.ts")).toContain(`where: ${stem}.ts\n`);
+    },
+  );
+
   test("keeps `#` in a require()'s file name, as Node.js does", () => {
     // `dep.js#missing` names a file that is not there, not `dep.js` with a fragment.
     const root = fixture({

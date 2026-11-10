@@ -17,3 +17,11 @@ tag = function (this: unknown, _strings: TemplateStringsArray): string {
   return this === undefined ? "unbound" : "bound";
 };
 export const tagged = tag`x`;
+
+// A `var` the loop header declares again is the same binding, and stays live.
+var looped = 0;
+export { looped };
+for (var looped of [1, 2]) {
+  void looped;
+}
+looped++;

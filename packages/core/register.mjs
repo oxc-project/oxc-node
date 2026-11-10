@@ -474,7 +474,7 @@ function directoryIndexSource(request, filename, resolved) {
   const main = directoryMain(directory);
   if (
     main !== undefined &&
-    (main === resolved || (extname(main) === "" && resolved.startsWith(`${main}.`)))
+    (main === resolved || (!isFile(main) && resolved.startsWith(`${main}.`)))
   ) {
     return undefined;
   }
@@ -493,7 +493,9 @@ function directoryIndexSource(request, filename, resolved) {
  */
 function directoryMainOrderSource(request, filename, resolved) {
   const main = directoryMain(directoryNamed(request, filename, resolved));
-  if (main === undefined || extname(main) !== "") {
+  // A `main` that is a file is what Node.js loaded; one it completed is not, dots in
+  // its name (`./src/entry.prod`) or not.
+  if (main === undefined || isFile(main)) {
     return undefined;
   }
   if (resolved.startsWith(`${main}.`)) {

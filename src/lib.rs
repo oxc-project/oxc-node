@@ -3083,6 +3083,10 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
         }
     }
 
+    // How many times each symbol is declared anywhere in the file.
+    let mut bindings = BindingCount::default();
+    bindings.visit_program(program);
+
     let mut prelude = String::from("\"use strict\";\n");
     prelude.push_str("Object.defineProperty(exports, \"__esModule\", { value: true });\n");
     let mut cleared = Vec::new();
@@ -3104,6 +3108,13 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
             scoping.get_resolved_references(symbol).any(|reference| reference.is_write())
         }) || local
             .is_some_and(|local| declarations.get(local).is_some_and(|&n| n > 1));
+        // A `var` also declared inside a block or loop header (`for (var x of …)`) is set
+        // there, where only its own declaration can be: it stays live through a getter.
+        let nested = symbol.is_some_and(|symbol| {
+            bindings.0.get(&symbol).copied().unwrap_or(0)
+                > local.and_then(|local| declarations.get(local).copied()).unwrap_or(0)
+        });
+        let written = written || nested;
         let declared = local.and_then(|local| declared_at.get(local).copied());
         match (local, declared, symbol) {
             (Some(local), Some((_, true)), _) if !written => {
@@ -3114,7 +3125,9 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
                 };
                 prelude.push_str(&format!("{member} = {local};\n"));
             }
-            (Some(local), Some((_, false)), Some(symbol)) if destructured.contains(local) => {
+            (Some(local), Some((_, false)), Some(symbol))
+                if destructured.contains(local) && !nested =>
+            {
                 cleared.push(member.clone());
                 members.insert(symbol, member);
             }
@@ -3124,7 +3137,8 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
             }
             (Some(local), Some((_, false)), Some(symbol))
                 if export_names.get(local) == Some(&1)
-                    && plain_declarations.get(local) == Some(&true) =>
+                    && plain_declarations.get(local) == Some(&true)
+                    && !nested =>
             {
                 cleared.push(member.clone());
                 members.insert(symbol, member);
@@ -3466,6 +3480,18 @@ fn pattern_target<'a>(
             )
         }
         BindingPattern::AssignmentPattern(_) => unreachable!("only inside an array or object"),
+    }
+}
+
+/// How many declarations each symbol has.
+#[derive(Default)]
+struct BindingCount(HashMap<SymbolId, usize>);
+
+impl<'a> Visit<'a> for BindingCount {
+    fn visit_binding_identifier(&mut self, ident: &oxc::ast::ast::BindingIdentifier<'a>) {
+        if let Some(symbol) = ident.symbol_id.get() {
+            *self.0.entry(symbol).or_default() += 1;
+        }
     }
 }
 
@@ -6179,6 +6205,14 @@ mod tests {
         assert!(code.contains("exports.x = 1;"), "{code}");
         assert!(code.contains("const y = exports.x;"), "{code}");
         assert!(!code.contains("var x"), "{code}");
+
+        // A `var` also declared in a loop header is set there too, so it stays live
+        // through a getter rather than becoming `exports.x` only at the top level.
+        let code =
+            run("cjs/loop-var.ts", "var x = 0;\nexport { x };\nfor (var x of [1, 2]) {}\nx++;\n");
+        assert!(lowered(&code), "{code}");
+        assert!(code.contains("for (var x of"), "{code}");
+        assert!(code.contains("get: function() { return x; }"), "{code}");
 
         // A side-effect import is a bare `require()`, as `tsc` emits it.
         let code = run("cjs/side.ts", "import './b';\nexport const n = 1;\n");

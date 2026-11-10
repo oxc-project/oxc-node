@@ -8,7 +8,7 @@ import { aliased } from "@alias/value";
 import { readB, seenDuringLoad } from "./cycle-a";
 import { parent } from "./barrel/inner/use";
 import * as cycle from "./cycle-c";
-import { fourth, second, tagged } from "./declarators";
+import { fourth, looped, second, tagged } from "./declarators";
 import * as Klass from "./klass.cjs";
 import { compute, esmValue } from "./output-names";
 import { where as shadowedByOutputName } from "./shadowed.js";
@@ -78,6 +78,10 @@ void test("`..` finds the TypeScript file before compiled output next to it", ()
 void test("an import cycle sees an export from an earlier declarator", () => {
   assert.equal(second, 1);
   assert.equal(fourth, 3);
+});
+
+void test("a `var` a loop declares again stays live", () => {
+  assert.equal(looped, 3);
 });
 
 // `tsc` calls a tag as `(0, exports.tag)`, without `exports` as `this`.
