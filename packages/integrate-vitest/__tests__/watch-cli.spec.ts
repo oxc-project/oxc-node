@@ -765,8 +765,11 @@ ${KEEP}`,
     const [, gc] = await o.waitFor(/^GC listening v1 (\d+)\n/m);
     await o.watched(join(root, "dep.ts"));
     await o.editUntil(join(root, "dep.ts"), () => value("v2"), /^GC listening v2 \d+\n/m);
+    // The app and oxnode write to stdout separately, so these two lines arrive in either
+    // order; each comes before the restart.
+    expect(o.stdout()).toMatch(/^GC ignored v1\n[\s\S]*^RUN v2 /m);
     expect(o.stdout()).toMatch(
-      /^GC ignored v1\n[\s\S]*\[oxnode\] still running after 300ms, force killing\n[\s\S]*^RUN v2 /m,
+      /\[oxnode\] still running after 300ms, force killing\n[\s\S]*^RUN v2 /m,
     );
     expect(count(o.stdout(), /force killing/)).toBe(1);
     expect(await isGone(Number(gc)), "the app's server").toBe(true);

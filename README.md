@@ -425,9 +425,11 @@ Otherwise TypeScript comes first, by the file's own name or by its output's:
 `./lib.js` and `./lib` find `lib.ts`, also when a compiled `lib.js` sits next to
 it, `./lib.mjs` finds `lib.mts`, and `./config` finds `config.ts` before
 `config.json`. When no `lib.js` exists, `./lib.js` finds `lib.jsx` too. tsconfig
-`paths` and `baseUrl` are tried before `node_modules`. The `require()` calls of
-every TypeScript file outside `node_modules` resolve this way; a file a package
-ships keeps its compiled `.js`.
+`paths` and `baseUrl` are tried before `node_modules`, and a package `imports`
+entry or a self-reference that names missing output finds its source. The
+`require()` calls of every TypeScript file outside `node_modules` resolve this
+way, and so do the extensionless ones of a `.js` file compiled from an ES module;
+a file a package ships keeps its compiled `.js`.
 
 Stack traces report the source's lines; for a file Node.js loads through the
 module hooks — the entry point, or one an ES module imports — a column can be a

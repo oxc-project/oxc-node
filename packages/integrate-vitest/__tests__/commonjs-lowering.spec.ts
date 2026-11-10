@@ -185,4 +185,60 @@ describe("a TypeScript file in a CommonJS package", () => {
     });
     expect(run(root, "./main.ts")).toContain("from: js");
   });
+
+  test.each([
+    ["a package `imports` entry", "#value", { imports: { "#value": "./value.js" } }],
+    ["a self-reference through `exports`", "fx/value", { exports: { "./value": "./value.js" } }],
+  ])("resolves %s that names compiled output to its source", (_what, specifier, fields) => {
+    // Node.js maps the request to `./value.js` and stops there; the ES module resolver
+    // tried `value.ts` after mapping it.
+    const root = fixture({
+      "package.json": JSON.stringify({ ...JSON.parse(COMMONJS), ...fields }),
+      "value.ts": 'export const value: string = "ts";\n',
+      "main.ts": `import { value } from ${JSON.stringify(specifier)};\nconsole.log("value:", value);\n`,
+    });
+    expect(run(root, "./main.ts")).toContain("value: ts");
+  });
+
+  test("resolves a compiled JavaScript file's extensionless import TypeScript first", () => {
+    // As an ES module, `main.js` found `dep.ts` before `dep.js` beside it.
+    const root = fixture(
+      {
+        "dep.js": 'exports.name = "js";\n',
+        "dep.ts": 'export const name: string = "ts";\n',
+        "main.js": 'import { name } from "./dep";\nconsole.log("name:", name);\n',
+      },
+      { ...NODENEXT, allowJs: true },
+    );
+    expect(run(root, "./main.js")).toContain("name: ts");
+  });
+
+  test("keeps a hand-written CommonJS file's extensionless require() on Node.js' order", () => {
+    const root = fixture(
+      {
+        "dep.js": 'exports.name = "js";\n',
+        "dep.ts": 'export const name: string = "ts";\n',
+        "main.js": 'console.log("name:", require("./dep").name);\n',
+      },
+      { ...NODENEXT, allowJs: true },
+    );
+    expect(run(root, "./main.js")).toContain("name: js");
+  });
+
+  // Windows lets only elevated processes create file symlinks.
+  test.skipIf(process.platform === "win32")(
+    "loads a symlinked source once, whichever name reaches it",
+    () => {
+      const root = fixture({
+        "real.ts": "export const object = {};\n",
+        "alias.js": "exports.object = {};\n",
+        "main.ts":
+          'import { object as viaAlias } from "./alias.js";\n' +
+          'import { object as viaReal } from "./real.ts";\n' +
+          'console.log("same:", viaAlias === viaReal);\n',
+      });
+      symlinkSync("real.ts", join(root, "alias.ts"));
+      expect(run(root, "./main.ts")).toContain("same: true");
+    },
+  );
 });

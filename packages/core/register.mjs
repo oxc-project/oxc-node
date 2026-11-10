@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import * as NodeModule from "node:module";
 import { basename } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { isMainThread } from "node:worker_threads";
 
 import { addHook } from "pirates";
@@ -200,6 +200,15 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
           // Not this one either; the original error is the one to report.
         }
       }
+      // A package `imports` entry (`#value`) or a self-reference through `exports` names
+      // compiled output too, which Node.js looks for only after mapping the request.
+      // The ES module resolver maps it and then tries the source, so it is asked here.
+      if (mapsThroughTsconfig(request, parent)) {
+        const mapped = resolveMapped(request, parent.filename);
+        if (mapped !== undefined) {
+          return mapped;
+        }
+      }
     }
     throw error;
   }
@@ -207,11 +216,20 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
   // it (#840), where Node.js' CommonJS resolution finds another file first: the output
   // beside its source — compiled in place, or stale — that `./lib.js` and `./lib` both
   // name, or `config.json` beside `config.ts` for `./config`. A package's files stay
-  // what it compiled, as they do for the ES module resolver.
+  // what it compiled, as they do for the ES module resolver. A JavaScript file compiled
+  // from an ES module resolves an extensionless request the same way, as it did as an
+  // ES module; one that names its file keeps it.
+  let source;
   if (resolvesSourceFirst(request, parent) && !inNodeModules(resolved)) {
-    return sourceBeside(resolved) ?? extensionlessSource(request, resolved) ?? resolved;
+    source = sourceBeside(resolved) ?? extensionlessSource(request, resolved);
+  } else if (compiledFromEsm(request, parent) && !inNodeModules(resolved)) {
+    source = extensionlessSource(request, resolved);
   }
-  return resolved;
+  // Node.js' own resolution gives the source its real path, as it gave `resolved`, so a
+  // symlinked source is one module whichever name reaches it.
+  return source === undefined
+    ? resolved
+    : resolveFilename.call(this, source, parent, isMain, options);
 };
 
 // The files the ES module resolver tries, for a TypeScript importer, ahead of the
@@ -303,6 +321,62 @@ function resolvesSourceFirst(request, parent) {
     !inNodeModules(filename) &&
     PATH_REQUEST.test(request)
   );
+}
+
+/**
+ * Whether a JavaScript `parent` was compiled to CommonJS from an ES module, and asks for
+ * a relative or absolute `request`. Its first statement marks `exports` with
+ * `__esModule`, before any `require()`, as `tsc`'s output does.
+ *
+ * @param {string} request
+ * @param {{ filename?: string | null, exports?: unknown } | null | undefined} parent
+ * @returns {boolean}
+ */
+function compiledFromEsm(request, parent) {
+  const filename = parent?.filename;
+  const exports = parent?.exports;
+  return (
+    typeof filename === "string" &&
+    filename.endsWith(".js") &&
+    !inNodeModules(filename) &&
+    PATH_REQUEST.test(request) &&
+    exports != null &&
+    /** @type {{ __esModule?: unknown }} */ (exports).__esModule === true
+  );
+}
+
+/**
+ * The file the ES module resolver finds for a bare `request` from `filename`, with the
+ * `require` condition, when Node.js' CommonJS resolution found none.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @returns {string | undefined}
+ */
+function resolveMapped(request, filename) {
+  try {
+    const { url } = /** @type {{ url: string }} */ (
+      createResolve(
+        { getCurrentDirectory: () => process.cwd() },
+        request,
+        {
+          conditions: ["node", "require"],
+          importAttributes: {},
+          parentURL: pathToFileURL(filename).href,
+        },
+        // Called with what the request maps to, or with the request itself.
+        (url) => ({ url }),
+      )
+    );
+    return typeof url === "string" && url.startsWith("file:") ? fileURLToPath(url) : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    // Resolving reads the package.json and tsconfig it maps through.
+    if (watch) {
+      flush(watch, takeWatchDependencies);
+    }
+  }
 }
 
 /**
