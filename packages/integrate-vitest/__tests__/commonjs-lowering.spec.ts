@@ -230,6 +230,31 @@ describe("a TypeScript file in a CommonJS package", () => {
     expect(run(root, "./main.ts")).toContain("where: src/main.ts");
   });
 
+  test("resolves a directory import to `index.ts` beside `index.json`", () => {
+    // Node.js tries `index.json` before the extensions oxc-node registers.
+    const root = fixture({
+      "barrel/index.ts": 'export const where: string = "index.ts";\n',
+      "barrel/index.json": JSON.stringify({ where: "index.json" }),
+      "main.ts": 'import { where } from "./barrel";\nconsole.log("where:", where);\n',
+    });
+    expect(run(root, "./main.ts")).toContain("where: index.ts");
+  });
+
+  test("resolves an extensionless import in the ES module resolver's order", () => {
+    // Node.js tries the registered extensions in its own order and finds `dep.jsx`;
+    // the ES module resolver found `dep.ts` first.
+    const root = fixture(
+      {
+        "dep.ts": 'export const where: string = "dep.ts";\n',
+        "dep.tsx": 'export const where: string = "dep.tsx";\n',
+        "dep.jsx": 'export const where = "dep.jsx";\n',
+        "main.ts": 'import { where } from "./dep";\nconsole.log("where:", where);\n',
+      },
+      { ...NODENEXT, allowJs: true, jsx: "react-jsx" },
+    );
+    expect(run(root, "./main.ts")).toMatch(/^where: dep\.ts$/m);
+  });
+
   test("resolves a package `imports` entry with the active conditions", () => {
     // Node.js picks `./dev.js` under `--conditions=development`, so its source is
     // `dev.ts`, not the `default` target's.

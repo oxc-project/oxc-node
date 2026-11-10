@@ -237,16 +237,20 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
   let source;
   if (resolvesSourceFirst(request, parent) && !inNodeModules(resolved)) {
     const named = requested(request, parent.filename, resolved);
+    // An extensionless request takes the ES module resolver's extension order first;
+    // the aliases of the extension Node.js added come after it.
     source =
       directoryMainSource(request, parent.filename, resolved) ??
-      sourceBeside(named) ??
+      directoryIndexSource(request, parent.filename, resolved) ??
       extensionlessSource(request, named) ??
-      sourceBeside(resolved) ??
-      extensionlessSource(request, resolved);
+      sourceBeside(named) ??
+      extensionlessSource(request, resolved) ??
+      sourceBeside(resolved);
   } else if (compiledFromEsm(request, parent) && !inNodeModules(resolved)) {
     const named = requested(request, parent.filename, resolved);
     source =
       directoryMainSource(request, parent.filename, resolved) ??
+      directoryIndexSource(request, parent.filename, resolved) ??
       extensionlessSource(request, named) ??
       extensionlessSource(request, resolved);
   } else if (mapsToProjectFile(request, parent, resolved)) {
@@ -402,6 +406,23 @@ function directoryMainSource(request, filename, resolved) {
   }
   const target = resolvePath(directory, main);
   return isFile(target) ? undefined : sourcesFor(target, MISSING_OUTPUT_SOURCES).find(isFile);
+}
+
+/**
+ * The index file the ES module resolver would find for a directory `request` that
+ * Node.js resolved to an index with an extension it tries later — `index.json` beside
+ * `index.ts`, say — when one exists.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {string | undefined}
+ */
+function directoryIndexSource(request, filename, resolved) {
+  const directory = resolvePath(dirname(filename), request);
+  return dirname(resolved) === directory && basename(resolved).startsWith("index.")
+    ? extensionlessSource("index", join(directory, basename(resolved)))
+    : undefined;
 }
 
 /**
