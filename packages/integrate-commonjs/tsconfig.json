@@ -4,7 +4,10 @@
     "module": "nodenext",
     "strict": true,
     "experimentalDecorators": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@alias/*": ["./src/alias/*"]
+    }
   },
   "include": ["src"]
 }

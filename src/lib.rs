@@ -18,11 +18,13 @@ use oxc::{
     allocator::{Allocator, CloneIn, TakeIn},
     ast::{
         ast::{
-            Argument, ArrowFunctionExpression, AwaitExpression, Class, Declaration, Decorator,
-            Directive, ExportDefaultDeclarationKind, Expression, ForOfStatement,
-            IdentifierReference, ImportDeclarationSpecifier, ObjectPropertyKind, Program,
-            Statement, StringLiteral, TSExternalModuleDeclaration, TSGlobalDeclaration,
-            TSModuleReference, TSNamespaceDeclaration, TemplateLiteral, VariableDeclaration,
+            Argument, ArrowFunctionExpression, AssignmentTarget, AssignmentTargetMaybeDefault,
+            AssignmentTargetProperty, AwaitExpression, CallExpression, Class, Declaration,
+            Decorator, Directive, ExportDefaultDeclarationKind, Expression, ForOfStatement,
+            FunctionType, IdentifierReference, ImportDeclarationSpecifier, ObjectProperty,
+            ObjectPropertyKind, Program, SimpleAssignmentTarget, Statement, StringLiteral,
+            TSExternalModuleDeclaration, TSGlobalDeclaration, TSModuleReference,
+            TSNamespaceDeclaration, TemplateLiteral, VariableDeclaration,
         },
         builder::AstBuilder,
     },
@@ -32,7 +34,7 @@ use oxc::{
         Diagnostics, GraphicalReportHandler, GraphicalTheme, NamedSource, OxcDiagnostic,
     },
     parser::{Parser, ParserReturn},
-    semantic::SemanticBuilder,
+    semantic::{Scoping, SemanticBuilder, SymbolId},
     span::{SPAN, SourceType, Span},
     syntax::{module_record::ModuleRecord, scope::ScopeFlags},
     transformer::{
@@ -2198,8 +2200,9 @@ fn cts_uses_import_meta(source: &str, source_type: SourceType) -> bool {
 /// The error for a `.cts` file that uses ECMAScript module syntax.
 ///
 /// tsc (`module: nodenext`) and tsx compile a `.cts` file's `import`/`export` to
-/// CommonJS, but oxc has no ESM-to-CommonJS module transform: the module transform only
-/// rewrites TypeScript's `import =` / `export =`. The declarations would reach Node.js
+/// CommonJS, but oxc's module transform only rewrites TypeScript's `import =` /
+/// `export =`, and `lower_runner_to_commonjs` covers `.ts`, `.tsx`, `.js` and `.jsx`
+/// files in a `"type": "commonjs"` package only. The declarations would reach Node.js
 /// intact inside a CommonJS file, which fails differently on every load path —
 /// `ERR_REQUIRE_CYCLE_MODULE` as an entry point, no named exports when imported, and
 /// `require is not defined in ES module scope` from the injected helpers when
@@ -2789,9 +2792,11 @@ const EXPORT_STAR_HELPER: &str = "var __exportStar = function (m, exports) { for
 /// running as an ES module: a file whose package is `"type": "commonjs"` and whose
 /// tsconfig `module` emits CommonJS for such a package. `tsc` also emits CommonJS for a
 /// package without a `"type"`, but there the file keeps running as an ES module, as
-/// Node.js' syntax detection runs it. The caller checks the extension is an ambiguous one. A module that cannot be CommonJS stays an
-/// ES module: one using `import.meta` or top-level await, or declaring a name the
-/// CommonJS wrapper or its helpers take (see [`COMMONJS_RESERVED`]).
+/// Node.js' syntax detection runs it. The caller checks the extension is an ambiguous
+/// one. A module that cannot be CommonJS stays an ES module: one using `import.meta` or
+/// top-level await, or declaring a value named as the CommonJS wrapper's parameters or
+/// its helpers are (see [`COMMONJS_RESERVED`]). A `declare`d or type-only declaration
+/// of such a name is erased, so it does not count.
 fn lowers_to_commonjs(
     path: &Path,
     compiler_options: Option<&CompilerOptions>,
@@ -2807,11 +2812,16 @@ fn lowers_to_commonjs(
         });
     emits_commonjs
         && module_record.import_metas.is_empty()
-        && !has_top_level_await(program)
         && matches!(package_type(path), Some(PackageType::CommonJs))
+        && !has_top_level_await(program)
         && {
             let scoping = SemanticBuilder::new().build(program).semantic.into_scoping();
-            COMMONJS_RESERVED.iter().all(|&name| scoping.get_root_binding(name.into()).is_none())
+            COMMONJS_RESERVED.iter().all(|&name| {
+                scoping.get_root_binding(name.into()).is_none_or(|symbol| {
+                    let flags = scoping.symbol_flags(symbol);
+                    flags.is_ambient() || flags.is_type_import() || !flags.is_value()
+                })
+            })
         }
 }
 
@@ -2984,40 +2994,112 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
             .map_or(0, |symbol| scoping.get_resolved_references(symbol).count())
     };
 
+    // `export default function () {}` reaches here as `const __vite_ssr_export_default__ =
+    // function () {}`. `tsc` declares it as `function default_1() {}`, hoisted, so an
+    // import cycle can call it before this file runs that far.
+    let default_function = program.body.iter().enumerate().skip(hoisted).find_map(|(at, s)| {
+        let Statement::VariableDeclaration(declaration) = s else { return None };
+        let [declarator] = declaration.declarations.as_slice() else { return None };
+        (declarator.id.get_binding_identifier()?.name == SSR_EXPORT_DEFAULT
+            && matches!(&declarator.init, Some(Expression::FunctionExpression(f)) if f.id.is_none()))
+        .then_some(at)
+    });
+    let default_name = default_function.map(|at| {
+        declared_at.insert(SSR_EXPORT_DEFAULT, (at, true));
+        (1..)
+            .map(|n| format!("default_{n}"))
+            .find(|name| scoping.get_root_binding(name.as_str().into()).is_none())
+            .expect("an unused name")
+    });
+
+    // Top-level `let`/`var` bindings that are reassigned can become `exports.name` itself,
+    // as `tsc` compiles an exported `let`: declared by a plain identifier, exported under
+    // one name, and not a function or class whose name would come from the binding.
+    let mut export_names: HashMap<&str, usize> = HashMap::new();
+    for statement in &program.body[..hoisted] {
+        if let Some((_, Expression::Identifier(local))) = hoisted_export(statement) {
+            *export_names.entry(local.name.as_str()).or_default() += 1;
+        }
+    }
+    let mut plain_declarations: HashMap<&str, bool> = HashMap::new();
+    for statement in program.body.iter().skip(hoisted) {
+        let Statement::VariableDeclaration(declaration) = statement else { continue };
+        for declarator in &declaration.declarations {
+            let plain = declarator.id.get_binding_identifier().is_some()
+                && !declarator
+                    .init
+                    .as_ref()
+                    .is_some_and(Expression::is_anonymous_function_definition);
+            for ident in declarator.id.get_binding_identifiers() {
+                let entry = plain_declarations.entry(ident.name.as_str()).or_insert(true);
+                *entry &= plain;
+            }
+        }
+    }
+
     let mut prelude = String::from("\"use strict\";\n");
     prelude.push_str("Object.defineProperty(exports, \"__esModule\", { value: true });\n");
     let mut cleared = Vec::new();
     let mut assigned_after: HashMap<usize, String> = HashMap::new();
     let mut getters = String::new();
     let mut kept = Vec::new();
+    let mut members: HashMap<SymbolId, String> = HashMap::new();
     for (index, statement) in program.body[..hoisted].iter().enumerate() {
         let (name, value) = hoisted_export(statement).expect("counted above");
         let member = exports_member(name);
-        let settled = match value {
-            Expression::Identifier(local) => scoping
-                .get_root_binding(local.name.as_str().into())
-                .filter(|&symbol| {
-                    !scoping.get_resolved_references(symbol).any(|reference| reference.is_write())
-                })
-                .and(declared_at.get(local.name.as_str()))
-                .map(|&(at, hoisted_function)| (local.name.as_str(), at, hoisted_function)),
+        let local = match value {
+            Expression::Identifier(local) => Some(local.name.as_str()),
             _ => None,
         };
-        match (settled, export_getter_source(value)) {
-            (Some((local, _, true)), _) => {
+        let symbol = local.and_then(|local| scoping.get_root_binding(local.into()));
+        let written = symbol.is_some_and(|symbol| {
+            scoping.get_resolved_references(symbol).any(|reference| reference.is_write())
+        });
+        let declared = local.and_then(|local| declared_at.get(local).copied());
+        match (local, declared, symbol) {
+            (Some(local), Some((_, true)), _) if !written => {
+                let local = if local == SSR_EXPORT_DEFAULT {
+                    default_name.as_deref().unwrap_or(local)
+                } else {
+                    local
+                };
                 prelude.push_str(&format!("{member} = {local};\n"));
             }
-            (Some((local, at, false)), _) => {
+            (Some(local), Some((at, false)), _) if !written => {
                 cleared.push(member.clone());
                 assigned_after.entry(at).or_default().push_str(&format!("{member} = {local};\n"));
             }
-            (None, Some(getter)) => getters.push_str(&format!(
-                "Object.defineProperty(exports, {}, {{ enumerable: true, get: function () {{ \
-                 return {getter}; }} }});\n",
-                serde_json::Value::from(name)
-            )),
-            // Nothing the runner emits today; keep its own definition.
-            (None, None) => kept.push(index),
+            (Some(local), Some((_, false)), Some(symbol))
+                if export_names.get(local) == Some(&1)
+                    && plain_declarations.get(local) == Some(&true) =>
+            {
+                cleared.push(member.clone());
+                members.insert(symbol, member);
+            }
+            _ => match export_getter_source(value) {
+                Some(getter) => {
+                    let getter = format!(
+                        "Object.defineProperty(exports, {}, {{ enumerable: true, get: function () \
+                         {{ return {getter}; }} }});\n",
+                        serde_json::Value::from(name)
+                    );
+                    // Defined once what it reads is initialized, as `tsc` places a
+                    // re-export after its `require()`: an import cycle that reads it earlier
+                    // gets `undefined`, not a TDZ error.
+                    let anchor = getter_object(value)
+                        .and_then(|object| declared_at.get(object))
+                        .filter(|&&(_, hoisted_function)| !hoisted_function);
+                    match anchor {
+                        Some(&(at, _)) => {
+                            cleared.push(member);
+                            assigned_after.entry(at).or_default().push_str(&getter);
+                        }
+                        None => getters.push_str(&getter),
+                    }
+                }
+                // Nothing the runner emits today; keep its own definition.
+                None => kept.push(index),
+            },
         }
     }
     if !cleared.is_empty() {
@@ -3071,6 +3153,9 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
         let Some(&(specifier, ref names)) = imports.get(name.name.as_str()) else { continue };
         let replacement = if inlined.contains(name.name.as_str()) {
             String::new()
+        } else if reference_count(name.name.as_str()) == 0 {
+            // A side-effect import, as `tsc` emits it: no binding, no helper.
+            format!("require({});\n", serde_json::Value::from(specifier))
         } else {
             format!("const {} = {};\n", name.name, require(specifier, names.as_deref()))
         };
@@ -3101,7 +3186,23 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
         }
         match replacements.remove(&index) {
             Some(replacement) => body.extend(parse_generated(allocator, &replacement).1),
-            None => body.push(statement),
+            None if Some(index) == default_function => {
+                body.push(default_function_declaration(
+                    allocator,
+                    statement,
+                    default_name.as_deref().expect("named with the function"),
+                ));
+            }
+            None => match statement {
+                Statement::VariableDeclaration(declaration)
+                    if declaration.declarations.iter().any(|declarator| {
+                        binding_symbol(declarator).is_some_and(|s| members.contains_key(&s))
+                    }) =>
+                {
+                    body.extend(exported_declarations(allocator, declaration.unbox(), &members));
+                }
+                statement => body.push(statement),
+            },
         }
         if let Some(assignments) = assigned_after.remove(&index) {
             body.extend(parse_generated(allocator, &assignments).1);
@@ -3111,7 +3212,212 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
     if !program.directives.iter().any(|directive| directive.directive == "use strict") {
         program.directives.extend(directives);
     }
+    if !members.is_empty() {
+        ExportedBindings { allocator, scoping: &scoping, members: &members }.visit_program(program);
+    }
+    if let Some(default_name) = &default_name {
+        RenameDefault { name: allocator.alloc_str(default_name) }.visit_program(program);
+    }
     Rewrite { ast: AstBuilder::new(allocator) }.visit_program(program);
+}
+
+const SSR_EXPORT_DEFAULT: &str = "__vite_ssr_export_default__";
+
+/// The binding a getter result reads: a local, or the module object of an import.
+fn getter_object<'s>(expression: &'s Expression<'_>) -> Option<&'s str> {
+    match expression {
+        Expression::Identifier(ident) => Some(ident.name.as_str()),
+        Expression::StaticMemberExpression(member) => match &member.object {
+            Expression::Identifier(object) => Some(object.name.as_str()),
+            _ => None,
+        },
+        Expression::ComputedMemberExpression(member) => match &member.object {
+            Expression::Identifier(object) => Some(object.name.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn binding_symbol(declarator: &oxc::ast::ast::VariableDeclarator<'_>) -> Option<SymbolId> {
+    declarator.id.get_binding_identifier()?.symbol_id.get()
+}
+
+/// One generated expression, without mappings.
+fn generated_expression<'a>(allocator: &'a Allocator, source: &str) -> Expression<'a> {
+    let (_, mut body) = parse_generated(allocator, &format!("{source};"));
+    match body.pop() {
+        Some(Statement::ExpressionStatement(statement)) => statement.unbox().expression,
+        _ => unreachable!("{source} is an expression"),
+    }
+}
+
+/// `const __vite_ssr_export_default__ = function () {}` as `function default_1() {}`.
+fn default_function_declaration<'a>(
+    allocator: &'a Allocator,
+    statement: Statement<'a>,
+    name: &str,
+) -> Statement<'a> {
+    let Statement::VariableDeclaration(declaration) = statement else { unreachable!() };
+    let mut declarator = declaration.unbox().declarations.into_iter().next().expect("one");
+    let Some(Expression::FunctionExpression(mut function)) = declarator.init.take() else {
+        unreachable!("checked by the caller")
+    };
+    let (_, mut named) = parse_generated(allocator, &format!("function {name}() {{}}"));
+    let Some(Statement::FunctionDeclaration(mut named)) = named.pop() else { unreachable!() };
+    function.r#type = FunctionType::FunctionDeclaration;
+    function.id = named.id.take();
+    Statement::FunctionDeclaration(function)
+}
+
+/// A top-level declaration with bindings that become `exports.name`, in order: each such
+/// declarator is an assignment to its export (or nothing, without an initializer), and the
+/// others keep a declaration of their own.
+fn exported_declarations<'a>(
+    allocator: &'a Allocator,
+    declaration: VariableDeclaration<'a>,
+    members: &HashMap<SymbolId, String>,
+) -> Vec<Statement<'a>> {
+    let kind = declaration.kind.as_str();
+    let mut statements = Vec::new();
+    for mut declarator in declaration.declarations {
+        match binding_symbol(&declarator).and_then(|symbol| members.get(&symbol)) {
+            Some(member) => {
+                let Some(init) = declarator.init.take() else { continue };
+                let (_, mut assignment) = parse_generated(allocator, &format!("{member} = 0;"));
+                let Some(Statement::ExpressionStatement(statement)) = assignment.last_mut() else {
+                    unreachable!()
+                };
+                let Expression::AssignmentExpression(assignment_expression) =
+                    &mut statement.expression
+                else {
+                    unreachable!()
+                };
+                assignment_expression.right = init;
+                statements.extend(assignment);
+            }
+            None => {
+                let (_, mut kept) = parse_generated(allocator, &format!("{kind} binding;"));
+                let Some(Statement::VariableDeclaration(kept_declaration)) = kept.last_mut() else {
+                    unreachable!()
+                };
+                kept_declaration.declarations.clear();
+                kept_declaration.declarations.push(declarator);
+                statements.extend(kept);
+            }
+        }
+    }
+    statements
+}
+
+/// Reads and writes of a binding that became `exports.name` go through `exports.name`.
+struct ExportedBindings<'s, 'a> {
+    allocator: &'a Allocator,
+    scoping: &'s Scoping,
+    members: &'s HashMap<SymbolId, String>,
+}
+
+impl ExportedBindings<'_, '_> {
+    fn member(&self, ident: &IdentifierReference<'_>) -> Option<&str> {
+        let symbol = self.scoping.get_reference(ident.reference_id.get()?).symbol_id()?;
+        self.members.get(&symbol).map(String::as_str)
+    }
+}
+
+impl<'a> VisitMut<'a> for ExportedBindings<'_, 'a> {
+    fn visit_expression(&mut self, expression: &mut Expression<'a>) {
+        if let Expression::Identifier(ident) = expression
+            && let Some(member) = self.member(ident)
+        {
+            *expression = generated_expression(self.allocator, member);
+            return;
+        }
+        walk_mut::walk_expression(self, expression);
+    }
+
+    fn visit_call_expression(&mut self, call: &mut CallExpression<'a>) {
+        // `(0, exports.f)()`, as `tsc` calls it: no `this` from `exports`.
+        if let Expression::Identifier(ident) = &call.callee
+            && let Some(member) = self.member(ident)
+        {
+            call.callee = generated_expression(self.allocator, &format!("(0, {member})"));
+        }
+        walk_mut::walk_call_expression(self, call);
+    }
+
+    fn visit_simple_assignment_target(&mut self, target: &mut SimpleAssignmentTarget<'a>) {
+        if let SimpleAssignmentTarget::AssignmentTargetIdentifier(ident) = target
+            && let Some(member) = self.member(ident)
+        {
+            let Expression::AssignmentExpression(assignment) =
+                generated_expression(self.allocator, &format!("{member} = 0"))
+            else {
+                unreachable!()
+            };
+            *target = assignment.unbox().left.into_simple_assignment_target();
+            return;
+        }
+        walk_mut::walk_simple_assignment_target(self, target);
+    }
+
+    fn visit_assignment_target_property(&mut self, property: &mut AssignmentTargetProperty<'a>) {
+        // `({ a } = value)` as `({ a: exports.a } = value)`.
+        if let AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(shorthand) = property
+            && let Some(member) = self.member(&shorthand.binding)
+        {
+            let key = shorthand.binding.name.as_str();
+            let init = shorthand.init.take();
+            let source = if init.is_some() {
+                format!("({{ {key}: {member} = 0 }} = 0)")
+            } else {
+                format!("({{ {key}: {member} }} = 0)")
+            };
+            let Expression::ParenthesizedExpression(parenthesized) =
+                generated_expression(self.allocator, &source)
+            else {
+                unreachable!()
+            };
+            let Expression::AssignmentExpression(assignment) = parenthesized.unbox().expression
+            else {
+                unreachable!()
+            };
+            let AssignmentTarget::ObjectAssignmentTarget(object) = assignment.unbox().left else {
+                unreachable!()
+            };
+            let mut replacement =
+                object.unbox().properties.into_iter().next().expect("one property");
+            if let (Some(init), AssignmentTargetProperty::AssignmentTargetPropertyProperty(renamed)) =
+                (init, &mut replacement)
+                && let AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(with_default) =
+                    &mut renamed.binding
+            {
+                with_default.init = init;
+            }
+            *property = replacement;
+        }
+        walk_mut::walk_assignment_target_property(self, property);
+    }
+
+    fn visit_object_property(&mut self, property: &mut ObjectProperty<'a>) {
+        walk_mut::walk_object_property(self, property);
+        // `{ a }` read as `{ a: exports.a }`.
+        if property.shorthand && !matches!(property.value, Expression::Identifier(_)) {
+            property.shorthand = false;
+        }
+    }
+}
+
+/// References to the default export's binding name its hoisted declaration instead.
+struct RenameDefault<'a> {
+    name: &'a str,
+}
+
+impl<'a> VisitMut<'a> for RenameDefault<'a> {
+    fn visit_identifier_reference(&mut self, ident: &mut IdentifierReference<'a>) {
+        if ident.name == SSR_EXPORT_DEFAULT {
+            ident.name = self.name.into();
+        }
+    }
 }
 
 /// The runner transform drops the default binding of `import a, * as b from "x"`, so
@@ -5638,7 +5944,7 @@ mod tests {
         assert!(lowered(&code), "{code}");
         assert!(code.contains("exports.compute = void 0;"), "{code}");
         assert!(code.contains("exports.compute = compute;"), "{code}");
-        assert!(!code.contains("get"), "{code}");
+        assert!(!code.contains("get: function"), "{code}");
 
         let code = run(
             "cjs/forms.ts",
@@ -5654,20 +5960,46 @@ mod tests {
         assert!(code.contains("= __importStar(require(\"./b\"))"), "{code}");
         assert!(code.contains("= require(\"./c\")"), "{code}");
         assert!(code.contains("__exportStar(require(\"./e\"), exports)"), "{code}");
-        // Re-exports and reassigned locals stay live through getters, without
-        // `configurable`, which `cjs-module-lexer` would not detect.
-        for export in ["\"r\"", "\"counter\""] {
-            assert!(
-                code.contains(&format!(
-                    "Object.defineProperty(exports, {export}, {{ enumerable: true, get: function() {{"
-                )),
-                "{code}"
-            );
-        }
+        // A re-export stays live through a getter, without `configurable`, which
+        // `cjs-module-lexer` would not detect, defined after its `require()`.
+        let getter = "Object.defineProperty(exports, \"r\", { enumerable: true, get: function() {";
+        assert!(code.find(getter) > code.find("require(\"./g\")"), "{code}");
+        // A reassigned `let` becomes `exports.counter` itself, as `tsc` compiles it: live,
+        // writable, and `undefined` rather than a TDZ error before it runs.
+        assert!(code.contains("exports.counter = 0;"), "{code}");
+        assert!(code.contains("exports.counter++"), "{code}");
+        assert!(!code.contains("let counter"), "{code}");
         // A hoisted function is exported up front; `import()` is CommonJS' own.
         assert!(code.contains("exports.bump = bump;"), "{code}");
         assert!(code.contains("import(\"./dyn\")"), "{code}");
         assert!(code.contains("exports.default = "), "{code}");
+
+        // A side-effect import is a bare `require()`, as `tsc` emits it.
+        let code = run("cjs/side.ts", "import './b';\nexport const n = 1;\n");
+        assert!(lowered(&code) && code.contains("require(\"./b\");"), "{code}");
+        assert!(!code.contains("= require(\"./b\")"), "{code}");
+
+        // An anonymous default function is hoisted under a name and exported up front,
+        // as `tsc` emits `exports.default = default_1` before the body runs.
+        let code = run("cjs/anonymous.ts", "export const n = 1;\nexport default function () {}\n");
+        assert!(lowered(&code), "{code}");
+        assert!(code.contains("function default_1()"), "{code}");
+        assert!(code.contains("exports.default = default_1;"), "{code}");
+        assert!(code.find("exports.default = default_1;") < code.find("exports.n = n;"), "{code}");
+
+        // Only a value binding clashes with the CommonJS wrapper: a type, an ambient
+        // declaration or a type-only import of the same name is erased and lowers.
+        for (name, source) in [
+            ("cjs/ambient.ts", "declare const require: any;\nexport const n = 1;\n"),
+            ("cjs/type.ts", "type exports = number;\nexport const n: exports = 1;\n"),
+            (
+                "cjs/type-import.ts",
+                "import type * as module from 'node:path';\nexport const n = 1;\n",
+            ),
+        ] {
+            let code = run(name, source);
+            assert!(lowered(&code) && code.contains("exports.n = n;"), "{name}: {code}");
+        }
 
         // Every `module` that `tsc` compiles to CommonJS for a `"type": "commonjs"` package.
         for dir in ["commonjs", "node16", "node18", "node20", "cased"] {

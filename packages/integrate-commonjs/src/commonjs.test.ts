@@ -4,11 +4,15 @@ import test from "node:test";
 import legacyDefault, { legacy } from "./legacy.cjs";
 import Greeter, * as lib from "./lib";
 import { answer, doubled, time } from "./app";
+import { aliased } from "@alias/value";
 import { readB, seenDuringLoad } from "./cycle-a";
+import * as cycle from "./cycle-c";
+import * as Klass from "./klass.cjs";
 import { compute, esmValue } from "./output-names";
 import { where as shadowedByOutputName } from "./shadowed.js";
 import { where as shadowedExtensionless } from "./shadowed";
 import { fail } from "./throws";
+import { widget } from "./widget.js";
 
 // `tsc` compiles ES module syntax in a `"type": "commonjs"` package to CommonJS when
 // tsconfig's `module` is `nodenext`, and so does oxc-node.
@@ -96,6 +100,46 @@ void test("a file without module syntax is CommonJS, also when an ES module asks
 void test("an import cycle sees what tsc's output sees", () => {
   assert.deepEqual(seenDuringLoad, { hoisted: "hoisted", late: undefined });
   assert.equal(readB(), "b");
+});
+
+// `cycle-d` reads `cycle-c` while it is loading: a reassigned `let`, a decorated class, a
+// namespace and a re-export are `undefined` then, as under `tsc`, not a TDZ error, and
+// the anonymous default function is declared already.
+void test("an import cycle reads what is not set yet as undefined", () => {
+  assert.deepEqual(cycle.seen, {
+    counter: undefined,
+    service: undefined,
+    settings: undefined,
+    reexported: undefined,
+    anonymous: "anonymous default",
+  });
+  assert.equal(cycle.reexported, "more");
+  assert.equal(cycle.Settings.level, 1);
+});
+
+// A reassigned `let` and a decorated class are plain data properties, as `tsc` emits
+// them: live for every importer, and writable, so a test can replace them.
+void test("a reassigned export stays live and can be replaced", () => {
+  assert.equal(cycle.counter, 0);
+  assert.equal(cycle.bump(), 1);
+  assert.equal(cycle.counter, 1);
+  for (const name of ["counter", "Service", "Settings"]) {
+    assert.equal(Object.getOwnPropertyDescriptor(cycle, name)?.writable, true, name);
+  }
+});
+
+void test("a namespace import of a CommonJS class keeps its static members", () => {
+  assert.equal(Klass.create(), "created");
+});
+
+// With `allowJs`, `tsc` resolves `./widget.js` to `widget.jsx`, and `require()` finds it
+// when no `widget.js` exists.
+void test("an import named by its output finds a JSX file", () => {
+  assert.equal(widget, "widget.jsx");
+});
+
+void test("a tsconfig `paths` alias resolves in a file compiled to CommonJS", () => {
+  assert.equal(aliased, "aliased");
 });
 
 void test("a stack trace reports the TypeScript file's own lines", () => {
