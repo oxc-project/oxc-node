@@ -450,6 +450,15 @@ describe("a TypeScript file in a CommonJS package", () => {
     expect(run(root, "./main.ts")).toContain("where: foo.ts foo.js/index.js\n");
   });
 
+  test("finds the source `./dep.js` names before a `dep.js.json` Node.js completes it with", () => {
+    const root = fixture({
+      "dep.js.json": JSON.stringify({ where: "dep.js.json" }),
+      "dep.ts": 'export const where: string = "dep.ts";\n',
+      "main.ts": 'import { where } from "./dep.js";\nconsole.log("where:", where);\n',
+    });
+    expect(run(root, "./main.ts")).toContain("where: dep.ts\n");
+  });
+
   test("resolves `.` as the directory only, never a file beside it", () => {
     const root = fixture({
       "proj/main.ts": 'import { where } from ".";\nconsole.log("where:", where);\n',

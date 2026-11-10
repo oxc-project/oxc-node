@@ -258,10 +258,11 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
     const named = requested(request, parent.filename, resolved);
     const file = !throughDirectory(request, parent.filename, resolved);
     // An extensionless request takes the ES module resolver's extension order first;
-    // the aliases of the extension Node.js added come after it. `./foo.js` that Node.js
-    // completed with a `foo.js/` directory still finds `foo.ts` first.
+    // the aliases of the extension Node.js added come after it. `./foo.js` finds
+    // `foo.ts` first, whatever Node.js completed it with: a `foo.js/` directory, or a
+    // `foo.js.json` file.
     source =
-      (file || DIRECTORY_ONLY.test(request)
+      (DIRECTORY_ONLY.test(request)
         ? undefined
         : sourceBeside(resolvePath(dirname(parent.filename), request))) ??
       directoryLinkSource(request, parent.filename, resolved) ??
