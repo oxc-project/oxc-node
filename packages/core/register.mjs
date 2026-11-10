@@ -394,6 +394,19 @@ function directoryMainSource(request, filename, resolved) {
   if (dirname(resolved) !== directory || !basename(resolved).startsWith("index.")) {
     return undefined;
   }
+  const target = directoryMain(directory);
+  return target === undefined || isFile(target)
+    ? undefined
+    : sourcesFor(target, MISSING_OUTPUT_SOURCES).find(isFile);
+}
+
+/**
+ * The file a directory's `package.json` names as its `main`, if it names one.
+ *
+ * @param {string} directory
+ * @returns {string | undefined}
+ */
+function directoryMain(directory) {
   let main;
   try {
     main = JSON.parse(readFileSync(join(directory, "package.json"), "utf8")).main;
@@ -401,11 +414,7 @@ function directoryMainSource(request, filename, resolved) {
     // No `package.json` there, or one Node.js would have rejected already.
     return undefined;
   }
-  if (typeof main !== "string" || main === "") {
-    return undefined;
-  }
-  const target = resolvePath(directory, main);
-  return isFile(target) ? undefined : sourcesFor(target, MISSING_OUTPUT_SOURCES).find(isFile);
+  return typeof main === "string" && main !== "" ? resolvePath(directory, main) : undefined;
 }
 
 /**
@@ -420,9 +429,18 @@ function directoryMainSource(request, filename, resolved) {
  */
 function directoryIndexSource(request, filename, resolved) {
   const directory = resolvePath(dirname(filename), request);
-  return dirname(resolved) === directory && basename(resolved).startsWith("index.")
-    ? extensionlessSource("index", join(directory, basename(resolved)))
-    : undefined;
+  if (dirname(resolved) !== directory || !basename(resolved).startsWith("index.")) {
+    return undefined;
+  }
+  // A `main` that names the index file Node.js found is that file, not a fallback.
+  const main = directoryMain(directory);
+  if (
+    main !== undefined &&
+    (main === resolved || (extname(main) === "" && resolved.startsWith(`${main}.`)))
+  ) {
+    return undefined;
+  }
+  return extensionlessSource("index", join(directory, basename(resolved)));
 }
 
 /**

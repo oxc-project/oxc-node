@@ -240,6 +240,17 @@ describe("a TypeScript file in a CommonJS package", () => {
     expect(run(root, "./main.ts")).toContain("where: index.ts");
   });
 
+  test("keeps a directory's `main` when it names the index file", () => {
+    // `index.cjs` is the entry `main` names, not a fallback; `.cjs` aliases only `.cts`.
+    const root = fixture({
+      "lib/package.json": JSON.stringify({ main: "./index.cjs" }),
+      "lib/index.cjs": 'exports.where = "index.cjs";\n',
+      "lib/index.ts": 'export const where: string = "index.ts";\n',
+      "main.ts": 'import { where } from "./lib";\nconsole.log("where:", where);\n',
+    });
+    expect(run(root, "./main.ts")).toMatch(/^where: index\.cjs$/m);
+  });
+
   test("resolves an extensionless import in the ES module resolver's order", () => {
     // Node.js tries the registered extensions in its own order and finds `dep.jsx`;
     // the ES module resolver found `dep.ts` first.
