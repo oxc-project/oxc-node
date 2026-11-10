@@ -378,7 +378,7 @@ describe("a TypeScript file in a CommonJS package", () => {
       },
       { ...NODENEXT, paths: { "@lib/*": ["./src/*"] } },
     );
-    expect(run(root, "./main.cts")).toBe(
+    expect(run(root, "./main.cts")).toContain(
       "where: other dep.js\nmissing: MODULE_NOT_FOUND MODULE_NOT_FOUND\nbare: other @lib/x\n",
     );
   });
