@@ -3012,6 +3012,8 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
 
     // Where each top-level binding is declared, and the imports by binding.
     let mut declared_at = HashMap::new();
+    // A `var` declared again is there from its first declaration on.
+    let mut first_declared: HashMap<&str, (usize, bool)> = HashMap::new();
     // A `var` declared more than once is written by each initializer.
     let mut declarations: HashMap<&str, usize> = HashMap::new();
     let mut imports = HashMap::new();
@@ -3019,6 +3021,7 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
         let (names, hoisted_function) = top_level_bindings(statement);
         for name in names {
             declared_at.insert(name, (index, hoisted_function));
+            first_declared.entry(name).or_insert((index, hoisted_function));
             *declarations.entry(name).or_default() += 1;
         }
         if let Statement::VariableDeclaration(declaration) = statement
@@ -3211,8 +3214,10 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
                     // Defined once what it reads is initialized, as `tsc` places a
                     // re-export after its `require()`: an import cycle that reads it earlier
                     // gets `undefined`, not a TDZ error.
+                    // After the first declaration of a `var` declared again, where an
+                    // earlier initializer has already set it.
                     let anchor = getter_object(value)
-                        .and_then(|object| declared_at.get(object))
+                        .and_then(|object| first_declared.get(object))
                         .filter(|&&(_, hoisted_function)| !hoisted_function);
                     match anchor {
                         Some(&(at, _)) => {
@@ -3343,7 +3348,8 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
         ExportedBindings { allocator, scoping: &scoping, members: &members }.visit_program(program);
     }
     if let Some(default_name) = &default_name {
-        RenameDefault { name: allocator.alloc_str(default_name) }.visit_program(program);
+        RenameDefault { name: allocator.alloc_str(default_name), scoping: &scoping }
+            .visit_program(program);
     }
     Rewrite { ast: AstBuilder::new(allocator), scoping: &scoping }.visit_program(program);
 }
@@ -3682,13 +3688,20 @@ impl<'a> VisitMut<'a> for ExportedBindings<'_, 'a> {
 }
 
 /// References to the default export's binding name its hoisted declaration instead.
-struct RenameDefault<'a> {
+struct RenameDefault<'a, 's> {
     name: &'a str,
+    scoping: &'s Scoping,
 }
 
-impl<'a> VisitMut<'a> for RenameDefault<'a> {
+impl<'a> VisitMut<'a> for RenameDefault<'a, '_> {
     fn visit_identifier_reference(&mut self, ident: &mut IdentifierReference<'a>) {
-        if ident.name == SSR_EXPORT_DEFAULT {
+        // A binding of the module's own under that name (a parameter, say) keeps it.
+        let generated = self.scoping.get_root_binding(SSR_EXPORT_DEFAULT.into());
+        let shadowed = ident.reference_id.get().is_some_and(|reference| {
+            let symbol = self.scoping.get_reference(reference).symbol_id();
+            symbol.is_some() && symbol != generated
+        });
+        if ident.name == SSR_EXPORT_DEFAULT && !shadowed {
             ident.name = self.name.into();
         }
     }
@@ -6343,6 +6356,25 @@ mod tests {
         assert!(code.contains("exports, \"__esModule\""), "{code}");
         assert!(code.contains("return __vite_ssr_exports__;"), "{code}");
         assert!(code.contains("exports.echo = echo;"), "{code}");
+
+        // A `var` declared again has its getter after the first declaration, where an
+        // import cycle can read what the first initializer set.
+        let code = run(
+            "cjs/var-again.ts",
+            "var x = 1;\nexport { x, x as alias };\nexport const seen = 0;\nvar x;\n",
+        );
+        assert!(lowered(&code), "{code}");
+        let getter = code.find("get: function() { return x; }").expect("a getter for x");
+        assert!(code.find("var x = 1;") < Some(getter), "{code}");
+        assert!(Some(getter) < code.find("var x;"), "{code}");
+
+        // A parameter named like the runner's default binding keeps its reads.
+        let code = run(
+            "cjs/default-shadow.ts",
+            "export default function (__vite_ssr_export_default__: number) {\n  return __vite_ssr_export_default__;\n}\n",
+        );
+        assert!(code.contains("function default_1(__vite_ssr_export_default__)"), "{code}");
+        assert!(code.contains("return __vite_ssr_export_default__;"), "{code}");
 
         // A side-effect import is a bare `require()`, as `tsc` emits it.
         let code = run("cjs/side.ts", "import './b';\nexport const n = 1;\n");

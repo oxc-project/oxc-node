@@ -264,6 +264,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
       (file || DIRECTORY_ONLY.test(request)
         ? undefined
         : sourceBeside(resolvePath(dirname(parent.filename), request))) ??
+      directoryMainLinkSource(request, parent.filename, resolved) ??
       directoryMainSource(request, parent.filename, resolved) ??
       directoryMainOrderSource(request, parent.filename, resolved) ??
       directoryIndexSource(request, parent.filename, resolved) ??
@@ -436,6 +437,29 @@ function directoryMainSource(request, filename, resolved) {
 }
 
 /**
+ * The source beside a directory's `package.json` `main` that is a symlink Node.js
+ * followed: `"main": "./src/entry.js"` linking to `../dist/real.js` finds
+ * `src/entry.ts`, as the ES module resolver looks beside the name `main` gives.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {string | undefined}
+ */
+function directoryMainLinkSource(request, filename, resolved) {
+  // A request that names a file has no `package.json` below it.
+  const main = directoryMain(resolvePath(dirname(filename), request));
+  if (main === undefined || main === resolved || !isFile(main)) {
+    return undefined;
+  }
+  try {
+    return realpathSync(main) === resolved ? sourceBeside(main) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The directory a relative or absolute `request` from `filename` names, spelled as
  * `resolved` spells it: its real path when Node.js followed a symlink to reach
  * `resolved`, as it does unless `--preserve-symlinks` is set.
@@ -578,7 +602,8 @@ function compiledFromEsm(request, parent) {
   const exports = parent?.exports;
   return (
     typeof filename === "string" &&
-    filename.endsWith(".js") &&
+    // An extensionless entry (`bin/run`) is JavaScript too.
+    (filename.endsWith(".js") || extname(filename) === "") &&
     !inNodeModules(filename) &&
     PATH_REQUEST.test(request) &&
     exports != null &&

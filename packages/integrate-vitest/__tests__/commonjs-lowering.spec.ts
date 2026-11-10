@@ -383,6 +383,33 @@ describe("a TypeScript file in a CommonJS package", () => {
     );
   });
 
+  // Windows lets only elevated processes create file symlinks.
+  test.skipIf(process.platform === "win32")(
+    "finds the source beside a directory's `main` that is a symlink",
+    () => {
+      const root = fixture({
+        "lib/package.json": JSON.stringify({ type: "commonjs", main: "./src/entry.js" }),
+        "lib/dist/real.js": 'exports.where = "dist/real.js";\n',
+        "lib/src/entry.ts": 'export const where: string = "src/entry.ts";\n',
+        "main.ts": 'import { where } from "./lib";\nconsole.log("where:", where);\n',
+      });
+      symlinkSync(join("..", "dist", "real.js"), join(root, "lib", "src", "entry.js"));
+      expect(run(root, "./main.ts")).toContain("where: src/entry.ts\n");
+    },
+  );
+
+  test("resolves an extensionless entry compiled to CommonJS TypeScript first", () => {
+    const root = fixture({
+      "tsconfig.cjs.json": JSON.stringify({ compilerOptions: { module: "commonjs" } }),
+      "dep.js": 'exports.where = "stale dep.js";\n',
+      "dep.ts": 'export const where: string = "dep.ts";\n',
+      "bin/run": 'import { where } from "../dep";\nconsole.log("where:", where);\n',
+    });
+    expect(run(root, "./bin/run", [], { OXC_TSCONFIG_PATH: "./tsconfig.cjs.json" })).toContain(
+      "where: dep.ts\n",
+    );
+  });
+
   test("finds the source `./foo.js` names before a `foo.js` directory", () => {
     const root = fixture({
       "foo.js/index.js": 'exports.where = "foo.js/index.js";\n',
