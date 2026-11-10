@@ -258,8 +258,12 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
     const named = requested(request, parent.filename, resolved);
     const file = !throughDirectory(request, parent.filename, resolved);
     // An extensionless request takes the ES module resolver's extension order first;
-    // the aliases of the extension Node.js added come after it.
+    // the aliases of the extension Node.js added come after it. `./foo.js` that Node.js
+    // completed with a `foo.js/` directory still finds `foo.ts` first.
     source =
+      (file || DIRECTORY_ONLY.test(request)
+        ? undefined
+        : sourceBeside(resolvePath(dirname(parent.filename), request))) ??
       directoryMainSource(request, parent.filename, resolved) ??
       directoryMainOrderSource(request, parent.filename, resolved) ??
       directoryIndexSource(request, parent.filename, resolved) ??
@@ -327,6 +331,9 @@ const SOURCE_EXTENSIONS = [
 // `.` and `..` themselves are relative too: `require("..")` names the parent directory.
 const PATH_REQUEST = /^(?:\.{1,2}(?:[\\/]|$)|[\\/]|[a-zA-Z]:[\\/])/;
 
+/** A request that names a directory only: `./foo/`, `.`, `..`. */
+const DIRECTORY_ONLY = /(?:[\\/]|(?:^|[\\/])\.\.?)$/;
+
 /**
  * @param {string} path
  * @returns {boolean}
@@ -392,7 +399,7 @@ function resolvesSourceFirst(request, parent) {
  */
 function requested(request, filename, resolved) {
   // `./foo/`, `.` and `..` name the directory only, never a `foo.js` beside it.
-  if (/(?:[\\/]|(?:^|[\\/])\.\.?)$/.test(request)) {
+  if (DIRECTORY_ONLY.test(request)) {
     return resolved;
   }
   const path = resolvePath(dirname(filename), request);
