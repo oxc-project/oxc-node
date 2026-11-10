@@ -2800,8 +2800,8 @@ const EXPORT_STAR_HELPER: &str = "var __exportStar = function (m, exports) { for
 /// Node.js' syntax detection runs it. The caller checks the extension is an ambiguous
 /// one. A module that cannot be CommonJS stays an ES module: one using `import.meta` or
 /// top-level await, or declaring a value named as the CommonJS wrapper's parameters or
-/// its helpers are (see [`COMMONJS_RESERVED`]), or one naming a value `exports` in any
-/// scope. A `declare`d or type-only declaration of such a name is erased, so it does not
+/// its helpers are (see [`COMMONJS_RESERVED`]), or one naming a value `exports` or
+/// `__vite_ssr_…` (the module runner's names) in any scope. A `declare`d or type-only declaration of such a name is erased, so it does not
 /// count.
 fn lowers_to_commonjs(
     path: &Path,
@@ -2831,9 +2831,11 @@ fn lowers_to_commonjs(
                 .all(|&name| scoping.get_root_binding(name.into()).is_none_or(erased))
                 // `exports.x` is written inside functions too, where a parameter or local
                 // named `exports` would take it.
-                && scoping
-                    .symbol_ids()
-                    .all(|symbol| scoping.symbol_name(symbol) != "exports" || erased(symbol))
+                && scoping.symbol_ids().all(|symbol| {
+                    let name = scoping.symbol_name(symbol);
+                    // The runner's helpers are found by their `__vite_ssr_` names.
+                    (name != "exports" && !name.starts_with("__vite_ssr_")) || erased(symbol)
+                })
         }
 }
 
@@ -2952,21 +2954,15 @@ fn top_level_bindings<'s>(statement: &'s Statement<'_>) -> (Vec<&'s str>, bool) 
 /// Runs after the runner transform has hoisted the imports and exports and dropped the
 /// imports' awaits. The caller has ruled out `import.meta` and top-level await.
 fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<'a>) {
-    struct Rewrite<'a, 's> {
+    struct Rewrite<'a> {
         ast: AstBuilder<'a>,
-        scoping: &'s Scoping,
     }
 
-    impl<'a> VisitMut<'a> for Rewrite<'a, '_> {
+    impl<'a> VisitMut<'a> for Rewrite<'a> {
         fn visit_expression(&mut self, expression: &mut Expression<'a>) {
             walk_mut::walk_expression(self, expression);
             if let Expression::CallExpression(call) = expression
                 && call.callee.is_specific_id(SSR_DYNAMIC_IMPORT)
-                // The runner's helper is a free variable; a parameter of that name is not it.
-                && !matches!(&call.callee, Expression::Identifier(callee)
-                    if callee.reference_id.get().is_some_and(|reference| {
-                        self.scoping.get_reference(reference).symbol_id().is_some()
-                    }))
                 && let Some(source) =
                     call.arguments.first_mut().and_then(Argument::as_expression_mut)
             {
@@ -2982,12 +2978,7 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
         }
 
         fn visit_identifier_reference(&mut self, ident: &mut IdentifierReference<'a>) {
-            // The runner's exports object is a free variable; a binding of the module's own
-            // under that name (`function f(__vite_ssr_exports__) {}`) keeps it.
-            let bound = ident.reference_id.get().is_some_and(|reference| {
-                self.scoping.get_reference(reference).symbol_id().is_some()
-            });
-            if ident.name == SSR_EXPORTS && !bound {
+            if ident.name == SSR_EXPORTS {
                 ident.name = "exports".into();
             }
         }
@@ -3360,10 +3351,9 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
         ExportedBindings { allocator, scoping: &scoping, members: &members }.visit_program(program);
     }
     if let Some(default_name) = &default_name {
-        RenameDefault { name: allocator.alloc_str(default_name), scoping: &scoping }
-            .visit_program(program);
+        RenameDefault { name: allocator.alloc_str(default_name) }.visit_program(program);
     }
-    Rewrite { ast: AstBuilder::new(allocator), scoping: &scoping }.visit_program(program);
+    Rewrite { ast: AstBuilder::new(allocator) }.visit_program(program);
 }
 
 const SSR_EXPORT_DEFAULT: &str = "__vite_ssr_export_default__";
@@ -3700,20 +3690,13 @@ impl<'a> VisitMut<'a> for ExportedBindings<'_, 'a> {
 }
 
 /// References to the default export's binding name its hoisted declaration instead.
-struct RenameDefault<'a, 's> {
+struct RenameDefault<'a> {
     name: &'a str,
-    scoping: &'s Scoping,
 }
 
-impl<'a> VisitMut<'a> for RenameDefault<'a, '_> {
+impl<'a> VisitMut<'a> for RenameDefault<'a> {
     fn visit_identifier_reference(&mut self, ident: &mut IdentifierReference<'a>) {
-        // A binding of the module's own under that name (a parameter, say) keeps it.
-        let generated = self.scoping.get_root_binding(SSR_EXPORT_DEFAULT.into());
-        let shadowed = ident.reference_id.get().is_some_and(|reference| {
-            let symbol = self.scoping.get_reference(reference).symbol_id();
-            symbol.is_some() && symbol != generated
-        });
-        if ident.name == SSR_EXPORT_DEFAULT && !shadowed {
+        if ident.name == SSR_EXPORT_DEFAULT {
             ident.name = self.name.into();
         }
     }
@@ -6359,16 +6342,6 @@ mod tests {
             );
         }
 
-        // A binding of the module's own named like the runner's exports object keeps it.
-        let code = run(
-            "cjs/shadow.ts",
-            "export function echo(__vite_ssr_exports__: number) { return __vite_ssr_exports__; }\n",
-        );
-        // `lowered` counts any `__vite_ssr_` name as runner output left behind.
-        assert!(code.contains("exports, \"__esModule\""), "{code}");
-        assert!(code.contains("return __vite_ssr_exports__;"), "{code}");
-        assert!(code.contains("exports.echo = echo;"), "{code}");
-
         // A `var` declared again has its getter after the first declaration, where an
         // import cycle can read what the first initializer set.
         let code = run(
@@ -6379,22 +6352,6 @@ mod tests {
         let getter = code.find("get: function() { return x; }").expect("a getter for x");
         assert!(code.find("var x = 1;") < Some(getter), "{code}");
         assert!(Some(getter) < code.find("var x;"), "{code}");
-
-        // A parameter named like the runner's default binding keeps its reads.
-        let code = run(
-            "cjs/default-shadow.ts",
-            "export default function (__vite_ssr_export_default__: number) {\n  return __vite_ssr_export_default__;\n}\n",
-        );
-        assert!(code.contains("function default_1(__vite_ssr_export_default__)"), "{code}");
-        assert!(code.contains("return __vite_ssr_export_default__;"), "{code}");
-
-        // A parameter named like the runner's `import()` helper is called, not imported.
-        let code = run(
-            "cjs/import-shadow.ts",
-            "export function f(__vite_ssr_dynamic_import__: any) {\n  return __vite_ssr_dynamic_import__(\"node:path\");\n}\n",
-        );
-        assert!(code.contains("exports, \"__esModule\""), "{code}");
-        assert!(code.contains("return __vite_ssr_dynamic_import__(\"node:path\");"), "{code}");
 
         // A side-effect import is a bare `require()`, as `tsc` emits it.
         let code = run("cjs/side.ts", "import './b';\nexport const n = 1;\n");
@@ -6455,6 +6412,23 @@ mod tests {
             (
                 "cjs/nested-exports.ts",
                 "export let n = 0;\nexport function inc(exports: { n: number }) { n++; }\n",
+            ),
+            // The compiled output finds the runner's helpers by their names.
+            (
+                "cjs/runner-import.ts",
+                "const __vite_ssr_import__ = (_: string) => 42;\nexport const answer = __vite_ssr_import__('node:path');\n",
+            ),
+            (
+                "cjs/runner-exports.ts",
+                "export function echo(__vite_ssr_exports__: number) { return __vite_ssr_exports__; }\n",
+            ),
+            (
+                "cjs/runner-default.ts",
+                "export default function (__vite_ssr_export_default__: number) { return 1; }\n",
+            ),
+            (
+                "cjs/runner-dynamic.ts",
+                "export function f(__vite_ssr_dynamic_import__: any) { return __vite_ssr_dynamic_import__('x'); }\n",
             ),
             // `tsc` itself emits an ES module for these.
             ("esnext/lib.ts", "export const n = 1;\n"),

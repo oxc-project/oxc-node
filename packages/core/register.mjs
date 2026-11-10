@@ -264,7 +264,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
       (file || DIRECTORY_ONLY.test(request)
         ? undefined
         : sourceBeside(resolvePath(dirname(parent.filename), request))) ??
-      directoryMainLinkSource(request, parent.filename, resolved) ??
+      directoryLinkSource(request, parent.filename, resolved) ??
       directoryMainSource(request, parent.filename, resolved) ??
       directoryMainOrderSource(request, parent.filename, resolved) ??
       directoryIndexSource(request, parent.filename, resolved) ??
@@ -452,26 +452,40 @@ function directoryMainSource(request, filename, resolved) {
 }
 
 /**
- * The source beside a directory's `package.json` `main` that is a symlink Node.js
- * followed: `"main": "./src/entry.js"` linking to `../dist/real.js` finds
- * `src/entry.ts`, as the ES module resolver looks beside the name `main` gives.
+ * The source beside a directory's `main` or index file that is a symlink Node.js
+ * followed, as the ES module resolver looks beside the name the directory gives:
+ * `"main": "./src/entry.js"` linking to `../dist/real.js` finds `src/entry.ts`, and
+ * `index.js` linking to `../build/real.js` finds `index.ts`.
  *
  * @param {string} request
  * @param {string} filename
  * @param {string} resolved
  * @returns {string | undefined}
  */
-function directoryMainLinkSource(request, filename, resolved) {
-  // A request that names a file has no `package.json` below it.
-  const main = directoryMain(resolvePath(dirname(filename), request));
-  if (main === undefined || main === resolved || !isFile(main)) {
+function directoryLinkSource(request, filename, resolved) {
+  const directory = resolvePath(dirname(filename), request);
+  if (!statSync(directory, { throwIfNoEntry: false })?.isDirectory()) {
     return undefined;
   }
-  try {
-    return realpathSync(main) === resolved ? sourceBeside(main) : undefined;
-  } catch {
-    return undefined;
+  /** @param {string} file */
+  const linked = (file) => {
+    try {
+      return file !== resolved && isFile(file) && realpathSync(file) === resolved;
+    } catch {
+      return false;
+    }
+  };
+  const main = directoryMain(directory);
+  if (main !== undefined && linked(main)) {
+    return sourceBeside(main);
   }
+  // The index Node.js took, in its extension order.
+  const index = Object.keys(Module._extensions)
+    .map((extension) => join(directory, `index${extension}`))
+    .find(linked);
+  return index === undefined
+    ? undefined
+    : (extensionlessSource("index", index) ?? sourceBeside(index));
 }
 
 /**

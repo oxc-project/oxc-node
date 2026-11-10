@@ -400,6 +400,20 @@ describe("a TypeScript file in a CommonJS package", () => {
 
   // Windows lets only elevated processes create file symlinks.
   test.skipIf(process.platform === "win32")(
+    "finds the source beside a directory's index file that is a symlink",
+    () => {
+      const root = fixture({
+        "build/real.js": 'exports.where = "build/real.js";\n',
+        "lib/index.ts": 'export const where: string = "lib/index.ts";\n',
+        "main.ts": 'import { where } from "./lib";\nconsole.log("where:", where);\n',
+      });
+      symlinkSync(join("..", "build", "real.js"), join(root, "lib", "index.js"));
+      expect(run(root, "./main.ts")).toContain("where: lib/index.ts\n");
+    },
+  );
+
+  // Windows lets only elevated processes create file symlinks.
+  test.skipIf(process.platform === "win32")(
     "finds the source for `./dep` whose `dep.js` links to another extension",
     () => {
       const root = fixture({
