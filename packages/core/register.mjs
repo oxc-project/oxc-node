@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import * as NodeModule from "node:module";
-import { basename, dirname, extname, isAbsolute, join, resolve as resolvePath } from "node:path";
+import {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  resolve as resolvePath,
+  sep,
+} from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isMainThread } from "node:worker_threads";
 
@@ -396,7 +404,7 @@ function requested(request, filename, resolved) {
  * @returns {string | undefined}
  */
 function directoryMainSource(request, filename, resolved) {
-  const directory = resolvePath(dirname(filename), request);
+  const directory = directoryNamed(request, filename, resolved);
   if (dirname(resolved) !== directory || !basename(resolved).startsWith("index.")) {
     return undefined;
   }
@@ -404,6 +412,30 @@ function directoryMainSource(request, filename, resolved) {
   return target === undefined || isFile(target)
     ? undefined
     : sourcesFor(target, MISSING_OUTPUT_SOURCES).find(isFile);
+}
+
+/**
+ * The directory a relative or absolute `request` from `filename` names, spelled as
+ * `resolved` spells it: its real path when Node.js followed a symlink to reach
+ * `resolved`, as it does unless `--preserve-symlinks` is set.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {string}
+ */
+function directoryNamed(request, filename, resolved) {
+  const path = resolvePath(dirname(filename), request);
+  if (resolved.startsWith(path + sep)) {
+    return path;
+  }
+  try {
+    const real = realpathSync(path);
+    return resolved.startsWith(real + sep) ? real : path;
+  } catch {
+    // Not there at all; nothing below it was resolved either.
+    return path;
+  }
 }
 
 /**
@@ -434,7 +466,7 @@ function directoryMain(directory) {
  * @returns {string | undefined}
  */
 function directoryIndexSource(request, filename, resolved) {
-  const directory = resolvePath(dirname(filename), request);
+  const directory = directoryNamed(request, filename, resolved);
   if (dirname(resolved) !== directory || !basename(resolved).startsWith("index.")) {
     return undefined;
   }
@@ -460,7 +492,7 @@ function directoryIndexSource(request, filename, resolved) {
  * @returns {string | undefined}
  */
 function directoryMainOrderSource(request, filename, resolved) {
-  const main = directoryMain(resolvePath(dirname(filename), request));
+  const main = directoryMain(directoryNamed(request, filename, resolved));
   if (main === undefined || extname(main) !== "") {
     return undefined;
   }

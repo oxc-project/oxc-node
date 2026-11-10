@@ -279,6 +279,22 @@ describe("a TypeScript file in a CommonJS package", () => {
     expect(run(root, "./main.ts")).toMatch(/^where: src\/index\.ts$/m);
   });
 
+  test("resolves a symlinked directory's index in the ES module resolver's order", () => {
+    // Node.js follows `alias` to `real` before it picks `index.json`.
+    const root = fixture({
+      "real/index.ts": 'export const where: string = "index.ts";\n',
+      "real/index.json": JSON.stringify({ where: "index.json" }),
+      "main.ts": 'import { where } from "./alias";\nconsole.log("where:", where);\n',
+    });
+    // `junction` is the only link type Windows allows without elevated privileges.
+    symlinkSync(
+      join(root, "real"),
+      join(root, "alias"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    expect(run(root, "./main.ts")).toMatch(/^where: index\.ts$/m);
+  });
+
   test("keeps `./foo/` on the directory, not a `foo.ts` beside it", () => {
     // A trailing slash names the directory only, for Node.js and `tsc` alike.
     const root = fixture({
