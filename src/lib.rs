@@ -24,7 +24,7 @@ use oxc::{
             FunctionType, IdentifierReference, ImportDeclarationSpecifier, ObjectProperty,
             ObjectPropertyKind, Program, SimpleAssignmentTarget, Statement, StringLiteral,
             TSExternalModuleDeclaration, TSGlobalDeclaration, TSModuleReference,
-            TSNamespaceDeclaration, TemplateLiteral, VariableDeclaration,
+            TSNamespaceDeclaration, TaggedTemplateExpression, TemplateLiteral, VariableDeclaration,
         },
         builder::AstBuilder,
     },
@@ -2929,8 +2929,9 @@ fn top_level_bindings<'s>(statement: &'s Statement<'_>) -> (Vec<&'s str>, bool) 
 /// * An export of a local that is never reassigned is a plain data property, assigned
 ///   after its declaration (`exports.a = void 0; ...; exports.a = a;`). It is writable and
 ///   configurable, so `mock.method(namespace, "a")` can replace it and every importer,
-///   which reads it as `lib.a` at the call, sees the mock. A reassigned local and a
-///   re-export keep a getter, which is what keeps them live.
+///   which reads it as `lib.a` at the call, sees the mock. A reassigned local is
+///   `exports.a` itself, as `tsc` emits it, so it stays live and writable; a re-export
+///   keeps a getter.
 /// * A named import is `require()`'s result itself; a default or namespace import goes
 ///   through `__importDefault` / `__importStar`, `export *` through `__exportStar`.
 /// * Every export is spelled the way `cjs-module-lexer` detects, so an ES module
@@ -2966,6 +2967,32 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
             if ident.name == SSR_EXPORTS {
                 ident.name = "exports".into();
             }
+        }
+    }
+
+    // `export const a = 1, b = f();` has `a` exported before `f()` runs, as `tsc` emits
+    // `exports.a = 1, exports.b = f()`: one declaration per declarator gives each export
+    // its own place right after it.
+    let original = program.body.take_in(&allocator);
+    program.body.reserve(original.len());
+    for statement in original {
+        match statement {
+            Statement::VariableDeclaration(mut declaration)
+                if declaration.declarations.len() > 1 && !declaration.kind.is_using() =>
+            {
+                let (span, kind) = (declaration.span, declaration.kind);
+                for declarator in declaration.declarations.take_in(&allocator) {
+                    let declarations = oxc::allocator::Vec::from_array_in([declarator], &allocator);
+                    program.body.push(Statement::new_variable_declaration(
+                        span,
+                        kind,
+                        declarations,
+                        false,
+                        &AstBuilder::new(allocator),
+                    ));
+                }
+            }
+            statement => program.body.push(statement),
         }
     }
 
@@ -3343,6 +3370,16 @@ impl<'a> VisitMut<'a> for ExportedBindings<'_, 'a> {
             call.callee = generated_expression(self.allocator, &format!("(0, {member})"));
         }
         walk_mut::walk_call_expression(self, call);
+    }
+
+    fn visit_tagged_template_expression(&mut self, tagged: &mut TaggedTemplateExpression<'a>) {
+        // A tag gets no `this` from `exports` either.
+        if let Expression::Identifier(ident) = &tagged.tag
+            && let Some(member) = self.member(ident)
+        {
+            tagged.tag = generated_expression(self.allocator, &format!("(0, {member})"));
+        }
+        walk_mut::walk_tagged_template_expression(self, tagged);
     }
 
     fn visit_simple_assignment_target(&mut self, target: &mut SimpleAssignmentTarget<'a>) {
@@ -5973,6 +6010,18 @@ mod tests {
         assert!(code.contains("exports.bump = bump;"), "{code}");
         assert!(code.contains("import(\"./dyn\")"), "{code}");
         assert!(code.contains("exports.default = "), "{code}");
+
+        // Each declarator's export is assigned before the next initializer runs, and a
+        // rewritten tag gets no `this`, as `tsc` emits them.
+        let code = run(
+            "cjs/declarators.ts",
+            "export const a = 1, b = a + 1;\nfunction t() {}\nexport let tag = t;\ntag = t;\n\
+             export const s = tag`x`;\n",
+        );
+        assert!(lowered(&code), "{code}");
+        assert!(code.contains("exports.a = a;"), "{code}");
+        assert!(code.find("exports.a = a;") < code.find("b = a + 1"), "{code}");
+        assert!(code.contains("(0, exports.tag)`x`"), "{code}");
 
         // A side-effect import is a bare `require()`, as `tsc` emits it.
         let code = run("cjs/side.ts", "import './b';\nexport const n = 1;\n");

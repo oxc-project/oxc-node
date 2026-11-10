@@ -249,7 +249,8 @@ const SOURCE_EXTENSIONS = [
   ".node",
 ];
 
-const PATH_REQUEST = /^(?:\.{1,2}[\\/]|[\\/]|[a-zA-Z]:[\\/])/;
+// `.` and `..` themselves are relative too: `require("..")` names the parent directory.
+const PATH_REQUEST = /^(?:\.{1,2}(?:[\\/]|$)|[\\/]|[a-zA-Z]:[\\/])/;
 
 /**
  * @param {string} path

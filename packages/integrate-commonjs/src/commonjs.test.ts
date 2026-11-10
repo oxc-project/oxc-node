@@ -6,7 +6,9 @@ import Greeter, * as lib from "./lib";
 import { answer, doubled, time } from "./app";
 import { aliased } from "@alias/value";
 import { readB, seenDuringLoad } from "./cycle-a";
+import { parent } from "./barrel/inner/use";
 import * as cycle from "./cycle-c";
+import { second, tagged } from "./declarators";
 import * as Klass from "./klass.cjs";
 import { compute, esmValue } from "./output-names";
 import { where as shadowedByOutputName } from "./shadowed.js";
@@ -67,6 +69,19 @@ void test("imports named by their output find the TypeScript file", () => {
 void test("a TypeScript file is found before compiled output next to it", () => {
   assert.equal(shadowedByOutputName, "shadowed.ts");
   assert.equal(shadowedExtensionless, "shadowed.ts");
+});
+
+void test("`..` finds the TypeScript file before compiled output next to it", () => {
+  assert.equal(parent, "barrel/index.ts");
+});
+
+void test("an import cycle sees an export from an earlier declarator", () => {
+  assert.equal(second, 1);
+});
+
+// `tsc` calls a tag as `(0, exports.tag)`, without `exports` as `this`.
+void test("a reassigned export used as a template tag gets no receiver", () => {
+  assert.equal(tagged, "unbound");
 });
 
 void test("an ES module importer gets the named exports", async () => {
