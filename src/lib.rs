@@ -3043,7 +3043,13 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
         declared_at.insert(SSR_EXPORT_DEFAULT, (at, true));
         (1..)
             .map(|n| format!("default_{n}"))
-            .find(|name| scoping.get_root_binding(name.as_str().into()).is_none())
+            // A global the module calls by that name (`default_1()`) would be captured too.
+            .find(|name| {
+                scoping.get_root_binding(name.as_str().into()).is_none()
+                    && !scoping
+                        .root_unresolved_references()
+                        .contains_key(&oxc::str::Ident::from(name.as_str()))
+            })
             .expect("an unused name")
     });
 
@@ -6226,6 +6232,16 @@ mod tests {
         assert!(code.contains("function default_1()"), "{code}");
         assert!(code.contains("exports.default = default_1;"), "{code}");
         assert!(code.find("exports.default = default_1;") < code.find("exports.n = n;"), "{code}");
+
+        // A global the function calls by that name keeps it: `tsc` picks `default_2`.
+        let code = run(
+            "cjs/global-name.ts",
+            "declare global { function default_1(): number; }\nexport default function () { return default_1(); }\n",
+        );
+        assert!(lowered(&code), "{code}");
+        assert!(code.contains("function default_2()"), "{code}");
+        assert!(code.contains("return default_1();"), "{code}");
+        assert!(code.contains("exports.default = default_2;"), "{code}");
 
         // Only a value binding clashes with the CommonJS wrapper: a type, an ambient
         // declaration or a type-only import of the same name is erased and lowers.

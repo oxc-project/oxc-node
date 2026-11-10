@@ -245,24 +245,27 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
   let source;
   if (resolvesSourceFirst(request, parent) && !inNodeModules(resolved)) {
     const named = requested(request, parent.filename, resolved);
+    const file = !throughDirectory(request, parent.filename, resolved);
     // An extensionless request takes the ES module resolver's extension order first;
     // the aliases of the extension Node.js added come after it.
     source =
       directoryMainSource(request, parent.filename, resolved) ??
       directoryMainOrderSource(request, parent.filename, resolved) ??
       directoryIndexSource(request, parent.filename, resolved) ??
-      extensionlessSource(request, named) ??
+      (file ? extensionlessSource(request, named) : undefined) ??
       sourceBeside(named) ??
-      extensionlessSource(request, resolved) ??
+      (file ? extensionlessSource(request, resolved) : undefined) ??
       sourceBeside(resolved);
   } else if (compiledFromEsm(request, parent) && !inNodeModules(resolved)) {
     const named = requested(request, parent.filename, resolved);
+    const file = !throughDirectory(request, parent.filename, resolved);
     source =
       directoryMainSource(request, parent.filename, resolved) ??
       directoryMainOrderSource(request, parent.filename, resolved) ??
       directoryIndexSource(request, parent.filename, resolved) ??
-      extensionlessSource(request, named) ??
-      extensionlessSource(request, resolved);
+      (file
+        ? (extensionlessSource(request, named) ?? extensionlessSource(request, resolved))
+        : undefined);
   } else if (mapsToProjectFile(request, parent, resolved)) {
     // A package `imports` entry or a self-reference that maps to compiled output beside
     // its source: the ES module resolver tried the source first after mapping.
@@ -436,6 +439,20 @@ function directoryNamed(request, filename, resolved) {
     // Not there at all; nothing below it was resolved either.
     return path;
   }
+}
+
+/**
+ * Whether Node.js resolved `request` as a directory, to its `main` or index: no file
+ * the request names with an extension added was there, since Node.js tries those
+ * first. `./lib` reaching `lib/src/lib.cjs` named the directory, not `lib.cjs`.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {boolean}
+ */
+function throughDirectory(request, filename, resolved) {
+  return resolved.startsWith(directoryNamed(request, filename, resolved) + sep);
 }
 
 /**

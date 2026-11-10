@@ -347,6 +347,16 @@ describe("a TypeScript file in a CommonJS package", () => {
     },
   );
 
+  test("keeps a directory's `main` whose name starts with the request's, as the ES module resolver does", () => {
+    const root = fixture({
+      "lib/package.json": JSON.stringify({ main: "./src/lib.cjs" }),
+      "lib/src/lib.cjs": 'exports.where = "lib.cjs";\n',
+      "lib/src/lib.ts": 'export const where: string = "lib.ts";\n',
+      "main.ts": 'import { where } from "./lib";\nconsole.log("where:", where);\n',
+    });
+    expect(run(root, "./main.ts")).toContain("where: lib.cjs\n");
+  });
+
   test("keeps `#` in a require()'s file name, as Node.js does", () => {
     // `dep.js#missing` names a file that is not there, not `dep.js` with a fragment.
     const root = fixture({
