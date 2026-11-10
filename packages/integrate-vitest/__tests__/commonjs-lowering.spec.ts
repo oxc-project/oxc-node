@@ -347,6 +347,52 @@ describe("a TypeScript file in a CommonJS package", () => {
     },
   );
 
+  test("leaves require.resolve() with `paths` to Node.js, which searches there", () => {
+    const root = fixture(
+      {
+        "dep.js": 'exports.where = "local dep.js";\n',
+        "dep.ts": 'export const where: string = "local dep.ts";\n',
+        "other/dep.js": 'exports.where = "other dep.js";\n',
+        "only.ts": "export {};\n",
+        "empty/.keep": "",
+        "src/x.ts": "export {};\n",
+        "other/node_modules/@lib/x/package.json": JSON.stringify({ main: "index.js" }),
+        "other/node_modules/@lib/x/index.js": 'exports.where = "other @lib/x";\n',
+        "main.cts": [
+          'const other = __dirname + "/other";',
+          "const where = (request: string, paths: string[]) => {",
+          "  try {",
+          "    return require(require.resolve(request, { paths })).where;",
+          "  } catch (error) {",
+          "    return (error as { code?: string }).code;",
+          "  }",
+          "};",
+          'console.log("where:", where("./dep.js", [other]));',
+          // No source beside the caller when Node.js searched elsewhere.
+          'console.log("missing:", where("./only.js", []), where("./only.js", [__dirname + "/empty"]));',
+          // No tsconfig alias before the directories it names.
+          'console.log("bare:", where("@lib/x", [other]));',
+          "export {};",
+          "",
+        ].join("\n"),
+      },
+      { ...NODENEXT, paths: { "@lib/*": ["./src/*"] } },
+    );
+    expect(run(root, "./main.cts")).toBe(
+      "where: other dep.js\nmissing: MODULE_NOT_FOUND MODULE_NOT_FOUND\nbare: other @lib/x\n",
+    );
+  });
+
+  test("resolves `.` as the directory only, never a file beside it", () => {
+    const root = fixture({
+      "proj/main.ts": 'import { where } from ".";\nconsole.log("where:", where);\n',
+      "proj/index.js": 'exports.where = "proj/index.js";\n',
+      "proj.js": 'exports.where = "proj.js";\n',
+      "proj.ts": 'export const where: string = "proj.ts";\n',
+    });
+    expect(run(root, "./proj/main.ts")).toContain("where: proj/index.js\n");
+  });
+
   test("keeps a directory's `main` whose name starts with the request's, as the ES module resolver does", () => {
     const root = fixture({
       "lib/package.json": JSON.stringify({ main: "./src/lib.cjs" }),

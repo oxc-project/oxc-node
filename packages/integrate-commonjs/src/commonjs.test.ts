@@ -8,7 +8,19 @@ import { aliased } from "@alias/value";
 import { readB, seenDuringLoad } from "./cycle-a";
 import { parent } from "./barrel/inner/use";
 import * as cycle from "./cycle-c";
-import { fourth, looped, second, tagged } from "./declarators";
+import {
+  again,
+  beside,
+  blocked,
+  byDefault,
+  fourth,
+  fromPattern,
+  DefaultClass,
+  looped,
+  named,
+  second,
+  tagged,
+} from "./declarators";
 import * as Klass from "./klass.cjs";
 import { compute, esmValue } from "./output-names";
 import { where as shadowedByOutputName } from "./shadowed.js";
@@ -82,6 +94,17 @@ void test("an import cycle sees an export from an earlier declarator", () => {
 
 void test("a `var` a loop declares again stays live", () => {
   assert.equal(looped, 3);
+});
+
+void test("a pattern that binds a name no member can take stays live", () => {
+  assert.deepEqual([again, fromPattern, blocked, beside], [2, 3, 3, 2]);
+});
+
+void test("a function or class named by its binding keeps that name", () => {
+  assert.deepEqual(
+    [named.name, byDefault.name, DefaultClass.name],
+    ["named", "byDefault", "DefaultClass"],
+  );
 });
 
 // `tsc` calls a tag as `(0, exports.tag)`, without `exports` as `this`.

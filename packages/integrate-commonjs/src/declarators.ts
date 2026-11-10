@@ -25,3 +25,21 @@ for (var looped of [1, 2]) {
   void looped;
 }
 looped++;
+
+// A pattern is rewritten whole: one that also binds a name nothing exports, or a name a
+// block declares again, keeps every name it binds live.
+var [again] = [1];
+var [again, unexported] = [2, 3];
+export { again };
+export const fromPattern = unexported;
+var [blocked, beside] = [1, 2];
+{
+  var blocked = 3;
+}
+export { blocked, beside };
+
+// A function or class named by its binding keeps that name.
+var [named]: Array<() => void> = [];
+var named = function () {};
+export { named };
+export const [byDefault = function () {}, DefaultClass = class {}] = [];

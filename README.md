@@ -433,7 +433,8 @@ source is looked for beside the name a request reaches, before a symlink there i
 followed. The
 `require()` calls of every TypeScript file outside `node_modules` resolve this
 way, and so do the extensionless ones of a `.js` file compiled from an ES module;
-a file a package ships keeps its compiled `.js`.
+a file a package ships keeps its compiled `.js`. `require.resolve()` with a
+`paths` option returns what Node.js finds in those directories.
 
 Stack traces report the source's lines; for a file Node.js loads through the
 module hooks — the entry point, or one an ES module imports — a column can be a

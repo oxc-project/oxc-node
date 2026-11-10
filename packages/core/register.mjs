@@ -175,7 +175,11 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
   // request does here too: an ES module compiled to CommonJS finds what it imported as
   // an ES module (#905). Each file an alias maps to resolves through this function, so
   // the rules below apply to it as well.
-  if (mapsThroughTsconfig(request, parent)) {
+  // `require.resolve(request, { paths })` searches other directories, which the ES
+  // module resolver has no notion of: what Node.js finds there is the answer, with no
+  // tsconfig alias before it and no source beside the caller after it.
+  const searchedElsewhere = Array.isArray(options?.paths);
+  if (!searchedElsewhere && mapsThroughTsconfig(request, parent)) {
     const candidates = tsconfigPathCandidates(process.cwd(), parent.filename, request);
     // Finding the importer's tsconfig reads it.
     if (watch) {
@@ -209,7 +213,12 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
         }
       }
       const filename = parent?.filename;
-      if (typeof filename === "string" && !inNodeModules(filename) && !isBuiltin(request)) {
+      if (
+        !searchedElsewhere &&
+        typeof filename === "string" &&
+        !inNodeModules(filename) &&
+        !isBuiltin(request)
+      ) {
         const found = PATH_REQUEST.test(request)
           ? // The ES module resolver's other candidates — `index.ts` in a directory, say
             // — and its report of them to watch mode, so creating one restarts the app.
@@ -243,7 +252,9 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
   // The output may be a symlink: Node.js has followed it, and the source sits beside
   // the name the request reaches, as the ES module resolver looks for it.
   let source;
-  if (resolvesSourceFirst(request, parent) && !inNodeModules(resolved)) {
+  if (searchedElsewhere) {
+    // Nothing to probe beside the caller.
+  } else if (resolvesSourceFirst(request, parent) && !inNodeModules(resolved)) {
     const named = requested(request, parent.filename, resolved);
     const file = !throughDirectory(request, parent.filename, resolved);
     // An extensionless request takes the ES module resolver's extension order first;
@@ -380,8 +391,8 @@ function resolvesSourceFirst(request, parent) {
  * @returns {string}
  */
 function requested(request, filename, resolved) {
-  // `./foo/` names the directory only, never a `foo.js` beside it.
-  if (/[\\/]$/.test(request)) {
+  // `./foo/`, `.` and `..` name the directory only, never a `foo.js` beside it.
+  if (/(?:[\\/]|(?:^|[\\/])\.\.?)$/.test(request)) {
     return resolved;
   }
   const path = resolvePath(dirname(filename), request);

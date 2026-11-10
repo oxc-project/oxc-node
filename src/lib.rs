@@ -3067,10 +3067,23 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
     // `[exports.a = 1, exports.b = f()] = v;`, which takes every binding of the pattern
     // being exported, each under one name.
     let mut destructured: HashSet<&str> = HashSet::new();
+    // A function or class named by its binding (`var x = function () {}`, or a default
+    // `[f = () => {}]`) would lose that name were the binding a member.
+    let mut names_a_function: HashSet<&str> = HashSet::new();
     for statement in program.body.iter().skip(hoisted) {
         let Statement::VariableDeclaration(declaration) = statement else { continue };
         for declarator in &declaration.declarations {
             let names = declarator.id.get_binding_identifiers();
+            let named = match declarator.id.get_binding_identifier() {
+                Some(_) => declarator
+                    .init
+                    .as_ref()
+                    .is_some_and(Expression::is_anonymous_function_definition),
+                None => names_a_default(&declarator.id),
+            };
+            if named {
+                names_a_function.extend(names.iter().map(|ident| ident.name.as_str()));
+            }
             if declarator.id.get_binding_identifier().is_none()
                 && declarator.init.is_some()
                 && names.iter().all(|ident| export_names.get(ident.name.as_str()) == Some(&1))
@@ -3092,6 +3105,44 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
     // How many times each symbol is declared anywhere in the file.
     let mut bindings = BindingCount::default();
     bindings.visit_program(program);
+    // A `var` also declared inside a block or loop header (`for (var x of …)`) is set
+    // there, where only its own declaration can be: it stays live through a getter.
+    let nested_name = |name: &str| {
+        scoping.get_root_binding(name.into()).is_some_and(|symbol| {
+            bindings.0.get(&symbol).copied().unwrap_or(0)
+                > declarations.get(name).copied().unwrap_or(0)
+        })
+    };
+    // A pattern is rewritten whole, so every binding of every pattern that declares a
+    // destructured name must become a member too: `var [x] = a; var [x, local] = b;`
+    // keeps `x` live through a getter, and with it the other names those patterns bind.
+    // Each name must also take the member arm below: declared by a `var`, `let` or
+    // `const` last, not by a function declaration (`var [x] = a; function x() {}`).
+    destructured.retain(|name| {
+        !nested_name(name)
+            && !names_a_function.contains(name)
+            && matches!(declared_at.get(name), Some((_, false)))
+    });
+    loop {
+        let before = destructured.len();
+        for statement in program.body.iter().skip(hoisted) {
+            let Statement::VariableDeclaration(declaration) = statement else { continue };
+            for declarator in &declaration.declarations {
+                if declarator.id.get_binding_identifier().is_some() {
+                    continue;
+                }
+                let names = declarator.id.get_binding_identifiers();
+                if names.iter().any(|ident| !destructured.contains(ident.name.as_str())) {
+                    for ident in &names {
+                        destructured.remove(ident.name.as_str());
+                    }
+                }
+            }
+        }
+        if destructured.len() == before {
+            break;
+        }
+    }
 
     let mut prelude = String::from("\"use strict\";\n");
     prelude.push_str("Object.defineProperty(exports, \"__esModule\", { value: true });\n");
@@ -3114,12 +3165,7 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
             scoping.get_resolved_references(symbol).any(|reference| reference.is_write())
         }) || local
             .is_some_and(|local| declarations.get(local).is_some_and(|&n| n > 1));
-        // A `var` also declared inside a block or loop header (`for (var x of …)`) is set
-        // there, where only its own declaration can be: it stays live through a getter.
-        let nested = symbol.is_some_and(|symbol| {
-            bindings.0.get(&symbol).copied().unwrap_or(0)
-                > local.and_then(|local| declarations.get(local).copied()).unwrap_or(0)
-        });
+        let nested = local.is_some_and(nested_name);
         let written = written || nested;
         let declared = local.and_then(|local| declared_at.get(local).copied());
         match (local, declared, symbol) {
@@ -3403,6 +3449,27 @@ fn exported_declarations<'a>(
         }
     }
     statements
+}
+
+/// Whether `pattern` gives a binding a default that takes its name
+/// (`[f = function () {}]`).
+fn names_a_default(pattern: &BindingPattern<'_>) -> bool {
+    match pattern {
+        BindingPattern::BindingIdentifier(_) => false,
+        BindingPattern::AssignmentPattern(assignment) => {
+            (assignment.left.get_binding_identifier().is_some()
+                && assignment.right.is_anonymous_function_definition())
+                || names_a_default(&assignment.left)
+        }
+        BindingPattern::ArrayPattern(array) => {
+            array.elements.iter().flatten().any(names_a_default)
+                || array.rest.as_ref().is_some_and(|rest| names_a_default(&rest.argument))
+        }
+        BindingPattern::ObjectPattern(object) => {
+            object.properties.iter().any(|property| names_a_default(&property.value))
+                || object.rest.as_ref().is_some_and(|rest| names_a_default(&rest.argument))
+        }
+    }
 }
 
 /// `pattern` as an assignment target, its bindings replaced by the `exports` members
@@ -6219,6 +6286,47 @@ mod tests {
         assert!(lowered(&code), "{code}");
         assert!(code.contains("for (var x of"), "{code}");
         assert!(code.contains("get: function() { return x; }"), "{code}");
+
+        // A pattern is rewritten whole, so one that binds a name nothing exports, or a
+        // name a block declares again, keeps its declaration and every name a getter.
+        for (name, source, pattern) in [
+            (
+                "cjs/pattern-local.ts",
+                "var [x] = [1];\nvar [x, local] = [2, 3];\nexport { x };\n",
+                "var [x, local] = [2, 3];",
+            ),
+            (
+                "cjs/pattern-block.ts",
+                "var [x, y] = [1, 2];\n{ var x = 3; }\nexport { x, y };\n",
+                "var [x, y] = [1, 2];",
+            ),
+            (
+                "cjs/pattern-function.ts",
+                "var [x, y] = [1, 2];\nfunction x() {}\nexport { x, y };\n",
+                "var [x, y] = [1, 2];",
+            ),
+            // A member would not name the function, as `x` does.
+            (
+                "cjs/pattern-named.ts",
+                "var [x] = [0];\nvar x = function () {};\nexport { x };\n",
+                "var [x] = [0];",
+            ),
+            (
+                "cjs/pattern-default.ts",
+                "export const [x = function () {}, y = class {}] = [];\n",
+                "const [x = function() {}, y = class {}] = [];",
+            ),
+        ] {
+            let code = run(name, source);
+            assert!(lowered(&code), "{code}");
+            assert!(code.contains(pattern), "{code}");
+            assert!(!code.contains("[exports."), "{code}");
+            // A getter when `x` is written again, else set once it is declared.
+            assert!(
+                code.contains("get: function() { return x; }") || code.contains("exports.x = x;"),
+                "{code}"
+            );
+        }
 
         // A side-effect import is a bare `require()`, as `tsc` emits it.
         let code = run("cjs/side.ts", "import './b';\nexport const n = 1;\n");
