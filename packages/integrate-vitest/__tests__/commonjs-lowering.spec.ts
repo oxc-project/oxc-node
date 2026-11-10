@@ -49,7 +49,12 @@ function fixture(
   return root;
 }
 
-function run(root: string, entry: string, nodeArgs: string[] = []): string {
+function run(
+  root: string,
+  entry: string,
+  nodeArgs: string[] = [],
+  env: Record<string, string> = {},
+): string {
   const result = spawnSync(
     process.execPath,
     [...nodeArgs, "--import", "@oxc-node/core/register", entry],
@@ -63,6 +68,7 @@ function run(root: string, entry: string, nodeArgs: string[] = []): string {
         OXC_TRANSFORM_ALL: undefined,
         TS_NODE_PROJECT: undefined,
         OXC_TSCONFIG_PATH: undefined,
+        ...env,
       },
       timeout: 30_000,
     },
@@ -282,6 +288,31 @@ describe("a TypeScript file in a CommonJS package", () => {
       "main.ts": 'import { where } from "./foo/";\nconsole.log("where:", where);\n',
     });
     expect(run(root, "./main.ts")).toMatch(/^where: foo\/index\.js$/m);
+  });
+
+  test("falls back to the referenced project's `baseUrl` when an alias's files are missing", () => {
+    // An explicitly named tsconfig maps the aliases of the project it references that
+    // holds the file, and so takes that project's `baseUrl` too.
+    const root = fixture({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: NODENEXT,
+        files: [],
+        references: [{ path: "./app" }],
+      }),
+      "app/tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          ...NODENEXT,
+          composite: true,
+          baseUrl: ".",
+          paths: { "lib/*": ["./missing/*"] },
+        },
+      }),
+      "app/lib/value.ts": 'export const where: string = "app/lib/value.ts";\n',
+      "app/main.ts": 'import { where } from "lib/value";\nconsole.log("where:", where);\n',
+    });
+    expect(run(root, "./app/main.ts", [], { OXC_TSCONFIG_PATH: "tsconfig.json" })).toMatch(
+      /^where: app\/lib\/value\.ts$/m,
+    );
   });
 
   test("keeps `#` in a require()'s file name, as Node.js does", () => {

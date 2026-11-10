@@ -3006,11 +3006,14 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
 
     // Where each top-level binding is declared, and the imports by binding.
     let mut declared_at = HashMap::new();
+    // A `var` declared more than once is written by each initializer.
+    let mut declarations: HashMap<&str, usize> = HashMap::new();
     let mut imports = HashMap::new();
     for (index, statement) in program.body.iter().enumerate().skip(hoisted) {
         let (names, hoisted_function) = top_level_bindings(statement);
         for name in names {
             declared_at.insert(name, (index, hoisted_function));
+            *declarations.entry(name).or_default() += 1;
         }
         if let Statement::VariableDeclaration(declaration) = statement
             && let [declarator] = declaration.declarations.as_slice()
@@ -3095,9 +3098,12 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
             _ => None,
         };
         let symbol = local.and_then(|local| scoping.get_root_binding(local.into()));
+        // A redeclared `var` is reassigned too: `tsc` makes it `exports.x` itself, so
+        // each initializer publishes it where it runs.
         let written = symbol.is_some_and(|symbol| {
             scoping.get_resolved_references(symbol).any(|reference| reference.is_write())
-        });
+        }) || local
+            .is_some_and(|local| declarations.get(local).is_some_and(|&n| n > 1));
         let declared = local.and_then(|local| declared_at.get(local).copied());
         match (local, declared, symbol) {
             (Some(local), Some((_, true)), _) if !written => {
@@ -3866,7 +3872,7 @@ fn path_alias_candidates(cwd: PathBuf, parent: &Path, specifier: &str) -> Vec<Pa
     let mut candidates = project.resolve_path_alias_or_base_url(specifier);
     // That adds `baseUrl` only when no alias matches. The resolver also tries it when
     // an alias's files are all missing.
-    if let Some(base_url) = tsconfig.compiler_options.base_url.as_deref()
+    if let Some(base_url) = project.compiler_options.base_url.as_deref()
         && base_url.is_absolute()
     {
         let path = base_url.join(specifier);
@@ -6163,6 +6169,16 @@ mod tests {
             "{code}"
         );
         assert!(!code.contains("const [a"), "{code}");
+
+        // A redeclared `var` is `exports.x` itself, so its initializer publishes it.
+        let code = run(
+            "cjs/redeclared.ts",
+            "var x: number = 1;\nexport { x };\nexport const y = x;\nvar x: number;\n",
+        );
+        assert!(lowered(&code), "{code}");
+        assert!(code.contains("exports.x = 1;"), "{code}");
+        assert!(code.contains("const y = exports.x;"), "{code}");
+        assert!(!code.contains("var x"), "{code}");
 
         // A side-effect import is a bare `require()`, as `tsc` emits it.
         let code = run("cjs/side.ts", "import './b';\nexport const n = 1;\n");
