@@ -379,7 +379,8 @@ const PATH_REQUEST = /^(?:\.{1,2}(?:[\\/]|$)|[\\/]|[a-zA-Z]:[\\/])/;
 /**
  * The conditions Node.js resolves a `require()` with, for the ES module resolver to map
  * a request as Node.js did: its built-in ones, and what `--conditions` (`-C`) adds, from
- * `NODE_OPTIONS` or the command line.
+ * `NODE_OPTIONS`, the command line or the `nodeOptions` of a configuration file
+ * (`--experimental-config-file`, `--config-file`, `--experimental-default-config-file`).
  */
 const REQUIRE_CONDITIONS = (() => {
   const options = (process.env.NODE_OPTIONS ?? "").match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
@@ -388,16 +389,48 @@ const REQUIRE_CONDITIONS = (() => {
   /** @type {string[]} */
   const added = [];
   let addons = true;
+  /** @type {string | undefined} */
+  let configFile;
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     const match = /^(?:--conditions|-C)(?:=(.*))?$/.exec(arg);
+    const config = /^--(?:experimental-)?config-file(?:=(.*))?$/.exec(arg);
     if (match) {
       const value = match[1] ?? args[++index];
       if (value) {
         added.push(value);
       }
+    } else if (config) {
+      configFile = config[1] ?? args[++index];
+    } else if (arg === "--experimental-default-config-file") {
+      configFile = "node.config.json";
     } else if (/^--(?:no-)?addons(?:=|$)/.test(arg)) {
       addons = !arg.startsWith("--no-");
+    }
+  }
+  if (configFile) {
+    // Node.js has read it already, and adds its conditions to the command line's.
+    let nodeOptions;
+    try {
+      nodeOptions = JSON.parse(readFileSync(resolvePath(configFile), "utf8"))?.nodeOptions;
+    } catch {
+      // Node.js reports a configuration file it cannot read.
+    }
+    const value = nodeOptions?.conditions;
+    for (const condition of typeof value === "string"
+      ? [value]
+      : Array.isArray(value)
+        ? value
+        : []) {
+      if (typeof condition === "string" && condition) {
+        added.push(condition);
+      }
+    }
+    if (
+      typeof nodeOptions?.addons === "boolean" &&
+      !args.some((arg) => /^--(?:no-)?addons(?:=|$)/.test(arg))
+    ) {
+      addons = nodeOptions.addons;
     }
   }
   if (addons) {
@@ -481,7 +514,8 @@ function compiledDependency(parent) {
   return (
     typeof filename === "string" &&
     inNodeModules(filename) &&
-    /\.(?:[cm]?ts|tsx|jsx?)$/.test(filename) &&
+    // An extensionless entry (`bin/run`) is JavaScript too.
+    (/\.(?:[cm]?ts|tsx|jsx?)$/.test(filename) || extname(filename) === "") &&
     /** @type {{ __esModule?: unknown } | undefined} */ (parent?.exports)?.__esModule === true &&
     transformsDep(filename)
   );

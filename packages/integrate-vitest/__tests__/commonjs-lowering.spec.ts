@@ -1058,6 +1058,50 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
     expect(run(root, "./built.ts", [], tsconfig)).toContain("built: a/config.json\n");
   });
 
+  test("resolves a lowered extensionless dependency entry's relative import as an ES module", () => {
+    // `bin/run` is a package's entry without an extension; `../config` finds
+    // `config.mjs` before the `config.json` Node.js finds.
+    const root = fixture(
+      {
+        "node_modules/a/package.json": JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+          type: "commonjs",
+        }),
+        "node_modules/a/bin/run":
+          'import { where } from "../config";\nconsole.log("where:", typeof require, where);\n',
+        "node_modules/a/config.mjs": 'export const where = "a/config.mjs";\n',
+        "node_modules/a/config.json": '{ "where": "a/config.json" }\n',
+      },
+      { ...NODENEXT, allowJs: true, resolveJsonModule: true },
+    );
+    const env = { OXC_TRANSFORM_ALL: "1", OXC_TSCONFIG_PATH: join(root, "tsconfig.json") };
+    expect(run(root, "./node_modules/a/bin/run", [], env)).toContain(
+      "where: function a/config.mjs\n",
+    );
+  });
+
+  test("maps a request with the conditions of Node.js' configuration file", () => {
+    // `#dep` takes its `development` branch, as the ES module resolver does, not the
+    // `prod.ts` source of its default branch.
+    const root = fixture({
+      "package.json": JSON.stringify({
+        type: "commonjs",
+        imports: { "#dep": { development: "./dev.js", default: "./prod.js" } },
+      }),
+      "node.config.json": JSON.stringify({ nodeOptions: { conditions: ["development"] } }),
+      "dev.js": 'exports.where = "dev.js";\n',
+      "prod.ts": 'export const where: string = "prod.ts";\n',
+      "main.ts": '// @ts-nocheck\nimport { where } from "#dep";\nconsole.log("where:", where);\n',
+    });
+    for (const args of [
+      ["--experimental-config-file=node.config.json"],
+      ["--experimental-default-config-file"],
+    ]) {
+      expect(run(root, "./main.ts", args), args[0]).toContain("where: dev.js\n");
+    }
+  });
+
   test("a path request into a package takes the ES module resolver's answer", () => {
     // `pkg` has no `main`: the ES module resolver finds `index.mjs`, Node.js `index.json`.
     // A package's compiled `lib.js` stays before its `lib.ts`, as it does for both.
