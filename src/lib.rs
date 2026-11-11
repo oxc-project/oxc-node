@@ -3258,10 +3258,15 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
                     // gets `undefined`, not a TDZ error.
                     // After the first declaration of a `var` declared again, where an
                     // earlier initializer has already set it.
-                    // A `var` also set inside a block may be set before that: its getter
-                    // comes first, and reads `undefined` until then.
+                    // A `var` has no TDZ, and may be set before its declaration finishes —
+                    // inside a block, or by its own initializer: its getter comes first,
+                    // and reads `undefined` until then.
                     let anchor = getter_object(value)
-                        .filter(|object| !nested_name(object))
+                        .filter(|&object| {
+                            !scoping.get_root_binding(object.into()).is_some_and(|symbol| {
+                                scoping.symbol_flags(symbol).is_function_scoped_declaration()
+                            })
+                        })
                         .and_then(|object| first_declared.get(object))
                         .filter(|&&(_, hoisted_function)| !hoisted_function);
                     match anchor {
@@ -6391,16 +6396,25 @@ mod tests {
             );
         }
 
-        // A `var` declared again has its getter after the first declaration, where an
-        // import cycle can read what the first initializer set.
-        let code = run(
-            "cjs/var-again.ts",
-            "var x = 1;\nexport { x, x as alias };\nexport const seen = 0;\nvar x;\n",
-        );
-        assert!(lowered(&code), "{code}");
-        let getter = code.find("get: function() { return x; }").expect("a getter for x");
-        assert!(code.find("var x = 1;") < Some(getter), "{code}");
-        assert!(Some(getter) < code.find("var x;"), "{code}");
+        // A `var` has its getter before the body, where an import cycle reads what any
+        // initializer has set so far: a first one, or its own while it runs.
+        for (name, source, first) in [
+            (
+                "cjs/var-again.ts",
+                "var x = 1;\nexport { x, x as alias };\nexport const seen = 0;\nvar x;\n",
+                "var x = 1;",
+            ),
+            (
+                "cjs/var-self.ts",
+                "export var x: number = (x = 1, 2);\nexport { x as alias };\n",
+                "var x = (x = 1, 2);",
+            ),
+        ] {
+            let code = run(name, source);
+            assert!(lowered(&code), "{name}: {code}");
+            let getter = code.find("get: function() { return x; }").expect("a getter for x");
+            assert!(Some(getter) < code.find(first), "{name}: {code}");
+        }
 
         // A side-effect import is a bare `require()`, as `tsc` emits it.
         let code = run("cjs/side.ts", "import './b';\nexport const n = 1;\n");

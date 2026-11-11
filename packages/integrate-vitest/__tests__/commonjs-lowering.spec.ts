@@ -741,6 +741,18 @@ describe("a TypeScript file in a CommonJS package", () => {
     expect(run(root, "./main.ts")).toContain("seen: 1\n");
   });
 
+  test("publishes a `var` its own initializer sets", () => {
+    // `self.x` reads the export while `x`'s initializer runs: `1`, as under `tsc`.
+    const root = fixture({
+      "mod.ts":
+        'import * as self from "./mod";\n' +
+        "export var x: number = ((x = 1), (self as { x?: number }).x as number);\n" +
+        "export { x as alias };\n",
+      "main.ts": 'import { x, alias } from "./mod";\nconsole.log("x:", x, alias);\n',
+    });
+    expect(run(root, "./main.ts")).toContain("x: 1 1\n");
+  });
+
   test("resolves a package `imports` entry with the active conditions", () => {
     // Node.js picks `./dev.js` under `--conditions=development`, so its source is
     // `dev.ts`, not the `default` target's.
