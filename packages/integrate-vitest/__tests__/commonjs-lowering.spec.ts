@@ -605,6 +605,29 @@ describe("a TypeScript file in a CommonJS package", () => {
     },
   );
 
+  // Windows lets only elevated processes create file symlinks. `require()` takes the
+  // `module-sync` branch where it can load an ES module.
+  test.skipIf(
+    process.platform === "win32" ||
+      !(process.features as { require_module?: boolean }).require_module,
+  )("finds the source beside a symlink the `module-sync` condition maps to", () => {
+    const root = fixture({
+      "build/real.js": 'exports.where = "build/real.js";\n',
+      "other.js": 'exports.where = "other.js";\n',
+      "sync.ts": 'export const where: string = "sync.ts";\n',
+      "main.ts": 'import { where } from "#dep";\nconsole.log("where:", where);\n',
+    });
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({
+        ...JSON.parse(COMMONJS),
+        imports: { "#dep": { "module-sync": "./sync.js", default: "./other.js" } },
+      }),
+    );
+    symlinkSync(join("build", "real.js"), join(root, "sync.js"));
+    expect(run(root, "./main.ts")).toContain("where: sync.ts\n");
+  });
+
   // Windows lets only elevated processes create file symlinks.
   test.skipIf(process.platform === "win32")(
     "finds the source beside a package `imports` target that links into `node_modules`",

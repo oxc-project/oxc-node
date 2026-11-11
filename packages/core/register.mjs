@@ -356,24 +356,37 @@ const SOURCE_EXTENSIONS = [
 const PATH_REQUEST = /^(?:\.{1,2}(?:[\\/]|$)|[\\/]|[a-zA-Z]:[\\/])/;
 
 /**
- * The conditions `--conditions` (`-C`) adds to every request, from the command line or
- * `NODE_OPTIONS`, for the ES module resolver to map a request as Node.js did.
+ * The conditions Node.js resolves a `require()` with, for the ES module resolver to map
+ * a request as Node.js did: its built-in ones, and what `--conditions` (`-C`) adds, from
+ * `NODE_OPTIONS` or the command line.
  */
-const USER_CONDITIONS = (() => {
+const REQUIRE_CONDITIONS = (() => {
   const options = (process.env.NODE_OPTIONS ?? "").match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
   const args = [...options.map((option) => option.replaceAll('"', "")), ...process.execArgv];
+  const conditions = ["node", "require"];
   /** @type {string[]} */
-  const conditions = [];
+  const added = [];
+  let addons = true;
   for (let index = 0; index < args.length; index++) {
-    const match = /^(?:--conditions|-C)(?:=(.*))?$/.exec(args[index]);
+    const arg = args[index];
+    const match = /^(?:--conditions|-C)(?:=(.*))?$/.exec(arg);
     if (match) {
       const value = match[1] ?? args[++index];
       if (value) {
-        conditions.push(value);
+        added.push(value);
       }
+    } else if (/^--(?:no-)?addons(?:=|$)/.test(arg)) {
+      addons = !arg.startsWith("--no-");
     }
   }
-  return conditions;
+  if (addons) {
+    conditions.push("node-addons");
+  }
+  // `require()` loads an ES module, and takes its `module-sync` branch.
+  if (/** @type {{ require_module?: boolean }} */ (process.features).require_module) {
+    conditions.push("module-sync");
+  }
+  return [...conditions, ...added];
 })();
 
 /** A request that names a directory only: `./foo/`, `.`, `..`. */
@@ -724,7 +737,7 @@ function resolveNative(request, filename) {
         { getCurrentDirectory: () => process.cwd() },
         request,
         {
-          conditions: ["node", "require", ...USER_CONDITIONS],
+          conditions: REQUIRE_CONDITIONS,
           importAttributes: {},
           parentURL: pathToFileURL(filename).href,
         },

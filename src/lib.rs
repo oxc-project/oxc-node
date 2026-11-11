@@ -2834,9 +2834,20 @@ fn lowers_to_commonjs(
                 // named `exports` would take it.
                 && scoping.symbol_ids().all(|symbol| {
                     let name = scoping.symbol_name(symbol);
-                    // The runner's helpers are found by their `__vite_ssr_` names.
-                    (name != "exports" && !name.starts_with("__vite_ssr_")) || erased(symbol)
+                    // The runner's helpers are found by their `__vite_ssr_` names: a
+                    // declared global (`declare function __vite_ssr_import__`) is called
+                    // at run time too, so only a type keeps the name free.
+                    if name.starts_with("__vite_ssr_") {
+                        let flags = scoping.symbol_flags(symbol);
+                        return flags.is_type_import() || !flags.is_value();
+                    }
+                    name != "exports" || erased(symbol)
                 })
+                // As is a global used without a declaration.
+                && !scoping
+                    .root_unresolved_references()
+                    .keys()
+                    .any(|name| name.as_str().starts_with("__vite_ssr_"))
         }
 }
 
@@ -6471,6 +6482,12 @@ mod tests {
                 "cjs/runner-dynamic.ts",
                 "export function f(__vite_ssr_dynamic_import__: any) { return __vite_ssr_dynamic_import__('x'); }\n",
             ),
+            // A declared global, or one used without a declaration, is called at run time.
+            (
+                "cjs/runner-ambient.ts",
+                "declare function __vite_ssr_dynamic_import__(x: string): number;\nexport const n = __vite_ssr_dynamic_import__('x');\n",
+            ),
+            ("cjs/runner-global.ts", "export const n = __vite_ssr_import__('x');\n"),
             // `tsc` itself emits an ES module for these.
             ("esnext/lib.ts", "export const n = 1;\n"),
             ("preserve/lib.ts", "export const n = 1;\n"),
