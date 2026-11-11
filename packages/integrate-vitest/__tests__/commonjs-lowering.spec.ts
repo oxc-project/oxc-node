@@ -1174,6 +1174,40 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
     ).toContain("where: dev.js\n");
   });
 
+  // With native addons off only the WASI binding loads (`NAPI_RS_FORCE_WASI`, the
+  // `test-wasi` CI job).
+  test.skipIf(process.env.NAPI_RS_FORCE_WASI !== "true")(
+    "maps a request without `node-addons` where Node.js has addons off",
+    () => {
+      // `--no-addons`, its `--no_addons` spelling, and a configuration file's `addons`
+      // where the running version reads it: `#dep` takes the branch Node.js takes.
+      const root = fixture({
+        "package.json": JSON.stringify({
+          type: "commonjs",
+          imports: { "#dep": { "node-addons": "./addon.js", default: "./fallback.js" } },
+        }),
+        "no-addons.json": JSON.stringify({ nodeOptions: { addons: false } }),
+        "addon.js": 'exports.where = "addon.js";\n',
+        "fallback.js": 'exports.where = "fallback.js";\n',
+        "node.cjs": 'console.log("where:", require("#dep").where);\n',
+        "main.ts": '// @ts-nocheck\nimport { where } from "#dep";\nconsole.log("where:", where);\n',
+      });
+      for (const args of [
+        ["--no-addons"],
+        ["--no_addons"],
+        ["--experimental-config-file=no-addons.json"],
+      ]) {
+        const node = spawnSync(process.execPath, [...args, "node.cjs"], {
+          cwd: root,
+          encoding: "utf8",
+          env: { ...process.env, NODE_OPTIONS: undefined },
+        }).stdout;
+        expect(node, args[0]).toMatch(/^where: /);
+        expect(run(root, "./main.ts", args), args[0]).toContain(node);
+      }
+    },
+  );
+
   test("loads a module with thousands of exports", () => {
     // `tsc` clears exports in chains of 50; one chain of all of them nests too deep.
     const exports = Array.from(

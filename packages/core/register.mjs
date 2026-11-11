@@ -387,17 +387,13 @@ const REQUIRE_CONDITIONS = (() => {
   const conditions = ["node", "require"];
   /** @type {string[]} */
   const added = [];
-  let addons = true;
   /** @type {string | undefined} */
   let explicitFile;
   let defaultFile = false;
   let defaultLast = false;
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
-    // Node.js reads `_` in an option's name as `-` (`--no_addons`), but not in the
-    // configuration file flags, which it reads before the others.
-    const flag = arg.replace(/^--[^=]*/, (name) => name.replaceAll("_", "-"));
-    const match = /^(?:--conditions|-C)(?:=(.*))?$/.exec(flag);
+    const match = /^(?:--conditions|-C)(?:=(.*))?$/.exec(arg);
     const config = /^--(?:experimental-)?config-file(?:=(.*))?$/.exec(arg);
     if (match) {
       const value = match[1] ?? args[++index];
@@ -410,8 +406,6 @@ const REQUIRE_CONDITIONS = (() => {
     } else if (arg === "--experimental-default-config-file") {
       defaultFile = true;
       defaultLast = true;
-    } else if (/^--(?:no-)?addons(?:=|$)/.test(flag)) {
-      addons = !flag.startsWith("--no-");
     }
   }
   // Given both, Node.js 24.19 and 26.1 and later take the flag that comes last; earlier
@@ -446,8 +440,17 @@ const REQUIRE_CONDITIONS = (() => {
       }
     }
   }
-  if (addons) {
-    conditions.push("node-addons");
+  // `node-addons` is active unless native addons are off — by `--no-addons`, its
+  // `--no_addons` spelling, or a configuration file's `addons`, where the running
+  // version reads it. Node.js refuses `process.dlopen()` then, before it looks for the
+  // file, and so tells which applies.
+  try {
+    // A file that is not there: loading it fails either way.
+    process.dlopen({ exports: {} }, join(dirname(fileURLToPath(import.meta.url)), ".no-addon"));
+  } catch (error) {
+    if (/** @type {{ code?: unknown }} */ (error).code !== "ERR_DLOPEN_DISABLED") {
+      conditions.push("node-addons");
+    }
   }
   // `require()` loads an ES module, and takes its `module-sync` branch.
   if (/** @type {{ require_module?: boolean }} */ (process.features).require_module) {
