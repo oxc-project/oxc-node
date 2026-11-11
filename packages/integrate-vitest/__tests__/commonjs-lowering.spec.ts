@@ -712,6 +712,28 @@ describe("a TypeScript file in a CommonJS package", () => {
     );
   });
 
+  test("finds a package's source by its output's name from a compiled dependency", () => {
+    // With the tsconfig named, `OXC_TRANSFORM_ALL` compiles `a` to CommonJS too.
+    const root = fixture({
+      "node_modules/a/package.json": JSON.stringify({
+        name: "a",
+        version: "1.0.0",
+        type: "commonjs",
+        main: "index.ts",
+      }),
+      "node_modules/a/index.ts":
+        'import { feature } from "b/feature.js";\nexport const fromA = feature;\n',
+      "node_modules/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+      "node_modules/b/feature.ts": 'export const feature: string = "b/feature.ts";\n',
+      "main.ts": 'import { fromA } from "a";\nconsole.log("feature:", fromA);\n',
+    });
+    const env = {
+      OXC_TRANSFORM_ALL: "typescript",
+      OXC_TSCONFIG_PATH: join(root, "tsconfig.json"),
+    };
+    expect(run(root, "./main.ts", [], env)).toContain("feature: b/feature.ts\n");
+  });
+
   test("resolves an extensionless import in the ES module resolver's order", () => {
     // Node.js tries the registered extensions in its own order and finds `dep.jsx`;
     // the ES module resolver found `dep.ts` first.

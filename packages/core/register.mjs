@@ -213,13 +213,18 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
         }
       }
       const filename = parent?.filename;
+      // A dependency compiled from an ES module (`OXC_TRANSFORM_ALL`) found it as one
+      // too, but only its source: what Node.js found missing is no compiled file.
+      const dependency = typeof filename === "string" && inNodeModules(filename);
       if (
         !searchedElsewhere &&
         typeof filename === "string" &&
-        !inNodeModules(filename) &&
+        (!dependency ||
+          /** @type {{ __esModule?: unknown } | undefined} */ (parent?.exports)?.__esModule ===
+            true) &&
         !isBuiltin(request)
       ) {
-        const found = PATH_REQUEST.test(request)
+        const native = PATH_REQUEST.test(request)
           ? // The ES module resolver's other candidates — `index.ts` in a directory, say
             // — and its report of them to watch mode, so creating one restarts the app.
             resolveNative(request, filename)
@@ -238,6 +243,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
             // A package subpath Node.js names no file for (`pkg/feature.js` of a package
             // that ships `feature.ts`): the source the ES module resolver finds for it.
             sourceOnly(resolveNative(request, filename)));
+        const found = dependency ? sourceOnly(native) : native;
         if (found !== undefined) {
           return found;
         }
