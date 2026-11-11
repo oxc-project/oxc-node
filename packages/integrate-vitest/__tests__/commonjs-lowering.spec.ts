@@ -120,6 +120,31 @@ describe.skipIf(!LOWERS)("a file compiled to CommonJS that imports an ES module"
     },
   );
 
+  // As above. A Worker with the feature on loads the addon too, after which the main
+  // thread, with it off, still keeps its files ES modules.
+  test.skipIf(process.env.NAPI_RS_FORCE_WASI === "true")(
+    "keeps that choice per thread, apart from a Worker's",
+    () => {
+      const root = fixture({
+        "lib.mts": 'export const m = "lib.mts";\n',
+        "main.ts":
+          'import { m } from "./lib.mjs";\n' +
+          'console.log("format:", typeof require === "undefined" ? "module" : "commonjs", m);\n',
+        "run.mjs":
+          'import { Worker } from "node:worker_threads";\n' +
+          'const worker = new Worker("process.exit(0)", {\n' +
+          "  eval: true,\n" +
+          '  execArgv: ["--experimental-require-module", "--import", "@oxc-node/core/register"],\n' +
+          "});\n" +
+          'await new Promise((resolve) => worker.on("exit", resolve));\n' +
+          'await import("./main.ts");\n',
+      });
+      expect(run(root, "./run.mjs", ["--no-experimental-require-module"])).toContain(
+        "format: module lib.mts\n",
+      );
+    },
+  );
+
   test("loads it", () => {
     const root = fixture({
       "meta.ts": "export const url = import.meta.url.slice(-7);\n",
@@ -881,6 +906,42 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
       OXC_TSCONFIG_PATH: join(root, "tsconfig.json"),
     };
     expect(run(root, "./main.ts", [], env)).toContain("where: index.ts\n");
+  });
+
+  test("finds a package's `index.mjs` before the `index.json` Node.js finds", () => {
+    const root = fixture({
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+      "node_modules/pkg/index.mjs": 'export const where = "index.mjs";\n',
+      "node_modules/pkg/index.json": '{ "where": "index.json" }\n',
+      "main.ts": 'import { where } from "pkg";\nconsole.log("where:", where);\n',
+    });
+    expect(run(root, "./main.ts")).toContain("where: index.mjs\n");
+  });
+
+  test("resolves a compiled dependency's relative import in the package order", () => {
+    // `a` compiles to CommonJS with the tsconfig named; `./config` is `config.ts` for it,
+    // before the `config.json` Node.js finds, as it was as an ES module.
+    const root = fixture(
+      {
+        "node_modules/a/package.json": JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+          type: "commonjs",
+          main: "main.ts",
+        }),
+        "node_modules/a/main.ts":
+          'import { where } from "./config";\nexport const fromA = where;\n',
+        "node_modules/a/config.ts": 'export const where: string = "config.ts";\n',
+        "node_modules/a/config.json": '{ "where": "config.json" }\n',
+        "main.ts": 'import { fromA } from "a";\nconsole.log("where:", fromA);\n',
+      },
+      { ...NODENEXT, resolveJsonModule: true },
+    );
+    const env = {
+      OXC_TRANSFORM_ALL: "typescript",
+      OXC_TSCONFIG_PATH: join(root, "tsconfig.json"),
+    };
+    expect(run(root, "./main.ts", [], env)).toContain("where: config.ts\n");
   });
 
   test("finds a package's source by its output's name from a compiled dependency", () => {

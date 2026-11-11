@@ -709,6 +709,10 @@ struct LoaderContext {
     /// discovery cache. Invalid configs are not cached, so a corrected file is read
     /// again; a newly created config stays invisible for this context's lifetime.
     nearest_tsconfig: Mutex<HashMap<PathBuf, Option<Arc<TsConfig>>>>,
+    /// Whether this environment's Node.js cannot `require()` an ES module a file
+    /// compiled to CommonJS may import: too old, or `--no-require-module`, which a
+    /// Worker can set apart from its parent. Off by default, so an embedder compiles.
+    keeps_es_modules: AtomicBool,
 }
 
 thread_local! {
@@ -1678,12 +1682,9 @@ static NATIVE_EXPLICIT_RESOURCE_MANAGEMENT: AtomicBool = AtomicBool::new(false);
 /// The first Node.js major that runs explicit resource management natively.
 const NATIVE_EXPLICIT_RESOURCE_MANAGEMENT_SINCE: u32 = 24;
 
-/// Whether this Node.js loads an ES module a file compiled to CommonJS `require()`s,
+/// Whether a Node.js version loads an ES module a file compiled to CommonJS `require()`s,
 /// when its module loader ran that file. Older releases crash in their translator
 /// (`cjsCache.get(job.url).exports`), so a file stays an ES module there, as before.
-/// On by default: an embedder without `napi`, or an unknown version, compiles.
-static LOADER_REQUIRES_ESM: AtomicBool = AtomicBool::new(true);
-
 /// Node.js 22.22.3 and 24.8.0 fixed `require()` of an ES module from a file the module
 /// loader ran; 23 never did, and 25 has it from its start.
 fn loader_requires_esm(major: u32, minor: u32, patch: u32) -> bool {
@@ -1714,8 +1715,9 @@ pub fn detect_runtime_syntax(_exports: Object, env: Env) -> Result<()> {
             .ok()
             .flatten()
             == Some(true);
-        LOADER_REQUIRES_ESM.store(
-            require_module && loader_requires_esm(version.major, version.minor, version.patch),
+        // Each Worker loads the addon in its own environment, with its own context.
+        loader_context().keeps_es_modules.store(
+            !(require_module && loader_requires_esm(version.major, version.minor, version.patch)),
             Ordering::Relaxed,
         );
     }
@@ -2846,7 +2848,7 @@ fn lowers_to_commonjs(
             )
         });
     // A Node.js that cannot `require()` an ES module this file may import keeps it one.
-    LOADER_REQUIRES_ESM.load(Ordering::Relaxed)
+    !loader_context().keeps_es_modules.load(Ordering::Relaxed)
         && emits_commonjs
         && module_record.import_metas.is_empty()
         && matches!(package_type(path), Some(PackageType::CommonJs))

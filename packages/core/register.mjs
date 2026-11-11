@@ -282,7 +282,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
   } else if (
     native !== undefined &&
     isFile(native) &&
-    !(inNodeModules(native) && inNodeModules(resolved))
+    (!(inNodeModules(native) && inNodeModules(resolved)) || compiledDependency(parent))
   ) {
     source = native;
   } else if (sourceFirst && !inNodeModules(resolved)) {
@@ -320,16 +320,20 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
     // its source: the ES module resolver tried the source first after mapping.
     // Node.js names only the file a symlink there reaches; the ES module resolver maps
     // the request again and finds the source beside the name it maps to.
-    // The ES module resolver maps it with Node.js' own conditions: a source it finds
-    // stands for what Node.js found — beside a symlink, a symlink itself, a package
-    // `main` Node.js fell back from, or an index before Node.js' `index.json`. In a
-    // package it keeps compiled JavaScript before its source; when it keeps the very file
-    // Node.js found, no source stood before it.
+    // The ES module resolver maps it with Node.js' own conditions: what it finds stands
+    // for what Node.js found — a source beside a symlink, a symlink itself, a package
+    // `main` Node.js fell back from, or an index (`index.ts`, `index.mjs`) before the
+    // `index.json` Node.js takes. In a package it keeps compiled JavaScript before its
+    // source; when it keeps the very file Node.js found, nothing stood before it.
     const found = resolveNative(request, parent.filename);
     source =
       found === resolved
         ? undefined
-        : (sourceOnly(found) ?? (inNodeModules(resolved) ? undefined : sourceBeside(resolved)));
+        : found !== undefined && isFile(found)
+          ? found
+          : inNodeModules(resolved)
+            ? undefined
+            : sourceBeside(resolved);
   }
   // Node.js' own resolution gives the source its real path, as it gave `resolved`, so a
   // symlinked source is one module whichever name reaches it.
@@ -461,8 +465,26 @@ function resolvesSourceFirst(request, parent) {
   return (
     typeof filename === "string" &&
     /\.(?:[cm]?ts|tsx|jsx)$/.test(filename) &&
-    !inNodeModules(filename) &&
+    (!inNodeModules(filename) || compiledDependency(parent)) &&
     PATH_REQUEST.test(request)
+  );
+}
+
+/**
+ * Whether `parent` is a dependency's TypeScript file compiled to CommonJS from an ES
+ * module (`OXC_TRANSFORM_ALL`): the ES module resolver's package order, which keeps
+ * compiled JavaScript before its source, is what it found as an ES module.
+ *
+ * @param {{ filename?: string | null, exports?: unknown } | null | undefined} parent
+ * @returns {boolean}
+ */
+function compiledDependency(parent) {
+  const filename = parent?.filename;
+  return (
+    typeof filename === "string" &&
+    inNodeModules(filename) &&
+    /\.(?:[cm]?ts|tsx)$/.test(filename) &&
+    /** @type {{ __esModule?: unknown } | undefined} */ (parent?.exports)?.__esModule === true
   );
 }
 
@@ -783,16 +805,6 @@ function resolveNative(request, filename) {
       flush(watch, takeWatchDependencies);
     }
   }
-}
-
-/**
- * `path` when it is a TypeScript or JSX source.
- *
- * @param {string | undefined} path
- * @returns {string | undefined}
- */
-function sourceOnly(path) {
-  return path !== undefined && /\.(?:[cm]?ts|tsx|jsx)$/.test(path) ? path : undefined;
 }
 
 /**
