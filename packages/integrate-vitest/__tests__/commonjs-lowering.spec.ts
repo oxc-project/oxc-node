@@ -103,17 +103,22 @@ describe.skipIf(LOWERS)("a Node.js that cannot require() an ES module it loaded"
 });
 
 describe.skipIf(!LOWERS)("a file compiled to CommonJS that imports an ES module", () => {
-  test("stays an ES module where `require()` of an ES module is off", () => {
-    const root = fixture({
-      "lib.mts": 'export const m = "lib.mts";\n',
-      "main.ts":
-        'import { m } from "./lib.mjs";\n' +
-        'console.log("format:", typeof require === "undefined" ? "module" : "commonjs", m);\n',
-    });
-    expect(run(root, "./main.ts", ["--no-experimental-require-module"])).toContain(
-      "format: module lib.mts\n",
-    );
-  });
+  // The WASI binding (`NAPI_RS_FORCE_WASI`, the `test-wasi` CI job) loads through
+  // `require()` of an ES module itself, so without it nothing loads.
+  test.skipIf(process.env.NAPI_RS_FORCE_WASI === "true")(
+    "stays an ES module where `require()` of an ES module is off",
+    () => {
+      const root = fixture({
+        "lib.mts": 'export const m = "lib.mts";\n',
+        "main.ts":
+          'import { m } from "./lib.mjs";\n' +
+          'console.log("format:", typeof require === "undefined" ? "module" : "commonjs", m);\n',
+      });
+      expect(run(root, "./main.ts", ["--no-experimental-require-module"])).toContain(
+        "format: module lib.mts\n",
+      );
+    },
+  );
 
   test("loads it", () => {
     const root = fixture({
