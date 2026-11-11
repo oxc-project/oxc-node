@@ -838,6 +838,15 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
     expect(run(root, "./main.ts", [], env)).toContain("feature: pkg/feature.ts\n");
   });
 
+  test("finds a package's `.js` file by a `.jsx` name, as the ES module resolver does", () => {
+    const root = fixture({
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+      "node_modules/pkg/feature.js": 'exports.feature = "pkg/feature.js";\n',
+      "main.ts": 'import { feature } from "pkg/feature.jsx";\nconsole.log("feature:", feature);\n',
+    });
+    expect(run(root, "./main.ts")).toContain("feature: pkg/feature.js\n");
+  });
+
   test("finds a package's source by its output's name from a compiled dependency", () => {
     // With the tsconfig named, `OXC_TRANSFORM_ALL` compiles `a` to CommonJS too.
     const root = fixture({
