@@ -521,6 +521,24 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
     },
   );
 
+  // Windows lets only elevated processes create file symlinks. Before Node.js 26.2 the
+  // hooks thread resolves the target again, by its own name, and finds `real.ts`.
+  test.skipIf(process.platform === "win32" || !SYNC_HOOKS)(
+    "keeps the output a `#` name links to when no source sits beside that name",
+    () => {
+      // The ES module resolver cannot read `./dep#x.js`; the source beside the link's
+      // target is not the one the request names.
+      const root = fixture({
+        "build/real.js": 'exports.where = "build/real.js";\n',
+        "build/real.ts": 'export const where: string = "build/real.ts";\n',
+        "main.ts":
+          '// @ts-nocheck\nimport { where } from "./dep#x.js";\nconsole.log("where:", where);\n',
+      });
+      symlinkSync(join("build", "real.js"), join(root, "dep#x.js"));
+      expect(run(root, "./main.ts")).toContain("where: build/real.js\n");
+    },
+  );
+
   test("resolves an extensionless entry compiled to CommonJS TypeScript first", () => {
     const root = fixture({
       "tsconfig.cjs.json": JSON.stringify({ compilerOptions: { module: "commonjs" } }),
@@ -1093,6 +1111,8 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
         },
       }),
       "node.config.json": JSON.stringify({ nodeOptions: { conditions: ["development"] } }),
+      // Node.js reads a file that starts with a byte order mark too.
+      "bom.config.json": `\uFEFF${JSON.stringify({ nodeOptions: { conditions: ["development"] } })}`,
       "dev.js": 'exports.where = "dev.js";\n',
       "staging.js": 'exports.where = "staging.js";\n',
       "prod.ts": 'export const where: string = "prod.ts";\n',
@@ -1100,6 +1120,7 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
     });
     for (const args of [
       ["--experimental-config-file=node.config.json"],
+      ["--experimental-config-file=bom.config.json"],
       ["--experimental-default-config-file"],
     ]) {
       expect(run(root, "./main.ts", args), args[0]).toContain("where: dev.js\n");

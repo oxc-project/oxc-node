@@ -298,9 +298,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
       directoryMainOrderSource(request, parent.filename, resolved) ??
       directoryIndexSource(request, parent.filename, resolved) ??
       (file ? extensionlessSource(request, named) : undefined) ??
-      sourceBeside(named) ??
-      (file ? extensionlessSource(request, resolved) : undefined) ??
-      sourceBeside(resolved);
+      sourceBeside(named);
   } else if (fromEsm && !inNodeModules(resolved)) {
     const named = requested(request, parent.filename, resolved);
     const file = !throughDirectory(request, parent.filename, resolved);
@@ -415,7 +413,9 @@ const REQUIRE_CONDITIONS = (() => {
     // `NODE_OPTIONS` sets some: those replace them.
     let nodeOptions;
     try {
-      nodeOptions = JSON.parse(readFileSync(resolvePath(configFile), "utf8"))?.nodeOptions;
+      // Node.js takes a file that starts with a byte order mark.
+      const text = readFileSync(resolvePath(configFile), "utf8").replace(/^\uFEFF/, "");
+      nodeOptions = JSON.parse(text)?.nodeOptions;
     } catch {
       // Node.js reports a configuration file it cannot read.
     }
