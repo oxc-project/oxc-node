@@ -2810,13 +2810,16 @@ const COMMONJS_RESERVED: [&str; 10] = [
 
 /// `tsc`'s helpers, as it emits them without `importHelpers`. A module is taken as-is
 /// when it is a transpiled ES module (`__esModule`) or a real one (`require()` of an ES
-/// module returns its namespace). A namespace import copies every own property name,
-/// enumerable or not, as `tsc`'s `__importStar` does: an ES module's namespace import of
-/// a CommonJS module has an `Object.defineProperty(exports, "a", { value })` export too.
+/// module returns its namespace, which only Node.js can tell: a CommonJS module may
+/// carry a `Symbol.toStringTag` of `"Module"` too). A namespace import copies every own
+/// property name, enumerable or not, as `tsc`'s `__importStar` does: an ES module's
+/// namespace import of a CommonJS module has an `Object.defineProperty(exports, "a",
+/// { value })` export too.
 const IMPORT_DEFAULT_HELPER: &str = "var __importDefault = function (mod) { return mod && \
-     (mod.__esModule || mod[Symbol.toStringTag] === \"Module\") ? mod : { default: mod }; };";
+     (mod.__esModule || require(\"node:util\").types.isModuleNamespaceObject(mod)) ? mod : \
+     { default: mod }; };";
 const IMPORT_STAR_HELPER: &str = "var __importStar = function (mod) { if (mod && (mod.__esModule \
-     || mod[Symbol.toStringTag] === \"Module\")) return mod; var result = {}; if (mod != null) \
+     || require(\"node:util\").types.isModuleNamespaceObject(mod))) return mod; var result = {}; if (mod != null) \
      for (const k of Object.getOwnPropertyNames(mod)) if (k !== \"default\") \
      Object.defineProperty(result, k, { enumerable: true, get: function () { return mod[k]; } }); \
      result.default = mod; return result; };";

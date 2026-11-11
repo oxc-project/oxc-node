@@ -719,7 +719,7 @@ function mapsToProjectFile(request, parent, resolved) {
       ((filename.endsWith(".js") || extname(filename) === "") &&
         /** @type {{ __esModule?: unknown } | undefined} */ (parent?.exports)?.__esModule ===
           true)) &&
-    !inNodeModules(filename) &&
+    (!inNodeModules(filename) || compiledDependency(parent)) &&
     !PATH_REQUEST.test(request) &&
     !isBuiltin(request) &&
     isAbsolute(resolved)

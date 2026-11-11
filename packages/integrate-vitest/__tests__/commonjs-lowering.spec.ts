@@ -145,6 +145,24 @@ describe.skipIf(!LOWERS)("a file compiled to CommonJS that imports an ES module"
     },
   );
 
+  test("tells its namespace from a CommonJS module tagged as one", () => {
+    // A real namespace is taken as is; a CommonJS function whose `Symbol.toStringTag` is
+    // `"Module"` is still the default export, as under `tsc` with `esModuleInterop`.
+    const root = fixture(
+      {
+        "lib.mts": 'export default "lib.mts default";\n',
+        "tagged.cjs":
+          'function f() {\n  return "called";\n}\nf[Symbol.toStringTag] = "Module";\nmodule.exports = f;\n',
+        "tagged.d.cts": "declare const f: () => string;\nexport = f;\n",
+        "main.ts":
+          'import lib from "./lib.mjs";\nimport f from "./tagged.cjs";\n' +
+          'console.log("result:", lib, f());\n',
+      },
+      { ...NODENEXT, esModuleInterop: true },
+    );
+    expect(run(root, "./main.ts")).toContain("result: lib.mts default called\n");
+  });
+
   test("loads it", () => {
     const root = fixture({
       "meta.ts": "export const url = import.meta.url.slice(-7);\n",
@@ -942,6 +960,35 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
       OXC_TSCONFIG_PATH: join(root, "tsconfig.json"),
     };
     expect(run(root, "./main.ts", [], env)).toContain("where: config.ts\n");
+  });
+
+  test("resolves a compiled dependency's bare import in the package order", () => {
+    // `b` has no `main`; `index.ts` comes before the `index.json` Node.js finds.
+    const root = fixture(
+      {
+        "node_modules/a/package.json": JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+          type: "commonjs",
+          main: "main.ts",
+        }),
+        "node_modules/a/main.ts": 'import { where } from "b";\nexport const fromA = where;\n',
+        "node_modules/b/package.json": JSON.stringify({
+          name: "b",
+          version: "1.0.0",
+          type: "commonjs",
+        }),
+        "node_modules/b/index.ts": 'export const where: string = "b/index.ts";\n',
+        "node_modules/b/index.json": '{ "where": "b/index.json" }\n',
+        "main.ts": 'import { fromA } from "a";\nconsole.log("where:", fromA);\n',
+      },
+      { ...NODENEXT, resolveJsonModule: true },
+    );
+    const env = {
+      OXC_TRANSFORM_ALL: "typescript",
+      OXC_TSCONFIG_PATH: join(root, "tsconfig.json"),
+    };
+    expect(run(root, "./main.ts", [], env)).toContain("where: b/index.ts\n");
   });
 
   test("finds a package's source by its output's name from a compiled dependency", () => {
