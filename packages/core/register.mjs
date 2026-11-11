@@ -381,36 +381,52 @@ const PATH_REQUEST = /^(?:\.{1,2}(?:[\\/]|$)|[\\/]|[a-zA-Z]:[\\/])/;
  * (`--experimental-config-file`, `--config-file`, `--experimental-default-config-file`).
  */
 const REQUIRE_CONDITIONS = (() => {
-  const options = (process.env.NODE_OPTIONS ?? "").match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
+  const environment = process.env.NODE_OPTIONS;
+  const options = (environment ?? "").match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
   const args = [...options.map((option) => option.replaceAll('"', "")), ...process.execArgv];
   const conditions = ["node", "require"];
   /** @type {string[]} */
   const added = [];
   let addons = true;
   /** @type {string | undefined} */
-  let configFile;
-  let fromEnvironment = false;
+  let explicitFile;
+  let defaultFile = false;
+  let defaultLast = false;
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
-    const match = /^(?:--conditions|-C)(?:=(.*))?$/.exec(arg);
+    // Node.js reads `_` in an option's name as `-` (`--no_addons`), but not in the
+    // configuration file flags, which it reads before the others.
+    const flag = arg.replace(/^--[^=]*/, (name) => name.replaceAll("_", "-"));
+    const match = /^(?:--conditions|-C)(?:=(.*))?$/.exec(flag);
     const config = /^--(?:experimental-)?config-file(?:=(.*))?$/.exec(arg);
     if (match) {
-      fromEnvironment ||= index < options.length;
       const value = match[1] ?? args[++index];
       if (value) {
         added.push(value);
       }
     } else if (config) {
-      configFile = config[1] ?? args[++index];
+      explicitFile = config[1] ?? args[++index];
+      defaultLast = false;
     } else if (arg === "--experimental-default-config-file") {
-      configFile = "node.config.json";
-    } else if (/^--(?:no-)?addons(?:=|$)/.test(arg)) {
-      addons = !arg.startsWith("--no-");
+      defaultFile = true;
+      defaultLast = true;
+    } else if (/^--(?:no-)?addons(?:=|$)/.test(flag)) {
+      addons = !flag.startsWith("--no-");
     }
   }
-  if (configFile) {
-    // Node.js has read it already. Its conditions add to the command line's, unless
-    // `NODE_OPTIONS` sets some: those replace them.
+  // Given both, Node.js 24.19 and 26.1 and later take the flag that comes last; earlier
+  // versions the named file.
+  const [major, minor] = process.versions.node.split(".", 2).map(Number);
+  const laterWins = major === 24 ? minor >= 19 : major === 26 ? minor >= 1 : major > 26;
+  const configFile =
+    explicitFile === undefined || (defaultFile && defaultLast && laterWins)
+      ? defaultFile
+        ? "node.config.json"
+        : undefined
+      : explicitFile;
+  // Node.js has read it already. Its conditions add to the command line's; when
+  // `NODE_OPTIONS` is set at all, even empty, Node.js takes none of its options.
+  if (configFile && environment === undefined) {
     let nodeOptions;
     try {
       // Node.js takes a file that starts with a byte order mark.
@@ -419,7 +435,7 @@ const REQUIRE_CONDITIONS = (() => {
     } catch {
       // Node.js reports a configuration file it cannot read.
     }
-    const value = fromEnvironment ? undefined : nodeOptions?.conditions;
+    const value = nodeOptions?.conditions;
     for (const condition of typeof value === "string"
       ? [value]
       : Array.isArray(value)
@@ -428,12 +444,6 @@ const REQUIRE_CONDITIONS = (() => {
       if (typeof condition === "string" && condition) {
         added.push(condition);
       }
-    }
-    if (
-      typeof nodeOptions?.addons === "boolean" &&
-      !args.some((arg) => /^--(?:no-)?addons(?:=|$)/.test(arg))
-    ) {
-      addons = nodeOptions.addons;
     }
   }
   if (addons) {

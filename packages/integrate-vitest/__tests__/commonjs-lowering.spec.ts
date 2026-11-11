@@ -1135,6 +1135,45 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
     ).toContain("where: staging.js\n");
   });
 
+  test("takes a configuration file's conditions only where Node.js does", () => {
+    // Every branch exists, so conditions Node.js did not take would pick another file.
+    const root = fixture({
+      "package.json": JSON.stringify({
+        type: "commonjs",
+        imports: {
+          "#dep": { development: "./dev.js", production: "./prod.js", default: "./def.js" },
+        },
+      }),
+      "dev.config.json": JSON.stringify({ nodeOptions: { conditions: ["development"] } }),
+      "node.config.json": JSON.stringify({ nodeOptions: { conditions: ["production"] } }),
+      "dev.js": 'exports.where = "dev.js";\n',
+      "prod.js": 'exports.where = "prod.js";\n',
+      "def.js": 'exports.where = "def.js";\n',
+      "main.ts": '// @ts-nocheck\nimport { where } from "#dep";\nconsole.log("where:", where);\n',
+    });
+    // `NODE_OPTIONS`, set at all, keeps Node.js from taking the file's options.
+    expect(
+      run(root, "./main.ts", ["--experimental-config-file=dev.config.json"], {
+        NODE_OPTIONS: "--no-warnings",
+      }),
+    ).toContain("where: def.js\n");
+    // Given both, Node.js 24.19 and 26.1 and later take the flag that comes last, earlier
+    // versions the named file.
+    const laterWins = MAJOR === 24 ? MINOR >= 19 : MAJOR === 26 ? MINOR >= 1 : MAJOR > 26;
+    expect(
+      run(root, "./main.ts", [
+        "--experimental-config-file=dev.config.json",
+        "--experimental-default-config-file",
+      ]),
+    ).toContain(laterWins ? "where: prod.js\n" : "where: dev.js\n");
+    expect(
+      run(root, "./main.ts", [
+        "--experimental-default-config-file",
+        "--experimental-config-file=dev.config.json",
+      ]),
+    ).toContain("where: dev.js\n");
+  });
+
   test("loads a module with thousands of exports", () => {
     // `tsc` clears exports in chains of 50; one chain of all of them nests too deep.
     const exports = Array.from(
