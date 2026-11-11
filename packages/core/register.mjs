@@ -226,7 +226,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
           : // A package `imports` entry (`#value`) or a self-reference through `exports`
             // names compiled output too. Node.js has mapped it, with every active
             // condition, and names the file it found missing.
-            sourcesFor(mappedFile(error, request), MISSING_OUTPUT_SOURCES)
+            (sourcesFor(mappedFile(error, request), MISSING_OUTPUT_SOURCES)
               .map((candidate) => {
                 try {
                   return resolveFilename.call(this, candidate, parent, isMain, options);
@@ -234,7 +234,10 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
                   return undefined;
                 }
               })
-              .find((resolved) => resolved !== undefined);
+              .find((resolved) => resolved !== undefined) ??
+            // A package subpath Node.js names no file for (`pkg/feature.js` of a package
+            // that ships `feature.ts`): the source the ES module resolver finds for it.
+            sourceOnly(resolveNative(request, filename)));
         if (found !== undefined) {
           return found;
         }
@@ -792,6 +795,16 @@ function mappedLinkSource(request, filename, resolved) {
     }
   });
   return linksThere ? found : undefined;
+}
+
+/**
+ * `path` when it is a TypeScript or JSX source.
+ *
+ * @param {string | undefined} path
+ * @returns {string | undefined}
+ */
+function sourceOnly(path) {
+  return path !== undefined && /\.(?:[cm]?ts|tsx|jsx)$/.test(path) ? path : undefined;
 }
 
 /**

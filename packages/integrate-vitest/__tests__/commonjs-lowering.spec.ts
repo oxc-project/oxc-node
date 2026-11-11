@@ -700,6 +700,18 @@ describe("a TypeScript file in a CommonJS package", () => {
     },
   );
 
+  test("finds a package's source by its output's name, as the ES module resolver does", () => {
+    // `pkg` ships `feature.ts` only, which `OXC_TRANSFORM_ALL` compiles.
+    const root = fixture({
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+      "node_modules/pkg/feature.ts": 'export const feature: string = "pkg/feature.ts";\n',
+      "main.ts": 'import { feature } from "pkg/feature.js";\nconsole.log("feature:", feature);\n',
+    });
+    expect(run(root, "./main.ts", [], { OXC_TRANSFORM_ALL: "typescript" })).toContain(
+      "feature: pkg/feature.ts\n",
+    );
+  });
+
   test("resolves an extensionless import in the ES module resolver's order", () => {
     // Node.js tries the registered extensions in its own order and finds `dep.jsx`;
     // the ES module resolver found `dep.ts` first.
