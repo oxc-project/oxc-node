@@ -103,6 +103,18 @@ describe.skipIf(LOWERS)("a Node.js that cannot require() an ES module it loaded"
 });
 
 describe.skipIf(!LOWERS)("a file compiled to CommonJS that imports an ES module", () => {
+  test("stays an ES module where `require()` of an ES module is off", () => {
+    const root = fixture({
+      "lib.mts": 'export const m = "lib.mts";\n',
+      "main.ts":
+        'import { m } from "./lib.mjs";\n' +
+        'console.log("format:", typeof require === "undefined" ? "module" : "commonjs", m);\n',
+    });
+    expect(run(root, "./main.ts", ["--no-experimental-require-module"])).toContain(
+      "format: module lib.mts\n",
+    );
+  });
+
   test("loads it", () => {
     const root = fixture({
       "meta.ts": "export const url = import.meta.url.slice(-7);\n",
@@ -845,6 +857,25 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
       "main.ts": 'import { feature } from "pkg/feature.jsx";\nconsole.log("feature:", feature);\n',
     });
     expect(run(root, "./main.ts")).toContain("feature: pkg/feature.js\n");
+  });
+
+  test("finds a package's index source before the `index.json` Node.js finds", () => {
+    // The package has no `main`; the ES module resolver tries `index.ts` before JSON.
+    const root = fixture({
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        version: "1.0.0",
+        type: "commonjs",
+      }),
+      "node_modules/pkg/index.ts": 'export const where: string = "index.ts";\n',
+      "node_modules/pkg/index.json": '{ "where": "index.json" }\n',
+      "main.ts": 'import { where } from "pkg";\nconsole.log("where:", where);\n',
+    });
+    const env = {
+      OXC_TRANSFORM_ALL: "typescript",
+      OXC_TSCONFIG_PATH: join(root, "tsconfig.json"),
+    };
+    expect(run(root, "./main.ts", [], env)).toContain("where: index.ts\n");
   });
 
   test("finds a package's source by its output's name from a compiled dependency", () => {

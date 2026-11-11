@@ -321,18 +321,15 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
     // Node.js names only the file a symlink there reaches; the ES module resolver maps
     // the request again and finds the source beside the name it maps to.
     // The ES module resolver maps it with Node.js' own conditions: a source it finds
-    // stands for what Node.js found — beside a symlink, a symlink itself, or a package
-    // `main` Node.js fell back from. A package's own files stay what it compiled; when the
-    // resolver keeps the very file Node.js found, no source stood before it.
+    // stands for what Node.js found — beside a symlink, a symlink itself, a package
+    // `main` Node.js fell back from, or an index before Node.js' `index.json`. In a
+    // package it keeps compiled JavaScript before its source; when it keeps the very file
+    // Node.js found, no source stood before it.
     const found = resolveNative(request, parent.filename);
     source =
       found === resolved
         ? undefined
-        : sourceOnly(found) !== undefined && !(inNodeModules(found) && inNodeModules(resolved))
-          ? found
-          : inNodeModules(resolved)
-            ? undefined
-            : sourceBeside(resolved);
+        : (sourceOnly(found) ?? (inNodeModules(resolved) ? undefined : sourceBeside(resolved)));
   }
   // Node.js' own resolution gives the source its real path, as it gave `resolved`, so a
   // symlinked source is one module whichever name reaches it.

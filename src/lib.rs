@@ -1705,8 +1705,17 @@ pub fn detect_runtime_syntax(_exports: Object, env: Env) -> Result<()> {
     if let Ok(version) = env.get_node_version() {
         NATIVE_EXPLICIT_RESOURCE_MANAGEMENT
             .store(version.major >= NATIVE_EXPLICIT_RESOURCE_MANAGEMENT_SINCE, Ordering::Relaxed);
+        // `--no-require-module` turns `require()` of an ES module off.
+        let require_module = env
+            .get_global()
+            .and_then(|global| global.get_named_property::<Object>("process"))
+            .and_then(|process| process.get_named_property::<Object>("features"))
+            .and_then(|features| features.get_named_property::<Option<bool>>("require_module"))
+            .ok()
+            .flatten()
+            == Some(true);
         LOADER_REQUIRES_ESM.store(
-            loader_requires_esm(version.major, version.minor, version.patch),
+            require_module && loader_requires_esm(version.major, version.minor, version.patch),
             Ordering::Relaxed,
         );
     }
@@ -3716,9 +3725,9 @@ impl<'a> Visit<'a> for AssignedFunctionNames<'_> {
                 | AssignmentOperator::LogicalAnd
                 | AssignmentOperator::LogicalOr
                 | AssignmentOperator::LogicalNullish
-        ) && let AssignmentTarget::AssignmentTargetIdentifier(ident) = &it.left
+        ) && let Some(ident) = target_identifier(&it.left)
         {
-            self.add(ident.as_ref(), &it.right);
+            self.add(ident, &it.right);
         }
         walk::walk_assignment_expression(self, it);
     }
@@ -3727,8 +3736,8 @@ impl<'a> Visit<'a> for AssignedFunctionNames<'_> {
         &mut self,
         it: &oxc::ast::ast::AssignmentTargetWithDefault<'a>,
     ) {
-        if let AssignmentTarget::AssignmentTargetIdentifier(ident) = &it.binding {
-            self.add(ident.as_ref(), &it.init);
+        if let Some(ident) = target_identifier(&it.binding) {
+            self.add(ident, &it.init);
         }
         walk::walk_assignment_target_with_default(self, it);
     }
@@ -3741,6 +3750,25 @@ impl<'a> Visit<'a> for AssignedFunctionNames<'_> {
             self.add(&it.binding, init);
         }
         walk::walk_assignment_target_property_identifier(self, it);
+    }
+}
+
+/// The identifier an assignment target names, through TypeScript's `as`, `satisfies`,
+/// `!` and `<T>` and parentheses: `(a as F) = …` assigns `a`.
+fn target_identifier<'t, 'a>(
+    target: &'t AssignmentTarget<'a>,
+) -> Option<&'t IdentifierReference<'a>> {
+    let expression = match target {
+        AssignmentTarget::AssignmentTargetIdentifier(ident) => return Some(ident),
+        AssignmentTarget::TSAsExpression(it) => &it.expression,
+        AssignmentTarget::TSSatisfiesExpression(it) => &it.expression,
+        AssignmentTarget::TSNonNullExpression(it) => &it.expression,
+        AssignmentTarget::TSTypeAssertion(it) => &it.expression,
+        _ => return None,
+    };
+    match expression.get_inner_expression() {
+        Expression::Identifier(ident) => Some(ident),
+        _ => None,
     }
 }
 
@@ -6657,6 +6685,10 @@ mod tests {
             (
                 "cjs/pattern-assigned.ts",
                 "export let [a = 1, b = a]: unknown[] = [];\na = () => 42;\n",
+            ),
+            (
+                "cjs/pattern-assigned-as.ts",
+                "export let [a = 1, b = a]: unknown[] = [];\n(a as () => number) = () => 42;\n",
             ),
             // The compiled output finds the runner's helpers by their names.
             (
