@@ -469,6 +469,52 @@ describe("a TypeScript file in a CommonJS package", () => {
 
   // Windows lets only elevated processes create file symlinks.
   test.skipIf(process.platform === "win32")(
+    "keeps a directory's explicit `main` that an unused index links to",
+    () => {
+      const root = fixture({
+        "lib/package.json": JSON.stringify({ type: "commonjs", main: "./index.cjs" }),
+        "lib/index.cjs": 'exports.where = "index.cjs";\n',
+        "lib/index.ts": 'export const where: string = "index.ts";\n',
+        "main.ts": 'import { where } from "./lib";\nconsole.log("where:", where);\n',
+      });
+      symlinkSync("index.cjs", join(root, "lib", "index.js"));
+      expect(run(root, "./main.ts")).toContain("where: index.cjs\n");
+    },
+  );
+
+  // Windows lets only elevated processes create file symlinks.
+  test.skipIf(process.platform === "win32")(
+    "finds the source of an extensionless `main` Node.js completed through a symlink",
+    () => {
+      const root = fixture({
+        "lib/package.json": JSON.stringify({ type: "commonjs", main: "./src/entry" }),
+        "lib/dist/real.js": 'exports.where = "dist/real.js";\n',
+        "lib/src/entry.ts": 'export const where: string = "src/entry.ts";\n',
+        "main.ts": 'import { where } from "./lib";\nconsole.log("where:", where);\n',
+      });
+      symlinkSync(join("..", "dist", "real.js"), join(root, "lib", "src", "entry.js"));
+      expect(run(root, "./main.ts")).toContain("where: src/entry.ts\n");
+    },
+  );
+
+  test("orders the index of a directory `main` that is a symlink", () => {
+    const root = fixture({
+      "lib/package.json": JSON.stringify({ type: "commonjs", main: "./src" }),
+      "lib/real/index.json": JSON.stringify({ where: "real/index.json" }),
+      "lib/real/index.ts": 'export const where: string = "real/index.ts";\n',
+      "main.ts": 'import { where } from "./lib";\nconsole.log("where:", where);\n',
+    });
+    symlinkSync(
+      "real",
+      join(root, "lib", "src"),
+      // `junction` is the only link type Windows allows without elevated privileges.
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    expect(run(root, "./main.ts")).toContain("where: real/index.ts\n");
+  });
+
+  // Windows lets only elevated processes create file symlinks.
+  test.skipIf(process.platform === "win32")(
     "finds a missing `main`'s source before the source beside a symlinked index",
     () => {
       const root = fixture({
@@ -489,6 +535,8 @@ describe("a TypeScript file in a CommonJS package", () => {
     () => {
       const root = fixture({
         "build/real.js": 'exports.where = "build/real.js";\n',
+        // The target has a source of its own, which the mapped name comes before.
+        "build/real.ts": 'export const where: string = "build/real.ts";\n',
         "dep.ts": 'export const where: string = "dep.ts";\n',
         "main.ts": 'import { where } from "#dep";\nconsole.log("where:", where);\n',
       });

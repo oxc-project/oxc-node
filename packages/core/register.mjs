@@ -257,22 +257,29 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
   } else if (resolvesSourceFirst(request, parent) && !inNodeModules(resolved)) {
     const named = requested(request, parent.filename, resolved);
     const file = !throughDirectory(request, parent.filename, resolved);
-    // An extensionless request takes the ES module resolver's extension order first;
-    // the aliases of the extension Node.js added come after it. `./foo.js` finds
-    // `foo.ts` first, whatever Node.js completed it with: a `foo.js/` directory, or a
-    // `foo.js.json` file.
+    // The ES module resolver's own answer, when it has one: the file this request
+    // found as an ES module, symlinks, a directory's `main` and index, and its
+    // extension order included.
+    const native = resolveNative(request, parent.filename);
+    // Otherwise — a file name with `#`, `?` or `%` it would read otherwise — its order
+    // is rebuilt from what Node.js found. An extensionless request takes the ES module
+    // resolver's extension order first; the aliases of the extension Node.js added come
+    // after it. `./foo.js` finds `foo.ts` first, whatever Node.js completed it with: a
+    // `foo.js/` directory, or a `foo.js.json` file.
     source =
-      (DIRECTORY_ONLY.test(request)
-        ? undefined
-        : explicitSource(resolvePath(dirname(parent.filename), request))) ??
-      directoryLinkSource(request, parent.filename, resolved) ??
-      directoryMainSource(request, parent.filename, resolved) ??
-      directoryMainOrderSource(request, parent.filename, resolved) ??
-      directoryIndexSource(request, parent.filename, resolved) ??
-      (file ? extensionlessSource(request, named) : undefined) ??
-      sourceBeside(named) ??
-      (file ? extensionlessSource(request, resolved) : undefined) ??
-      sourceBeside(resolved);
+      native !== undefined && isFile(native)
+        ? native
+        : ((DIRECTORY_ONLY.test(request)
+            ? undefined
+            : explicitSource(resolvePath(dirname(parent.filename), request))) ??
+          directoryLinkSource(request, parent.filename, resolved) ??
+          directoryMainSource(request, parent.filename, resolved) ??
+          directoryMainOrderSource(request, parent.filename, resolved) ??
+          directoryIndexSource(request, parent.filename, resolved) ??
+          (file ? extensionlessSource(request, named) : undefined) ??
+          sourceBeside(named) ??
+          (file ? extensionlessSource(request, resolved) : undefined) ??
+          sourceBeside(resolved));
   } else if (compiledFromEsm(request, parent) && !inNodeModules(resolved)) {
     const named = requested(request, parent.filename, resolved);
     const file = !throughDirectory(request, parent.filename, resolved);
@@ -288,7 +295,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
     // its source: the ES module resolver tried the source first after mapping.
     // Node.js names only the file a symlink there reaches; the ES module resolver maps
     // the request again and finds the source beside the name it maps to.
-    source = sourceBeside(resolved) ?? mappedLinkSource(request, parent.filename, resolved);
+    source = mappedLinkSource(request, parent.filename, resolved) ?? sourceBeside(resolved);
   }
   // Node.js' own resolution gives the source its real path, as it gave `resolved`, so a
   // symlinked source is one module whichever name reaches it.
@@ -704,9 +711,11 @@ function resolveNative(request, filename) {
 }
 
 /**
- * The source beside the name a bare `request` maps to through a package's `imports` or
- * `exports`, when that name is a symlink Node.js followed to `resolved`: `#dep` mapped
- * to `./dep.js`, which links to `build/real.js`, finds `dep.ts`.
+ * The source the ES module resolver finds for a bare `request` mapped through a
+ * package's `imports` or `exports`, when an output beside it is what Node.js mapped it
+ * to — a symlink it followed to `resolved` included: `#dep` mapped to `./dep.js`, which
+ * links to `build/real.js`, finds `dep.ts`, even with a `build/real.ts` beside the
+ * target. The check keeps Node.js' own mapping, `--conditions` and all.
  *
  * @param {string} request
  * @param {string} filename
