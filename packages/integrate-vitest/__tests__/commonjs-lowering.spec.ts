@@ -451,13 +451,55 @@ describe("a TypeScript file in a CommonJS package", () => {
   });
 
   test("finds the source `./dep.js` names before a `dep.js.json` Node.js completes it with", () => {
-    const root = fixture({
-      "dep.js.json": JSON.stringify({ where: "dep.js.json" }),
-      "dep.ts": 'export const where: string = "dep.ts";\n',
-      "main.ts": 'import { where } from "./dep.js";\nconsole.log("where:", where);\n',
-    });
-    expect(run(root, "./main.ts")).toContain("where: dep.ts\n");
+    const root = fixture(
+      {
+        "dep.js.json": JSON.stringify({ where: "dep.js.json" }),
+        "dep.ts": 'export const where: string = "dep.ts";\n',
+        "jsx.js.json": JSON.stringify({ where: "jsx.js.json" }),
+        "jsx.jsx": 'export const where = "jsx.jsx";\n',
+        "main.ts":
+          'import { where } from "./dep.js";\n' +
+          'import { where as jsx } from "./jsx.js";\n' +
+          'console.log("where:", where, jsx);\n',
+      },
+      { ...NODENEXT, allowJs: true },
+    );
+    expect(run(root, "./main.ts")).toContain("where: dep.ts jsx.jsx\n");
   });
+
+  // Windows lets only elevated processes create file symlinks.
+  test.skipIf(process.platform === "win32")(
+    "finds a missing `main`'s source before the source beside a symlinked index",
+    () => {
+      const root = fixture({
+        "lib/package.json": JSON.stringify({ type: "commonjs", main: "./src/main.js" }),
+        "lib/src/main.ts": 'export const where: string = "lib/src/main.ts";\n',
+        "lib/index.ts": 'export const where: string = "lib/index.ts";\n',
+        "build/real.js": 'exports.where = "build/real.js";\n',
+        "main.ts": 'import { where } from "./lib";\nconsole.log("where:", where);\n',
+      });
+      symlinkSync(join("..", "build", "real.js"), join(root, "lib", "index.js"));
+      expect(run(root, "./main.ts")).toContain("where: lib/src/main.ts\n");
+    },
+  );
+
+  // Windows lets only elevated processes create file symlinks.
+  test.skipIf(process.platform === "win32")(
+    "finds the source beside a package `imports` target that is a symlink",
+    () => {
+      const root = fixture({
+        "build/real.js": 'exports.where = "build/real.js";\n',
+        "dep.ts": 'export const where: string = "dep.ts";\n',
+        "main.ts": 'import { where } from "#dep";\nconsole.log("where:", where);\n',
+      });
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({ ...JSON.parse(COMMONJS), imports: { "#dep": "./dep.js" } }),
+      );
+      symlinkSync(join("build", "real.js"), join(root, "dep.js"));
+      expect(run(root, "./main.ts")).toContain("where: dep.ts\n");
+    },
+  );
 
   test("resolves `.` as the directory only, never a file beside it", () => {
     const root = fixture({

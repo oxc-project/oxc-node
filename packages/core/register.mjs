@@ -264,7 +264,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
     source =
       (DIRECTORY_ONLY.test(request)
         ? undefined
-        : sourceBeside(resolvePath(dirname(parent.filename), request))) ??
+        : explicitSource(resolvePath(dirname(parent.filename), request))) ??
       directoryLinkSource(request, parent.filename, resolved) ??
       directoryMainSource(request, parent.filename, resolved) ??
       directoryMainOrderSource(request, parent.filename, resolved) ??
@@ -286,7 +286,9 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
   } else if (mapsToProjectFile(request, parent, resolved)) {
     // A package `imports` entry or a self-reference that maps to compiled output beside
     // its source: the ES module resolver tried the source first after mapping.
-    source = sourceBeside(resolved);
+    // Node.js names only the file a symlink there reaches; the ES module resolver maps
+    // the request again and finds the source beside the name it maps to.
+    source = sourceBeside(resolved) ?? mappedLinkSource(request, parent.filename, resolved);
   }
   // Node.js' own resolution gives the source its real path, as it gave `resolved`, so a
   // symlinked source is one module whichever name reaches it.
@@ -484,9 +486,15 @@ function directoryLinkSource(request, filename, resolved) {
   const index = Object.keys(Module._extensions)
     .map((extension) => join(directory, `index${extension}`))
     .find(linked);
-  return index === undefined
-    ? undefined
-    : (extensionlessSource("index", index) ?? sourceBeside(index));
+  if (index === undefined) {
+    return undefined;
+  }
+  // Node.js fell back to it from a missing `main`, whose source comes first.
+  const mainSource =
+    main === undefined || isFile(main)
+      ? undefined
+      : sourcesFor(main, MISSING_OUTPUT_SOURCES).find(isFile);
+  return mainSource ?? extensionlessSource("index", index) ?? sourceBeside(index);
 }
 
 /**
@@ -665,8 +673,9 @@ function mappedFile(error, request) {
  */
 function resolveNative(request, filename) {
   // `#`, `?` and `%` are part of a CommonJS file name, but the ES module resolver reads
-  // a fragment, a query or an escape there, and would find another file.
-  if (/[#?%]/.test(request)) {
+  // a fragment, a query or an escape there, and would find another file. A bare `#`
+  // names a package `imports` entry.
+  if (PATH_REQUEST.test(request) ? /[#?%]/.test(request) : /[?%]/.test(request)) {
     return undefined;
   }
   try {
@@ -692,6 +701,44 @@ function resolveNative(request, filename) {
       flush(watch, takeWatchDependencies);
     }
   }
+}
+
+/**
+ * The source beside the name a bare `request` maps to through a package's `imports` or
+ * `exports`, when that name is a symlink Node.js followed to `resolved`: `#dep` mapped
+ * to `./dep.js`, which links to `build/real.js`, finds `dep.ts`.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {string | undefined}
+ */
+function mappedLinkSource(request, filename, resolved) {
+  const found = resolveNative(request, filename);
+  if (found === undefined || found === resolved || !/\.(?:[cm]?ts|tsx)$/.test(found)) {
+    return undefined;
+  }
+  const stem = found.slice(0, -extname(found).length);
+  const linksThere = [".js", ".jsx", ".mjs", ".cjs"].some((extension) => {
+    try {
+      return realpathSync(stem + extension) === resolved;
+    } catch {
+      return false;
+    }
+  });
+  return linksThere ? found : undefined;
+}
+
+/**
+ * The source an explicit request for compiled output names, as the ES module resolver
+ * tries it before what Node.js completed the request with: beside the output, or in
+ * its place when it is missing (`./dep.js` finds `dep.jsx` before `dep.js.json`).
+ *
+ * @param {string} path
+ * @returns {string | undefined}
+ */
+function explicitSource(path) {
+  return isFile(path) ? sourceBeside(path) : sourcesFor(path, MISSING_OUTPUT_SOURCES).find(isFile);
 }
 
 /**

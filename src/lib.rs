@@ -3077,7 +3077,7 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
     let mut plain_declarations: HashMap<&str, bool> = HashMap::new();
     // `export const [a = 1, b = f()] = v;` exports `a` before `f()` runs. `tsc` makes it
     // `[exports.a = 1, exports.b = f()] = v;`, which takes every binding of the pattern
-    // being exported, each under one name.
+    // being exported; a second name for one reads it through a getter.
     let mut destructured: HashSet<&str> = HashSet::new();
     // A function or class named by its binding (`var x = function () {}`, or a default
     // `[f = () => {}]`) would lose that name were the binding a member.
@@ -3098,7 +3098,7 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
             }
             if declarator.id.get_binding_identifier().is_none()
                 && declarator.init.is_some()
-                && names.iter().all(|ident| export_names.get(ident.name.as_str()) == Some(&1))
+                && names.iter().all(|ident| export_names.contains_key(ident.name.as_str()))
             {
                 destructured.extend(names.iter().map(|ident| ident.name.as_str()));
             }
@@ -3192,8 +3192,17 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
             (Some(local), Some((_, false)), Some(symbol))
                 if destructured.contains(local) && !nested =>
             {
-                cleared.push(member.clone());
-                members.insert(symbol, member);
+                // Another name for the same binding reads the member the pattern sets.
+                if let Some(first) = members.get(&symbol) {
+                    getters.push_str(&format!(
+                        "Object.defineProperty(exports, {}, {{ enumerable: true, get: function () \
+                         {{ return {first}; }} }});\n",
+                        serde_json::Value::from(name)
+                    ));
+                } else {
+                    cleared.push(member.clone());
+                    members.insert(symbol, member);
+                }
             }
             (Some(local), Some((at, false)), _) if !written => {
                 cleared.push(member.clone());
@@ -6279,6 +6288,18 @@ mod tests {
         assert!(code.contains("[exports.a = 1, exports.b = exports.a] = v;"), "{code}");
         assert!(
             code.contains("({c: exports.c, d: [exports.e = exports.c], ...exports.f} ="),
+            "{code}"
+        );
+
+        // A second name for a pattern's binding reads the member the pattern sets.
+        let code = run(
+            "cjs/pattern-alias.ts",
+            "const v: number[] = [];\nexport const [a = 1, b = a] = v;\nexport { a as alias };\n",
+        );
+        assert!(lowered(&code), "{code}");
+        assert!(code.contains("[exports.a = 1, exports.b = exports.a] = v;"), "{code}");
+        assert!(
+            code.contains("\"alias\", { enumerable: true, get: function() { return exports.a; } }"),
             "{code}"
         );
         assert!(!code.contains("const [a"), "{code}");
