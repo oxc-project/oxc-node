@@ -727,7 +727,7 @@ function mapsToProjectFile(request, parent, resolved) {
 
 /**
  * Whether a JavaScript `parent` was compiled to CommonJS from an ES module, and asks for
- * a relative or absolute `request`. Its first statement marks `exports` with
+ * a relative or absolute `request`. In `node_modules`, only one oxc-node compiled. Its first statement marks `exports` with
  * `__esModule`, before any `require()`, as `tsc`'s output does.
  *
  * @param {string} request
@@ -741,7 +741,7 @@ function compiledFromEsm(request, parent) {
     typeof filename === "string" &&
     // An extensionless entry (`bin/run`) is JavaScript too.
     (filename.endsWith(".js") || extname(filename) === "") &&
-    !inNodeModules(filename) &&
+    (!inNodeModules(filename) || compiledDependency(parent)) &&
     PATH_REQUEST.test(request) &&
     exports != null &&
     /** @type {{ __esModule?: unknown }} */ (exports).__esModule === true

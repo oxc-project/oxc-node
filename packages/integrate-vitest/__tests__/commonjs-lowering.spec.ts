@@ -1025,6 +1025,39 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
     expect(run(root, "./built.ts", [], tsconfig)).toContain("built: b/index.json\n");
   });
 
+  test("resolves a lowered JavaScript dependency's relative import as an ES module", () => {
+    // `./config` finds `config.ts` before `config.json`, and `./lib` the compiled `lib.js`
+    // before `lib.ts`; `tsc` output oxc-node leaves alone keeps Node.js' `config.json`.
+    const root = fixture(
+      {
+        "node_modules/a/package.json": JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+          type: "commonjs",
+          main: "main.js",
+        }),
+        "node_modules/a/main.js":
+          'import { where } from "./config";\nimport { lib } from "./lib";\n' +
+          "export const fromA = `${where} ${lib}`;\n",
+        "node_modules/a/built.js":
+          '"use strict";\nObject.defineProperty(exports, "__esModule", { value: true });\n' +
+          'exports.fromBuilt = require("./config").where;\n',
+        "node_modules/a/config.ts": 'export const where: string = "a/config.ts";\n',
+        "node_modules/a/config.json": '{ "where": "a/config.json" }\n',
+        "node_modules/a/lib.js": 'export const lib = "a/lib.js";\n',
+        "node_modules/a/lib.ts": 'export const lib: string = "a/lib.ts";\n',
+        "main.ts": 'import { fromA } from "a";\nconsole.log("where:", fromA);\n',
+        "built.ts": 'import { fromBuilt } from "a/built.js";\nconsole.log("built:", fromBuilt);\n',
+      },
+      { ...NODENEXT, allowJs: true, resolveJsonModule: true },
+    );
+    const tsconfig = { OXC_TSCONFIG_PATH: join(root, "tsconfig.json") };
+    expect(run(root, "./main.ts", [], { ...tsconfig, OXC_TRANSFORM_ALL: "1" })).toContain(
+      "where: a/config.ts a/lib.js\n",
+    );
+    expect(run(root, "./built.ts", [], tsconfig)).toContain("built: a/config.json\n");
+  });
+
   test("a path request into a package takes the ES module resolver's answer", () => {
     // `pkg` has no `main`: the ES module resolver finds `index.mjs`, Node.js `index.json`.
     // A package's compiled `lib.js` stays before its `lib.ts`, as it does for both.
