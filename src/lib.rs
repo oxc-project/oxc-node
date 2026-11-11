@@ -2843,11 +2843,12 @@ fn lowers_to_commonjs(
                     }
                     name != "exports" || erased(symbol)
                 })
-                // As is a global used without a declaration.
+                // As is a global used without a declaration. A direct `eval` reads the
+                // locals that become `exports` members.
                 && !scoping
                     .root_unresolved_references()
                     .keys()
-                    .any(|name| name.as_str().starts_with("__vite_ssr_"))
+                    .any(|name| name.as_str().starts_with("__vite_ssr_") || name == "eval")
         }
 }
 
@@ -6602,6 +6603,8 @@ mod tests {
                 "declare function __vite_ssr_dynamic_import__(x: string): number;\nexport const n = __vite_ssr_dynamic_import__('x');\n",
             ),
             ("cjs/runner-global.ts", "export const n = __vite_ssr_import__('x');\n"),
+            // A direct `eval` reads locals that would become `exports` members.
+            ("cjs/eval.ts", "let n = 0;\nexport { n };\nn++;\nexport const seen = eval('n');\n"),
             // `tsc` itself emits an ES module for these.
             ("esnext/lib.ts", "export const n = 1;\n"),
             ("preserve/lib.ts", "export const n = 1;\n"),

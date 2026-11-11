@@ -314,10 +314,14 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
     // its source: the ES module resolver tried the source first after mapping.
     // Node.js names only the file a symlink there reaches; the ES module resolver maps
     // the request again and finds the source beside the name it maps to.
-    // A local link into `node_modules` still finds the source beside it.
+    // A local link into `node_modules` still finds the source beside it. When the ES
+    // module resolver keeps the very file Node.js found, no source stood before it.
+    const found = resolveNative(request, parent.filename);
     source =
-      mappedLinkSource(request, parent.filename, resolved) ??
-      (inNodeModules(resolved) ? undefined : sourceBeside(resolved));
+      found === resolved
+        ? undefined
+        : (mappedLinkSource(found, resolved) ??
+          (inNodeModules(resolved) ? undefined : sourceBeside(resolved)));
   }
   // Node.js' own resolution gives the source its real path, as it gave `resolved`, so a
   // symlinked source is one module whichever name reaches it.
@@ -776,13 +780,11 @@ function resolveNative(request, filename) {
  * links to `build/real.js`, finds `dep.ts`, even with a `build/real.ts` beside the
  * target. The check keeps Node.js' own mapping, `--conditions` and all.
  *
- * @param {string} request
- * @param {string} filename
+ * @param {string | undefined} found what the ES module resolver found for the request
  * @param {string} resolved
  * @returns {string | undefined}
  */
-function mappedLinkSource(request, filename, resolved) {
-  const found = resolveNative(request, filename);
+function mappedLinkSource(found, resolved) {
   if (
     found === undefined ||
     found === resolved ||

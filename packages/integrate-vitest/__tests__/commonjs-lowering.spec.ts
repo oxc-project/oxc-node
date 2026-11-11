@@ -583,6 +583,26 @@ describe("a TypeScript file in a CommonJS package", () => {
     },
   );
 
+  // Windows lets only elevated processes create file symlinks. Before Node.js 26.2 the
+  // hooks thread resolves the target again, by its own name, and finds `real.ts`.
+  test.skipIf(process.platform === "win32" || !SYNC_HOOKS)(
+    "keeps a package `imports` target that is a symlink when no source is beside it",
+    () => {
+      // The ES module resolver tries sources beside `dep.js` only, then follows the link.
+      const root = fixture({
+        "build/real.js": 'exports.where = "build/real.js";\n',
+        "build/real.ts": 'export const where: string = "build/real.ts";\n',
+        "main.ts": 'import { where } from "#dep";\nconsole.log("where:", where);\n',
+      });
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({ ...JSON.parse(COMMONJS), imports: { "#dep": "./dep.js" } }),
+      );
+      symlinkSync(join("build", "real.js"), join(root, "dep.js"));
+      expect(run(root, "./main.ts")).toContain("where: build/real.js\n");
+    },
+  );
+
   // Windows lets only elevated processes create file symlinks.
   test.skipIf(process.platform === "win32")(
     "finds the source beside a symlink `--conditions` maps a package `imports` entry to",
@@ -701,15 +721,22 @@ describe("a TypeScript file in a CommonJS package", () => {
   );
 
   test("finds a package's source by its output's name, as the ES module resolver does", () => {
-    // `pkg` ships `feature.ts` only, which `OXC_TRANSFORM_ALL` compiles.
+    // `pkg` ships `feature.ts` only, which `OXC_TRANSFORM_ALL` compiles: to CommonJS, with
+    // the tsconfig named, which Node.js 22.18 can `require()` from a compiled file.
     const root = fixture({
-      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        version: "1.0.0",
+        type: "commonjs",
+      }),
       "node_modules/pkg/feature.ts": 'export const feature: string = "pkg/feature.ts";\n',
       "main.ts": 'import { feature } from "pkg/feature.js";\nconsole.log("feature:", feature);\n',
     });
-    expect(run(root, "./main.ts", [], { OXC_TRANSFORM_ALL: "typescript" })).toContain(
-      "feature: pkg/feature.ts\n",
-    );
+    const env = {
+      OXC_TRANSFORM_ALL: "typescript",
+      OXC_TSCONFIG_PATH: join(root, "tsconfig.json"),
+    };
+    expect(run(root, "./main.ts", [], env)).toContain("feature: pkg/feature.ts\n");
   });
 
   test("finds a package's source by its output's name from a compiled dependency", () => {
@@ -723,7 +750,11 @@ describe("a TypeScript file in a CommonJS package", () => {
       }),
       "node_modules/a/index.ts":
         'import { feature } from "b/feature.js";\nexport const fromA = feature;\n',
-      "node_modules/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+      "node_modules/b/package.json": JSON.stringify({
+        name: "b",
+        version: "1.0.0",
+        type: "commonjs",
+      }),
       "node_modules/b/feature.ts": 'export const feature: string = "b/feature.ts";\n',
       "main.ts": 'import { fromA } from "a";\nconsole.log("feature:", fromA);\n',
     });
