@@ -98,6 +98,11 @@ export interface DirWatcherOptions {
   warn(msg: string): void;
   /** `fs.watch`, replaced in tests. */
   watch?: typeof watch;
+  /**
+   * How long a watch no longer needed stays open, in ms, so that it serves again if its folder is
+   * wanted again. On macOS a close costs what an open does: 60 s there, 0 elsewhere.
+   */
+  linger?: number;
 }
 
 interface Root {
@@ -134,6 +139,10 @@ interface Handle {
   dir: string;
   /** The folder's identity when the watch was opened: a new one means the folder was replaced. */
   id: string | undefined;
+  /** macOS: the folder's real path then. FSEvents watches it, so only a new one needs a new watch. */
+  real?: string;
+  /** Since when it is no longer needed: it closes once `linger` has passed. */
+  idle?: number;
 }
 
 // The inode and the birth time: ext4 gives a folder made right after `rm -rf` the old inode number.
@@ -146,14 +155,30 @@ function idOf(dir: string): string | undefined {
   }
 }
 
+function realOf(dir: string): string | undefined {
+  try {
+    return realpathSync.native(dir);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * One non-recursive `fs.watch` per folder that holds a wanted file. A file whose folder does
  * not exist yet is watched at the nearest existing ancestor, one level deeper as folders appear.
  * `--include` roots are walked, and new folders in them are walked as they appear.
+ *
+ * On macOS a folder's watch stays while the folder is replaced, and for `linger` once it is
+ * missing or no longer needed: libuv's FSEvents stream watches the path, not the folder. Each open or close rebuilds
+ * that one stream for every watched folder, which leaks memory for each of them (libuv#5283,
+ * nodejs/node#67293) and loses events meanwhile (libuv#3866). Only a new real path, a link on
+ * the way pointed elsewhere, opens it again.
  */
 export class DirWatcher {
   #o: DirWatcherOptions;
   #win: boolean;
+  #mac: boolean;
+  #linger: number;
   /**
    * `shown` is the name a change is reported under: a link, for a link's target.
    * `own`: wanted itself, for the whole session or only by the current run's imports.
@@ -177,6 +202,7 @@ export class DirWatcher {
   #failed = new Set<string>();
   #warned = new Set<string>();
   #syncTimer: NodeJS.Timeout | undefined;
+  #lingerTimer: NodeJS.Timeout | undefined;
   #pollTimer: NodeJS.Timeout | undefined;
   #settleTimer: NodeJS.Timeout | undefined;
   #closed = false;
@@ -184,6 +210,8 @@ export class DirWatcher {
   constructor(o: DirWatcherOptions) {
     this.#o = o;
     this.#win = o.platform === "win32";
+    this.#mac = o.platform === "darwin";
+    this.#linger = o.linger ?? (this.#mac ? 60_000 : 0);
     if (o.poll !== false) {
       // Polling sees new files only by walking again.
       this.#pollTimer = setInterval(() => this.#rewalk(), o.poll * 10);
@@ -283,6 +311,7 @@ export class DirWatcher {
   close(): void {
     this.#closed = true;
     clearTimeout(this.#syncTimer);
+    clearTimeout(this.#lingerTimer);
     clearInterval(this.#pollTimer);
     clearTimeout(this.#settleTimer);
     for (const h of this.#handles.values()) h.w.close();
@@ -456,9 +485,37 @@ export class DirWatcher {
     for (const [k, w] of this.#walked) needed.set(k, w.dir);
     this.#awaited = awaited;
 
+    const now = Date.now();
+    let lingers = Infinity;
     for (const [k, h] of this.#handles) {
       // A folder replaced by another (a rename over it) keeps the old watch on Linux and Windows.
-      if (!needed.has(k) || idOf(h.dir) !== h.id) this.#drop(k, h);
+      // On macOS the watch follows the path: one missing for now lingers, and an ancestor watch
+      // sees the folder come back, renamed into place too, as it moves its watch.
+      const state = this.#stateOf(h);
+      if (state === "moved") {
+        this.#drop(k, h);
+        continue;
+      }
+      if (state === "gone") this.#gone(h);
+      if (needed.has(k)) {
+        h.idle = undefined;
+        if (state === "replaced") this.#refresh(k, h);
+      } else {
+        // A run that fails early reports fewer files, and the next one reports them again: a
+        // restart or a folder moved for a moment must not close and open its watches each time.
+        h.idle ??= now;
+        const left = h.idle + this.#linger - now;
+        if (left <= 0) this.#drop(k, h);
+        else lingers = Math.min(lingers, left);
+      }
+    }
+    if (lingers !== Infinity) {
+      clearTimeout(this.#lingerTimer);
+      this.#lingerTimer = setTimeout(() => {
+        this.#lingerTimer = undefined;
+        this.#scheduleSync();
+      }, lingers);
+      this.#lingerTimer.unref?.();
     }
     const fresh: string[] = [];
     for (const [k, dir] of needed) {
@@ -471,6 +528,42 @@ export class DirWatcher {
       const walked = this.#walked.get(this.#key(dir));
       if (walked) this.#rescan(walked);
     }
+  }
+
+  /**
+   * What became of a watch's folder: `moved` needs a new watch, `replaced` a new look at its
+   * files. Linux and Windows watch the folder itself, so a new one is `moved` there. macOS watches
+   * the path: a folder just found missing is `gone`, a new one there (or one back) is `replaced`,
+   * and only a new real path is `moved`. The real path is looked up only when the folder is new,
+   * so it costs a stat as before.
+   */
+  #stateOf(h: Handle): "moved" | "replaced" | "gone" | undefined {
+    const id = idOf(h.dir);
+    if (id === h.id) return undefined;
+    if (!this.#mac) return "moved";
+    if (id === undefined) return "gone";
+    // Back after it was gone: maybe as a link to another folder, with the same identity.
+    const real = realOf(h.dir);
+    return real !== undefined && real !== h.real ? "moved" : "replaced";
+  }
+
+  // macOS: a folder replaced under its watch, by `rm -rf` and `mkdir` or a rename over it. The
+  // watch reports the new folder's files from now on, but maybe not those already in it: a folder
+  // renamed into place is named in an event for its parent only.
+  #refresh(k: string, h: Handle) {
+    h.id = idOf(h.dir);
+    this.#o.debug(`replaced ${h.dir}`);
+    this.#checkDir(h.dir, false);
+    const walked = this.#walked.get(k);
+    if (walked) this.#rescan(walked);
+  }
+
+  // macOS: a folder found missing keeps its watch until it is back or `linger` has passed. Its
+  // files are gone now, as the drop would see: FSEvents may name only the folder or an ancestor.
+  #gone(h: Handle) {
+    h.id = undefined;
+    this.#o.debug(`gone ${h.dir}`);
+    this.#checkDir(h.dir, false);
   }
 
   #drop(k: string, h: Handle) {
@@ -508,7 +601,7 @@ export class DirWatcher {
     try {
       const id = idOf(dir);
       const w = (this.#o.watch ?? watch)(dir, (_type, name) => this.#onEvent(dir, w, name));
-      const h = { w, dir, id };
+      const h: Handle = { w, dir, id, real: this.#mac ? realOf(dir) : undefined };
       w.on("error", () => {
         // Usually the folder went away: watch its parent instead.
         if (this.#handles.get(k) === h) this.#drop(k, h);
@@ -577,8 +670,15 @@ export class DirWatcher {
     const dk = this.#key(dir);
     const h = this.#handles.get(dk);
     if (h?.w !== w) return;
-    if (idOf(dir) !== h.id) {
+    const state = this.#stateOf(h);
+    if (state === "moved") {
       this.#drop(dk, h);
+      this.#scheduleSync();
+    } else if (state === "replaced") {
+      this.#refresh(dk, h);
+      this.#scheduleSync();
+    } else if (state === "gone") {
+      this.#gone(h);
       this.#scheduleSync();
     } else if (!existsSync(full)) {
       this.#scheduleSync();
