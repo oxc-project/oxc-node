@@ -279,11 +279,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
       : undefined;
   if (searchedElsewhere) {
     // Nothing to probe beside the caller.
-  } else if (
-    native !== undefined &&
-    isFile(native) &&
-    (!(inNodeModules(native) && inNodeModules(resolved)) || compiledDependency(parent))
-  ) {
+  } else if (native !== undefined && isFile(native)) {
     source = native;
   } else if (sourceFirst && !inNodeModules(resolved)) {
     // Without it — a file name with `#`, `?` or `%` it would read otherwise — its order
@@ -471,9 +467,11 @@ function resolvesSourceFirst(request, parent) {
 }
 
 /**
- * Whether `parent` is a dependency's TypeScript file compiled to CommonJS from an ES
+ * Whether `parent` is a dependency's file oxc-node compiled to CommonJS from an ES
  * module (`OXC_TRANSFORM_ALL`): the ES module resolver's package order, which keeps
- * compiled JavaScript before its source, is what it found as an ES module.
+ * compiled JavaScript before its source, is what it found as an ES module. A package's
+ * JavaScript counts only when `OXC_TRANSFORM_ALL` covers it: otherwise it is output
+ * oxc-node leaves to Node.js.
  *
  * @param {{ filename?: string | null, exports?: unknown } | null | undefined} parent
  * @returns {boolean}
@@ -483,8 +481,9 @@ function compiledDependency(parent) {
   return (
     typeof filename === "string" &&
     inNodeModules(filename) &&
-    /\.(?:[cm]?ts|tsx)$/.test(filename) &&
-    /** @type {{ __esModule?: unknown } | undefined} */ (parent?.exports)?.__esModule === true
+    /\.(?:[cm]?ts|tsx|jsx?)$/.test(filename) &&
+    /** @type {{ __esModule?: unknown } | undefined} */ (parent?.exports)?.__esModule === true &&
+    transformsDep(filename)
   );
 }
 

@@ -991,6 +991,60 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
     expect(run(root, "./main.ts", [], env)).toContain("where: b/index.ts\n");
   });
 
+  test("resolves a lowered JavaScript dependency's bare import in the package order", () => {
+    // `a/main.js` is compiled from an ES module; `a/built.js` is `tsc` output oxc-node
+    // leaves alone without `OXC_TRANSFORM_ALL`, and keeps Node.js' answer.
+    const root = fixture(
+      {
+        "node_modules/a/package.json": JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+          type: "commonjs",
+          main: "main.js",
+        }),
+        "node_modules/a/main.js": 'import { where } from "b";\nexport const fromA = where;\n',
+        "node_modules/a/built.js":
+          '"use strict";\nObject.defineProperty(exports, "__esModule", { value: true });\n' +
+          'exports.fromBuilt = require("b").where;\n',
+        "node_modules/b/package.json": JSON.stringify({
+          name: "b",
+          version: "1.0.0",
+          type: "commonjs",
+        }),
+        "node_modules/b/index.ts": 'export const where: string = "b/index.ts";\n',
+        "node_modules/b/index.json": '{ "where": "b/index.json" }\n',
+        "main.ts": 'import { fromA } from "a";\nconsole.log("where:", fromA);\n',
+        "built.ts": 'import { fromBuilt } from "a/built.js";\nconsole.log("built:", fromBuilt);\n',
+      },
+      { ...NODENEXT, allowJs: true, resolveJsonModule: true },
+    );
+    const tsconfig = { OXC_TSCONFIG_PATH: join(root, "tsconfig.json") };
+    expect(run(root, "./main.ts", [], { ...tsconfig, OXC_TRANSFORM_ALL: "1" })).toContain(
+      "where: b/index.ts\n",
+    );
+    expect(run(root, "./built.ts", [], tsconfig)).toContain("built: b/index.json\n");
+  });
+
+  test("a path request into a package takes the ES module resolver's answer", () => {
+    // `pkg` has no `main`: the ES module resolver finds `index.mjs`, Node.js `index.json`.
+    // A package's compiled `lib.js` stays before its `lib.ts`, as it does for both.
+    const root = fixture(
+      {
+        "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+        "node_modules/pkg/index.mjs": 'export const where = "pkg/index.mjs";\n',
+        "node_modules/pkg/index.json": '{ "where": "pkg/index.json" }\n',
+        "node_modules/pkg/lib.js": 'exports.where = "pkg/lib.js";\n',
+        "node_modules/pkg/lib.ts": 'export const where = "pkg/lib.ts";\n',
+        "main.ts":
+          '// @ts-nocheck\nimport { where } from "./node_modules/pkg";\n' +
+          'import { where as lib } from "./node_modules/pkg/lib";\n' +
+          'console.log("where:", where, lib);\n',
+      },
+      { ...NODENEXT, allowJs: true, resolveJsonModule: true },
+    );
+    expect(run(root, "./main.ts")).toContain("where: pkg/index.mjs pkg/lib.js\n");
+  });
+
   test("finds a package's source by its output's name from a compiled dependency", () => {
     // With the tsconfig named, `OXC_TRANSFORM_ALL` compiles `a` to CommonJS too.
     const root = fixture({
