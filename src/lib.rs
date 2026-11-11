@@ -2820,6 +2820,7 @@ fn lowers_to_commonjs(
         && module_record.import_metas.is_empty()
         && matches!(package_type(path), Some(PackageType::CommonJs))
         && !has_top_level_await(program)
+        && !names_a_function_by_pattern(program)
         && {
             let scoping = SemanticBuilder::new().build(program).semantic.into_scoping();
             let erased = |symbol| {
@@ -2837,6 +2838,24 @@ fn lowers_to_commonjs(
                     (name != "exports" && !name.starts_with("__vite_ssr_")) || erased(symbol)
                 })
         }
+}
+
+/// Whether a top-level pattern gives a binding a function or class default that takes its
+/// name (`export const [f = () => 1, g = self.f] = []`). As an `exports` member the
+/// binding would lose that name, and published after the whole pattern a later default
+/// reading it through an import cycle would miss it, so the file stays an ES module.
+fn names_a_function_by_pattern(program: &Program<'_>) -> bool {
+    program.body.iter().any(|statement| {
+        let declaration = match statement {
+            Statement::VariableDeclaration(declaration) => declaration,
+            Statement::ExportDeclaration(export) => match &export.declaration {
+                Declaration::VariableDeclaration(declaration) => declaration,
+                _ => return false,
+            },
+            _ => return false,
+        };
+        declaration.declarations.iter().any(|declarator| names_a_default(&declarator.id))
+    })
 }
 
 /// Parses generated CommonJS into `allocator`, without mappings.
@@ -6346,11 +6365,6 @@ mod tests {
                 "var [x] = [0];\nvar x = function () {};\nexport { x };\n",
                 "var [x] = [0];",
             ),
-            (
-                "cjs/pattern-default.ts",
-                "export const [x = function () {}, y = class {}] = [];\n",
-                "const [x = function() {}, y = class {}] = [];",
-            ),
         ] {
             let code = run(name, source);
             assert!(lowered(&code), "{code}");
@@ -6434,6 +6448,9 @@ mod tests {
                 "cjs/nested-exports.ts",
                 "export let n = 0;\nexport function inc(exports: { n: number }) { n++; }\n",
             ),
+            // A function default would lose its name as a member, and published after the
+            // pattern, a cycle reading it from a later default would miss it.
+            ("cjs/pattern-default.ts", "export const [x = function () {}, y = class {}] = [];\n"),
             // The compiled output finds the runner's helpers by their names.
             (
                 "cjs/runner-import.ts",

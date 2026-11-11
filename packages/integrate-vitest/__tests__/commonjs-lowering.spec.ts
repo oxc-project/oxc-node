@@ -469,6 +469,37 @@ describe("a TypeScript file in a CommonJS package", () => {
 
   // Windows lets only elevated processes create file symlinks.
   test.skipIf(process.platform === "win32")(
+    "finds a local source before the output it stands for links into node_modules",
+    () => {
+      const root = fixture({
+        "node_modules/pkg/dep.js": 'exports.where = "node_modules/pkg/dep.js";\n',
+        "dep.ts": 'export const where: string = "dep.ts";\n',
+        "main.ts": 'import { where } from "./dep.js";\nconsole.log("where:", where);\n',
+      });
+      symlinkSync(join("node_modules", "pkg", "dep.js"), join(root, "dep.js"));
+      expect(run(root, "./main.ts")).toContain("where: dep.ts\n");
+    },
+  );
+
+  // Windows lets only elevated processes create file symlinks.
+  test.skipIf(process.platform === "win32")(
+    "resolves a JavaScript file compiled to CommonJS as the ES module resolver did",
+    () => {
+      const root = fixture(
+        {
+          "build/real.js": 'exports.where = "build/real.js";\n',
+          "lib/index.ts": 'export const where: string = "lib/index.ts";\n',
+          "main.js": 'import { where } from "./lib";\nconsole.log("where:", where);\n',
+        },
+        { ...NODENEXT, allowJs: true },
+      );
+      symlinkSync(join("..", "build", "real.js"), join(root, "lib", "index.js"));
+      expect(run(root, "./main.js")).toContain("where: lib/index.ts\n");
+    },
+  );
+
+  // Windows lets only elevated processes create file symlinks.
+  test.skipIf(process.platform === "win32")(
     "keeps a directory's explicit `main` that an unused index links to",
     () => {
       const root = fixture({

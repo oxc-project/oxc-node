@@ -12,16 +12,15 @@ import {
   again,
   beside,
   blocked,
-  byDefault,
   fourth,
   fromPattern,
-  DefaultClass,
   looped,
   named,
   second,
   tagged,
 } from "./declarators";
 import * as Klass from "./klass.cjs";
+import { answer as fromCycle, byDefault, DefaultClass } from "./named-defaults";
 import { compute, esmValue } from "./output-names";
 import { where as shadowedByOutputName } from "./shadowed.js";
 import { where as shadowedExtensionless } from "./shadowed";
@@ -105,6 +104,10 @@ void test("a function or class named by its binding keeps that name", () => {
     [named.name, byDefault.name, DefaultClass.name],
     ["named", "byDefault", "DefaultClass"],
   );
+});
+
+void test("a pattern default reads an earlier binding through an import cycle", () => {
+  assert.equal(fromCycle, 42);
 });
 
 // `tsc` calls a tag as `(0, exports.tag)`, without `exports` as `this`.

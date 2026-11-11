@@ -42,4 +42,3 @@ export { blocked, beside };
 var [named]: Array<() => void> = [];
 var named = function () {};
 export { named };
-export const [byDefault = function () {}, DefaultClass = class {}] = [];

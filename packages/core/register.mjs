@@ -252,35 +252,45 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
   // The output may be a symlink: Node.js has followed it, and the source sits beside
   // the name the request reaches, as the ES module resolver looks for it.
   let source;
+  const sourceFirst = !searchedElsewhere && resolvesSourceFirst(request, parent);
+  const fromEsm = !searchedElsewhere && !sourceFirst && compiledFromEsm(request, parent);
+  // The ES module resolver's own answer, when it has one: the file this request found
+  // as an ES module, symlinks, a directory's `main` and index, and its extension order
+  // included. A local source comes first even when the output it stands for links into
+  // `node_modules`; a package's own files stay what it compiled.
+  const native =
+    sourceFirst || fromEsm
+      ? resolveNative(request, /** @type {string} */ (parent?.filename))
+      : undefined;
   if (searchedElsewhere) {
     // Nothing to probe beside the caller.
-  } else if (resolvesSourceFirst(request, parent) && !inNodeModules(resolved)) {
-    const named = requested(request, parent.filename, resolved);
-    const file = !throughDirectory(request, parent.filename, resolved);
-    // The ES module resolver's own answer, when it has one: the file this request
-    // found as an ES module, symlinks, a directory's `main` and index, and its
-    // extension order included.
-    const native = resolveNative(request, parent.filename);
-    // Otherwise — a file name with `#`, `?` or `%` it would read otherwise — its order
+  } else if (
+    native !== undefined &&
+    isFile(native) &&
+    !(inNodeModules(native) && inNodeModules(resolved))
+  ) {
+    source = native;
+  } else if (sourceFirst && !inNodeModules(resolved)) {
+    // Without it — a file name with `#`, `?` or `%` it would read otherwise — its order
     // is rebuilt from what Node.js found. An extensionless request takes the ES module
     // resolver's extension order first; the aliases of the extension Node.js added come
     // after it. `./foo.js` finds `foo.ts` first, whatever Node.js completed it with: a
     // `foo.js/` directory, or a `foo.js.json` file.
+    const named = requested(request, parent.filename, resolved);
+    const file = !throughDirectory(request, parent.filename, resolved);
     source =
-      native !== undefined && isFile(native)
-        ? native
-        : ((DIRECTORY_ONLY.test(request)
-            ? undefined
-            : explicitSource(resolvePath(dirname(parent.filename), request))) ??
-          directoryLinkSource(request, parent.filename, resolved) ??
-          directoryMainSource(request, parent.filename, resolved) ??
-          directoryMainOrderSource(request, parent.filename, resolved) ??
-          directoryIndexSource(request, parent.filename, resolved) ??
-          (file ? extensionlessSource(request, named) : undefined) ??
-          sourceBeside(named) ??
-          (file ? extensionlessSource(request, resolved) : undefined) ??
-          sourceBeside(resolved));
-  } else if (compiledFromEsm(request, parent) && !inNodeModules(resolved)) {
+      (DIRECTORY_ONLY.test(request)
+        ? undefined
+        : explicitSource(resolvePath(dirname(parent.filename), request))) ??
+      directoryLinkSource(request, parent.filename, resolved) ??
+      directoryMainSource(request, parent.filename, resolved) ??
+      directoryMainOrderSource(request, parent.filename, resolved) ??
+      directoryIndexSource(request, parent.filename, resolved) ??
+      (file ? extensionlessSource(request, named) : undefined) ??
+      sourceBeside(named) ??
+      (file ? extensionlessSource(request, resolved) : undefined) ??
+      sourceBeside(resolved);
+  } else if (fromEsm && !inNodeModules(resolved)) {
     const named = requested(request, parent.filename, resolved);
     const file = !throughDirectory(request, parent.filename, resolved);
     source =

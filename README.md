@@ -385,7 +385,9 @@ form, or declares a value named like one the CommonJS wrapper or the compiled
 output uses (`exports`, `require`, `module`, `__filename`, `__dirname`,
 `__importDefault`, `__importStar`, `__exportStar`, `Object`, `Symbol`) at its top
 level, or `exports` or a name starting with `__vite_ssr_` anywhere, a parameter
-included; a type of that name is fine. Removing `"type": "commonjs"` turns the
+included; a type of that name is fine. So does a top-level destructuring pattern
+whose default is an anonymous function or class (`const [f = () => 1] = []`),
+which takes its name from the binding. Removing `"type": "commonjs"` turns the
 compilation off.
 Outside that combination — no `"type"`, `"type": "module"`, or an ES `module`
 setting — a file with module syntax runs as an ES module, as before. A `.cts`
