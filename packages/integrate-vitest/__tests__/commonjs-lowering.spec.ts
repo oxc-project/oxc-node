@@ -532,10 +532,13 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
         "build/real.js": 'exports.where = "build/real.js";\n',
         "build/real.ts": 'export const where: string = "build/real.ts";\n',
         "main.ts":
-          '// @ts-nocheck\nimport { where } from "./dep#x.js";\nconsole.log("where:", where);\n',
+          '// @ts-nocheck\nimport { where } from "./dep#x.js";\n' +
+          'import { where as bare } from "./bin#x";\nconsole.log("where:", where, bare);\n',
       });
       symlinkSync(join("build", "real.js"), join(root, "dep#x.js"));
-      expect(run(root, "./main.ts")).toContain("where: build/real.js\n");
+      // An extensionless name is the file Node.js tries first.
+      symlinkSync(join("build", "real.js"), join(root, "bin#x"));
+      expect(run(root, "./main.ts")).toContain("where: build/real.js build/real.js\n");
     },
   );
 
@@ -1130,6 +1133,44 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
         NODE_OPTIONS: "--conditions=staging",
       }),
     ).toContain("where: staging.js\n");
+  });
+
+  test("loads a module with thousands of exports", () => {
+    // `tsc` clears exports in chains of 50; one chain of all of them nests too deep.
+    const exports = Array.from(
+      { length: 5000 },
+      (_, index) => `export const v${index} = ${index};\n`,
+    );
+    const root = fixture({
+      "big.ts": exports.join(""),
+      "main.ts": 'import { v4999 } from "./big";\nconsole.log("last:", typeof require, v4999);\n',
+    });
+    expect(run(root, "./main.ts")).toContain("last: function 4999\n");
+  });
+
+  // Before Node.js 26.2 a `module.registerHooks()` hook does not see this `require()`, and
+  // neither did the ES module oxc-node ran: both take the default branch.
+  test.skipIf(!SYNC_HOOKS)("maps a request with the conditions a resolve hook passes on", () => {
+    // Node.js maps `#dep` to `dev.js` with the hook's `development` condition; the ES
+    // module resolver maps it the same way, not to the default branch's `prod.ts`.
+    const root = fixture({
+      "package.json": JSON.stringify({
+        type: "commonjs",
+        imports: { "#dep": { development: "./dev.js", default: "./prod.js" } },
+      }),
+      "hook.mjs":
+        'import { registerHooks } from "node:module";\n' +
+        "registerHooks({\n" +
+        "  resolve: (specifier, context, next) =>\n" +
+        '    next(specifier, specifier === "#dep"\n' +
+        '      ? { ...context, conditions: [...context.conditions, "development"] }\n' +
+        "      : context),\n" +
+        "});\n",
+      "dev.js": 'exports.where = "dev.js";\n',
+      "prod.ts": 'export const where: string = "prod.ts";\n',
+      "main.ts": '// @ts-nocheck\nimport { where } from "#dep";\nconsole.log("where:", where);\n',
+    });
+    expect(run(root, "./main.ts", ["--import", "./hook.mjs"])).toContain("where: dev.js\n");
   });
 
   test("a path request into a package takes the ES module resolver's answer", () => {

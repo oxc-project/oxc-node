@@ -3358,8 +3358,10 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
             },
         }
     }
-    if !cleared.is_empty() {
-        prelude.push_str(&cleared.join(" = "));
+    // In chains of 50, as `tsc` emits them: one chain of thousands of members nests too
+    // deep for V8 to compile.
+    for chunk in cleared.chunks(50) {
+        prelude.push_str(&chunk.join(" = "));
         prelude.push_str(" = void 0;\n");
     }
     prelude.push_str(&getters);

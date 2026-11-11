@@ -232,7 +232,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
         const found = PATH_REQUEST.test(request)
           ? // The ES module resolver's other candidates — `index.ts` in a directory, say
             // — and its report of them to watch mode, so creating one restarts the app.
-            resolveNative(request, filename)
+            resolveNative(request, filename, options)
           : // A package `imports` entry (`#value`) or a self-reference through `exports`
             // names compiled output too. Node.js has mapped it, with every active
             // condition, and names the file it found missing.
@@ -249,7 +249,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
             // A package subpath Node.js names no file for (`pkg/feature.js` of a package
             // that ships `feature.ts`, `pkg/feature.jsx` of one that ships `feature.js`):
             // what the ES module resolver finds for it, as the file found it as one.
-            resolveNative(request, filename));
+            resolveNative(request, filename, options));
         if (found !== undefined) {
           return found;
         }
@@ -275,7 +275,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
   // `node_modules`; a package's own files stay what it compiled.
   const native =
     sourceFirst || fromEsm
-      ? resolveNative(request, /** @type {string} */ (parent?.filename))
+      ? resolveNative(request, /** @type {string} */ (parent?.filename), options)
       : undefined;
   if (searchedElsewhere) {
     // Nothing to probe beside the caller.
@@ -319,7 +319,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
     // `main` Node.js fell back from, or an index (`index.ts`, `index.mjs`) before the
     // `index.json` Node.js takes. In a package it keeps compiled JavaScript before its
     // source; when it keeps the very file Node.js found, nothing stood before it.
-    const found = resolveNative(request, parent.filename);
+    const found = resolveNative(request, parent.filename, options);
     source =
       found === resolved
         ? undefined
@@ -545,6 +545,14 @@ function requested(request, filename, resolved) {
   }
   if (extname(path) !== "" && isFile(path)) {
     return path;
+  }
+  // An extensionless file is what Node.js tries first: `./dep` that is itself a link.
+  try {
+    if (isFile(path) && realpathSync(path) === resolved) {
+      return path;
+    }
+  } catch {
+    // A dangling link; Node.js did not take it either.
   }
   const withExtension = path + extname(resolved);
   if (isFile(withExtension)) {
@@ -803,11 +811,16 @@ function mappedFile(error, request) {
  * The file the ES module resolver finds for a relative or absolute `request` from
  * `filename`, when Node.js' CommonJS resolution found none.
  *
+ * It maps the request with the conditions Node.js resolved it with: those a
+ * `module.registerHooks()` hook passed on, which Node.js hands `_resolveFilename` as
+ * `options.conditions`, or the ones Node.js starts with.
+ *
  * @param {string} request
  * @param {string} filename
+ * @param {{ conditions?: Iterable<string> } | undefined} options
  * @returns {string | undefined}
  */
-function resolveNative(request, filename) {
+function resolveNative(request, filename, options) {
   // `#`, `?` and `%` are part of a CommonJS file name, but the ES module resolver reads
   // a fragment, a query or an escape there, and would find another file. A bare `#`
   // names a package `imports` entry. Outside Windows a `\` is part of a file name too, where
@@ -824,7 +837,7 @@ function resolveNative(request, filename) {
         { getCurrentDirectory: () => process.cwd() },
         request,
         {
-          conditions: REQUIRE_CONDITIONS,
+          conditions: options?.conditions != null ? [...options.conditions] : REQUIRE_CONDITIONS,
           importAttributes: {},
           parentURL: pathToFileURL(filename).href,
         },
