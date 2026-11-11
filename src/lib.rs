@@ -3143,6 +3143,16 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
             }
         }
     }
+    // As would one a later assignment names (`x = class {}`), anywhere in the file.
+    let mut assigned = AssignedFunctionNames(&scoping, HashSet::new());
+    assigned.visit_program(program);
+    for symbol in assigned.1 {
+        let name = scoping.symbol_name(symbol);
+        if scoping.get_root_binding(name.into()) == Some(symbol) {
+            names_a_function.insert(name);
+            plain_declarations.insert(name, false);
+        }
+    }
 
     // How many times each symbol is declared anywhere in the file.
     let mut bindings = BindingCount::default();
@@ -3629,6 +3639,59 @@ impl<'a> Visit<'a> for BindingCount {
     }
 }
 
+/// The bindings an assignment names a function or class by: `x = class {}`,
+/// `x ||= () => {}`, `[x = function () {}] = a`, `({ x = class {} } = a)`.
+struct AssignedFunctionNames<'s>(&'s Scoping, HashSet<SymbolId>);
+
+impl AssignedFunctionNames<'_> {
+    fn add(&mut self, ident: &IdentifierReference<'_>, value: &Expression<'_>) {
+        if value.is_anonymous_function_definition()
+            && let Some(symbol) = ident
+                .reference_id
+                .get()
+                .and_then(|reference| self.0.get_reference(reference).symbol_id())
+        {
+            self.1.insert(symbol);
+        }
+    }
+}
+
+impl<'a> Visit<'a> for AssignedFunctionNames<'_> {
+    fn visit_assignment_expression(&mut self, it: &oxc::ast::ast::AssignmentExpression<'a>) {
+        if matches!(
+            it.operator,
+            AssignmentOperator::Assign
+                | AssignmentOperator::LogicalAnd
+                | AssignmentOperator::LogicalOr
+                | AssignmentOperator::LogicalNullish
+        ) && let AssignmentTarget::AssignmentTargetIdentifier(ident) = &it.left
+        {
+            self.add(ident.as_ref(), &it.right);
+        }
+        walk::walk_assignment_expression(self, it);
+    }
+
+    fn visit_assignment_target_with_default(
+        &mut self,
+        it: &oxc::ast::ast::AssignmentTargetWithDefault<'a>,
+    ) {
+        if let AssignmentTarget::AssignmentTargetIdentifier(ident) = &it.binding {
+            self.add(ident.as_ref(), &it.init);
+        }
+        walk::walk_assignment_target_with_default(self, it);
+    }
+
+    fn visit_assignment_target_property_identifier(
+        &mut self,
+        it: &oxc::ast::ast::AssignmentTargetPropertyIdentifier<'a>,
+    ) {
+        if let Some(init) = &it.init {
+            self.add(&it.binding, init);
+        }
+        walk::walk_assignment_target_property_identifier(self, it);
+    }
+}
+
 /// Reads and writes of a binding that became `exports.name` go through `exports.name`.
 struct ExportedBindings<'s, 'a> {
     allocator: &'a Allocator,
@@ -3655,8 +3718,8 @@ impl<'a> VisitMut<'a> for ExportedBindings<'_, 'a> {
     }
 
     fn visit_call_expression(&mut self, call: &mut CallExpression<'a>) {
-        // `(0, exports.f)()`, as `tsc` calls it: no `this` from `exports`.
-        if let Expression::Identifier(ident) = &call.callee
+        // `(0, exports.f)()`, as `tsc` calls it: no `this` from `exports`, `(f)()` neither.
+        if let Expression::Identifier(ident) = call.callee.without_parentheses()
             && let Some(member) = self.member(ident)
         {
             call.callee = generated_expression(self.allocator, &format!("(0, {member})"));
@@ -3666,7 +3729,7 @@ impl<'a> VisitMut<'a> for ExportedBindings<'_, 'a> {
 
     fn visit_tagged_template_expression(&mut self, tagged: &mut TaggedTemplateExpression<'a>) {
         // A tag gets no `this` from `exports` either.
-        if let Expression::Identifier(ident) = &tagged.tag
+        if let Expression::Identifier(ident) = tagged.tag.without_parentheses()
             && let Some(member) = self.member(ident)
         {
             tagged.tag = generated_expression(self.allocator, &format!("(0, {member})"));
@@ -6314,6 +6377,43 @@ mod tests {
         assert!(code.contains("exports.a = a;"), "{code}");
         assert!(code.find("exports.a = a;") < code.find("b = a + 1"), "{code}");
         assert!(code.contains("(0, exports.tag)`x`"), "{code}");
+
+        // So do a parenthesized callee and tag.
+        let code = run(
+            "cjs/parenthesized.ts",
+            "function t() {}\nlet f = t;\nexport { f };\nf = t;\nexport const a = (f)(), b = (f)`x`;\n",
+        );
+        assert!(lowered(&code), "{code}");
+        assert!(code.contains("(0, exports.f)()"), "{code}");
+        assert!(code.contains("(0, exports.f)`x`"), "{code}");
+
+        // A later assignment that names a function or class keeps the local binding, so
+        // the name is inferred from it, as in `tsc`'s output.
+        for (name, source) in [
+            ("cjs/assign-class.ts", "let H: unknown;\nH = class {};\nexport { H };\n"),
+            ("cjs/assign-or.ts", "let H: unknown;\nH ||= () => 1;\nexport { H };\n"),
+            (
+                "cjs/assign-pattern.ts",
+                "let H: unknown;\n[H = function () {}] = [];\nexport { H };\n",
+            ),
+            (
+                "cjs/assign-shorthand.ts",
+                "let H: unknown;\n({ H = class {} } = {});\nexport { H };\n",
+            ),
+        ] {
+            let code = run(name, source);
+            assert!(lowered(&code), "{name}: {code}");
+            assert!(
+                !code.replace("exports.H = void 0", "").contains("exports.H ="),
+                "{name}: {code}"
+            );
+            assert!(
+                !code.contains("exports.H ||=") && !code.contains(": exports.H"),
+                "{name}: {code}"
+            );
+            assert!(!code.contains("[exports.H"), "{name}: {code}");
+            assert!(code.contains("get: function() { return H; }"), "{name}: {code}");
+        }
 
         // A destructuring export assigns `exports` members as the pattern runs, as `tsc`
         // emits it, and the pattern's own reads go through them.

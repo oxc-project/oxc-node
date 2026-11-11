@@ -753,6 +753,18 @@ describe("a TypeScript file in a CommonJS package", () => {
     expect(run(root, "./main.ts")).toContain("x: 1 1\n");
   });
 
+  test("calls a parenthesized export without a receiver, and keeps assigned names", () => {
+    const root = fixture({
+      "mod.ts":
+        "function impl(this: unknown) {\n  return this === undefined;\n}\n" +
+        "let f = impl;\nexport { f };\nf = impl;\nexport const seen = (f)();\n" +
+        "let Handler: unknown;\nHandler = class {};\nexport { Handler };\n" +
+        "export const name = (Handler as { name: string }).name;\n",
+      "main.ts": 'import { seen, name } from "./mod";\nconsole.log("result:", seen, name);\n',
+    });
+    expect(run(root, "./main.ts")).toContain("result: true Handler\n");
+  });
+
   test("resolves a package `imports` entry with the active conditions", () => {
     // Node.js picks `./dev.js` under `--conditions=development`, so its source is
     // `dev.ts`, not the `default` target's.
