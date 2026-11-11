@@ -11,6 +11,7 @@ import {
   sep,
 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parseEnv } from "node:util";
 import { isMainThread } from "node:worker_threads";
 
 import { addHook } from "pirates";
@@ -419,8 +420,9 @@ const REQUIRE_CONDITIONS = (() => {
         : undefined
       : explicitFile;
   // Node.js has read it already. Its conditions add to the command line's; when
-  // `NODE_OPTIONS` is set at all, even empty, Node.js takes none of its options.
-  if (configFile && environment === undefined) {
+  // `NODE_OPTIONS` is set at all, even empty, Node.js takes none of its options. Set by
+  // an `--env-file` only, it counts as unset: Node.js reads that file later.
+  if (configFile && (environment === undefined || fromEnvFile(environment))) {
     let nodeOptions;
     try {
       // Node.js takes a file that starts with a byte order mark.
@@ -458,6 +460,32 @@ const REQUIRE_CONDITIONS = (() => {
   }
   return [...conditions, ...added];
 })();
+
+/**
+ * Whether `NODE_OPTIONS` holds what an `--env-file` (or `--env-file-if-exists`) of the
+ * command line sets it to, rather than what the process started with: Node.js keeps a
+ * variable the environment has.
+ *
+ * @param {string} value
+ * @returns {boolean}
+ */
+function fromEnvFile(value) {
+  const args = process.execArgv;
+  for (let index = 0; index < args.length; index++) {
+    const match = /^--env-file(?:-if-exists)?(?:=(.*))?$/.exec(args[index]);
+    const file = match && (match[1] ?? args[++index]);
+    if (file) {
+      try {
+        if (parseEnv(readFileSync(resolvePath(file), "utf8")).NODE_OPTIONS === value) {
+          return true;
+        }
+      } catch {
+        // A file Node.js could not read either.
+      }
+    }
+  }
+  return false;
+}
 
 /** A request that names a directory only: `./foo/`, `.`, `..`. */
 const DIRECTORY_ONLY = /(?:[\\/]|(?:^|[\\/])\.\.?)$/;

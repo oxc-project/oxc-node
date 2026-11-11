@@ -1146,6 +1146,7 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
       }),
       "dev.config.json": JSON.stringify({ nodeOptions: { conditions: ["development"] } }),
       "node.config.json": JSON.stringify({ nodeOptions: { conditions: ["production"] } }),
+      "app.env": "NODE_OPTIONS=--no-warnings\n",
       "dev.js": 'exports.where = "dev.js";\n',
       "prod.js": 'exports.where = "prod.js";\n',
       "def.js": 'exports.where = "def.js";\n',
@@ -1157,6 +1158,10 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
         NODE_OPTIONS: "--no-warnings",
       }),
     ).toContain("where: def.js\n");
+    // Set by an `--env-file`, it does not: Node.js reads that file after the other.
+    expect(
+      run(root, "./main.ts", ["--experimental-config-file=dev.config.json", "--env-file=app.env"]),
+    ).toContain("where: dev.js\n");
     // Given both, Node.js 24.19 and 26.1 and later take the flag that comes last, earlier
     // versions the named file.
     const laterWins = MAJOR === 24 ? MINOR >= 19 : MAJOR === 26 ? MINOR >= 1 : MAJOR > 26;
