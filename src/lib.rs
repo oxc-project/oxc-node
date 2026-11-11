@@ -1678,6 +1678,22 @@ static NATIVE_EXPLICIT_RESOURCE_MANAGEMENT: AtomicBool = AtomicBool::new(false);
 /// The first Node.js major that runs explicit resource management natively.
 const NATIVE_EXPLICIT_RESOURCE_MANAGEMENT_SINCE: u32 = 24;
 
+/// Whether this Node.js loads an ES module a file compiled to CommonJS `require()`s,
+/// when its module loader ran that file. Older releases crash in their translator
+/// (`cjsCache.get(job.url).exports`), so a file stays an ES module there, as before.
+/// On by default: an embedder without `napi`, or an unknown version, compiles.
+static LOADER_REQUIRES_ESM: AtomicBool = AtomicBool::new(true);
+
+/// Node.js 22.22.3 and 24.8.0 fixed `require()` of an ES module from a file the module
+/// loader ran; 23 never did, and 25 has it from its start.
+fn loader_requires_esm(major: u32, minor: u32, patch: u32) -> bool {
+    match major {
+        22 => (minor, patch) >= (22, 3),
+        24 => minor >= 8,
+        major => major >= 25,
+    }
+}
+
 /// With `napi` off nothing invokes this: an embedder that wants native
 /// `using` support must call it from its own `napi(module_exports)` hook,
 /// or `NATIVE_EXPLICIT_RESOURCE_MANAGEMENT` stays `false` and `using` is
@@ -1689,6 +1705,10 @@ pub fn detect_runtime_syntax(_exports: Object, env: Env) -> Result<()> {
     if let Ok(version) = env.get_node_version() {
         NATIVE_EXPLICIT_RESOURCE_MANAGEMENT
             .store(version.major >= NATIVE_EXPLICIT_RESOURCE_MANAGEMENT_SINCE, Ordering::Relaxed);
+        LOADER_REQUIRES_ESM.store(
+            loader_requires_esm(version.major, version.minor, version.patch),
+            Ordering::Relaxed,
+        );
     }
     Ok(())
 }
@@ -2816,7 +2836,9 @@ fn lowers_to_commonjs(
                 "commonjs" | "node16" | "node18" | "node20" | "nodenext"
             )
         });
-    emits_commonjs
+    // A Node.js that cannot `require()` an ES module this file may import keeps it one.
+    LOADER_REQUIRES_ESM.load(Ordering::Relaxed)
+        && emits_commonjs
         && module_record.import_metas.is_empty()
         && matches!(package_type(path), Some(PackageType::CommonJs))
         && !has_top_level_await(program)
@@ -6305,6 +6327,28 @@ mod tests {
     // An ES module that `tsc` compiles to CommonJS is compiled to CommonJS here too, in
     // `tsc`'s shape; one that cannot be CommonJS, that `tsc` keeps an ES module, or whose
     // package has no `"type"`, stays.
+    #[test]
+    fn loader_requires_esm_versions() {
+        for (version, lowers) in [
+            ((20, 19, 0), false),
+            ((22, 18, 0), false),
+            ((22, 22, 2), false),
+            ((22, 22, 3), true),
+            ((22, 23, 0), true),
+            ((23, 11, 1), false),
+            ((24, 7, 0), false),
+            ((24, 8, 0), true),
+            ((25, 0, 0), true),
+            ((26, 2, 0), true),
+        ] {
+            assert_eq!(
+                super::loader_requires_esm(version.0, version.1, version.2),
+                lowers,
+                "{version:?}"
+            );
+        }
+    }
+
     #[test]
     fn commonjs_lowering() {
         // Resolving a tsconfig records it for the watch report.

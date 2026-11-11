@@ -4,6 +4,6 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "test": "node ../cli/dist/index.js --test \"src/*.test.ts\""
+    "test": "node run-tests.mjs"
   }
 }

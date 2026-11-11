@@ -385,10 +385,15 @@ form, or declares a value named like one the CommonJS wrapper or the compiled
 output uses (`exports`, `require`, `module`, `__filename`, `__dirname`,
 `__importDefault`, `__importStar`, `__exportStar`, `Object`, `Symbol`) at its top
 level, or `exports` or a name starting with `__vite_ssr_` anywhere, a parameter
-included; a type of that name is fine. So does a top-level destructuring pattern
-whose default is an anonymous function or class (`const [f = () => 1] = []`),
-which takes its name from the binding. Removing `"type": "commonjs"` turns the
-compilation off.
+included, or used as a global; a type of that name is fine. So does a file that
+calls `eval`, which can read any local, and a top-level destructuring pattern
+whose default is an anonymous function or class (`const [f = () => 1] = []`), or
+whose binding a later assignment sets to one, as the function takes its name from
+the binding. Removing `"type": "commonjs"` turns the compilation off.
+
+It needs Node.js 22.22.3, 24.8 or later, where a file compiled to CommonJS can
+`require()` one that stays an ES module. On earlier releases Node.js itself crashes
+there, so every file runs as an ES module, as before.
 Outside that combination — no `"type"`, `"type": "module"`, or an ES `module`
 setting — a file with module syntax runs as an ES module, as before. A `.cts`
 file is not compiled this way; see

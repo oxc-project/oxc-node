@@ -25,9 +25,17 @@ afterAll(() => {
 
 const COMMONJS = JSON.stringify({ name: "fx", private: true, type: "commonjs" });
 const NODENEXT = { module: "nodenext" };
+const [MAJOR, MINOR, PATCH] = process.versions.node.split(".", 3).map(Number);
 // Node.js 26.2 and later run the hooks on this thread, as `module.registerHooks()`.
-const [MAJOR, MINOR] = process.versions.node.split(".", 2).map(Number);
 const SYNC_HOOKS = MAJOR > 26 || (MAJOR === 26 && MINOR >= 2);
+// oxc-node compiles to CommonJS only where Node.js can `require()` an ES module from a
+// file its module loader ran: 22.22.3, 24.8 and later. Elsewhere files stay ES modules.
+const LOWERS =
+  MAJOR === 22
+    ? MINOR > 22 || (MINOR === 22 && PATCH >= 3)
+    : MAJOR === 24
+      ? MINOR >= 8
+      : MAJOR >= 25;
 
 function fixture(
   files: Record<string, string>,
@@ -82,7 +90,31 @@ function run(
   return output;
 }
 
-describe("an ES module compiled to CommonJS", () => {
+describe.skipIf(LOWERS)("a Node.js that cannot require() an ES module it loaded", () => {
+  test("keeps ES modules, as before", () => {
+    const root = fixture({
+      "meta.ts": "export const url = import.meta.url.slice(-7);\n",
+      "main.ts":
+        'import { url } from "./meta";\n' +
+        'console.log("format:", typeof require === "undefined" ? "module" : "commonjs", url);\n',
+    });
+    expect(run(root, "./main.ts")).toContain("format: module meta.ts\n");
+  });
+});
+
+describe.skipIf(!LOWERS)("a file compiled to CommonJS that imports an ES module", () => {
+  test("loads it", () => {
+    const root = fixture({
+      "meta.ts": "export const url = import.meta.url.slice(-7);\n",
+      "main.ts":
+        'import { url } from "./meta";\n' +
+        'console.log("format:", typeof require === "undefined" ? "module" : "commonjs", url);\n',
+    });
+    expect(run(root, "./main.ts")).toContain("format: commonjs meta.ts\n");
+  });
+});
+
+describe.skipIf(!LOWERS)("an ES module compiled to CommonJS", () => {
   test("resolves an import through a tsconfig `paths` alias", () => {
     // As an ES module, the import went through oxc-node's resolver, which applies the
     // tsconfig's `paths`. `require("@lib/value")` must find the same file.
@@ -169,7 +201,7 @@ describe("an ES module compiled to CommonJS", () => {
   });
 });
 
-describe("a TypeScript file in a CommonJS package", () => {
+describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
   test("resolves a `require()` through a tsconfig `paths` alias", () => {
     // `require()` and an import compiled to it cannot be told apart, and `tsc` resolves
     // `import x = require()` through `paths` too.
