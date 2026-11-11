@@ -676,6 +676,32 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
     },
   );
 
+  // Windows needs a junction for the workspace link, which `fixture` does not make.
+  test.skipIf(process.platform === "win32")(
+    "finds a workspace package's source from a compiled JavaScript file, not a hand-written one",
+    () => {
+      const root = fixture(
+        {
+          "packages/pkg/package.json": JSON.stringify({
+            name: "pkg",
+            type: "commonjs",
+            main: "./src/main",
+          }),
+          "packages/pkg/src/main.js": 'exports.where = "src/main.js";\n',
+          "packages/pkg/src/main.ts": 'export const where: string = "src/main.ts";\n',
+          "main.js":
+            'import { where } from "pkg";\n' +
+            'console.log("where:", where, require("./lib/plain.js"));\n',
+          // Another directory: Node.js caches a resolution by its parent's directory.
+          "lib/plain.js": 'module.exports = require("pkg").where;\n',
+        },
+        { ...NODENEXT, allowJs: true },
+      );
+      symlinkSync(join("..", "packages", "pkg"), join(root, "node_modules", "pkg"), "dir");
+      expect(run(root, "./main.js")).toContain("where: src/main.ts src/main.js\n");
+    },
+  );
+
   // Windows lets only elevated processes create file symlinks.
   test.skipIf(process.platform === "win32")(
     "finds the source beside a symlink `--conditions` maps a package `imports` entry to",

@@ -684,11 +684,12 @@ function directoryMainOrderSource(request, filename, resolved) {
 }
 
 /**
- * Whether a bare `request` from a TypeScript or JSX `parent` outside `node_modules`
- * mapped to a file, through a package's `imports` or `exports`.
+ * Whether a bare `request` from a TypeScript or JSX `parent` outside `node_modules`, or
+ * a JavaScript one compiled to CommonJS from an ES module, mapped to a file: through a
+ * package's `imports`, `exports` or `main`.
  *
  * @param {string} request
- * @param {{ filename?: string | null } | null | undefined} parent
+ * @param {{ filename?: string | null, exports?: unknown } | null | undefined} parent
  * @param {string} resolved
  * @returns {boolean}
  */
@@ -696,7 +697,10 @@ function mapsToProjectFile(request, parent, resolved) {
   const filename = parent?.filename;
   return (
     typeof filename === "string" &&
-    /\.(?:[cm]?ts|tsx|jsx)$/.test(filename) &&
+    (/\.(?:[cm]?ts|tsx|jsx)$/.test(filename) ||
+      ((filename.endsWith(".js") || extname(filename) === "") &&
+        /** @type {{ __esModule?: unknown } | undefined} */ (parent?.exports)?.__esModule ===
+          true)) &&
     !inNodeModules(filename) &&
     !PATH_REQUEST.test(request) &&
     !isBuiltin(request) &&
