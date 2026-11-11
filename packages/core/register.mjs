@@ -305,7 +305,10 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
     // its source: the ES module resolver tried the source first after mapping.
     // Node.js names only the file a symlink there reaches; the ES module resolver maps
     // the request again and finds the source beside the name it maps to.
-    source = mappedLinkSource(request, parent.filename, resolved) ?? sourceBeside(resolved);
+    // A local link into `node_modules` still finds the source beside it.
+    source =
+      mappedLinkSource(request, parent.filename, resolved) ??
+      (inNodeModules(resolved) ? undefined : sourceBeside(resolved));
   }
   // Node.js' own resolution gives the source its real path, as it gave `resolved`, so a
   // symlinked source is one module whichever name reaches it.
@@ -351,6 +354,27 @@ const SOURCE_EXTENSIONS = [
 
 // `.` and `..` themselves are relative too: `require("..")` names the parent directory.
 const PATH_REQUEST = /^(?:\.{1,2}(?:[\\/]|$)|[\\/]|[a-zA-Z]:[\\/])/;
+
+/**
+ * The conditions `--conditions` (`-C`) adds to every request, from the command line or
+ * `NODE_OPTIONS`, for the ES module resolver to map a request as Node.js did.
+ */
+const USER_CONDITIONS = (() => {
+  const options = (process.env.NODE_OPTIONS ?? "").match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
+  const args = [...options.map((option) => option.replaceAll('"', "")), ...process.execArgv];
+  /** @type {string[]} */
+  const conditions = [];
+  for (let index = 0; index < args.length; index++) {
+    const match = /^(?:--conditions|-C)(?:=(.*))?$/.exec(args[index]);
+    if (match) {
+      const value = match[1] ?? args[++index];
+      if (value) {
+        conditions.push(value);
+      }
+    }
+  }
+  return conditions;
+})();
 
 /** A request that names a directory only: `./foo/`, `.`, `..`. */
 const DIRECTORY_ONLY = /(?:[\\/]|(?:^|[\\/])\.\.?)$/;
@@ -623,7 +647,7 @@ function directoryMainOrderSource(request, filename, resolved) {
 
 /**
  * Whether a bare `request` from a TypeScript or JSX `parent` outside `node_modules`
- * mapped to a file of the project, through a package's `imports` or `exports`.
+ * mapped to a file, through a package's `imports` or `exports`.
  *
  * @param {string} request
  * @param {{ filename?: string | null } | null | undefined} parent
@@ -638,8 +662,7 @@ function mapsToProjectFile(request, parent, resolved) {
     !inNodeModules(filename) &&
     !PATH_REQUEST.test(request) &&
     !isBuiltin(request) &&
-    isAbsolute(resolved) &&
-    !inNodeModules(resolved)
+    isAbsolute(resolved)
   );
 }
 
@@ -701,7 +724,7 @@ function resolveNative(request, filename) {
         { getCurrentDirectory: () => process.cwd() },
         request,
         {
-          conditions: ["node", "require"],
+          conditions: ["node", "require", ...USER_CONDITIONS],
           importAttributes: {},
           parentURL: pathToFileURL(filename).href,
         },
@@ -734,7 +757,13 @@ function resolveNative(request, filename) {
  */
 function mappedLinkSource(request, filename, resolved) {
   const found = resolveNative(request, filename);
-  if (found === undefined || found === resolved || !/\.(?:[cm]?ts|tsx)$/.test(found)) {
+  if (
+    found === undefined ||
+    found === resolved ||
+    !/\.(?:[cm]?ts|tsx)$/.test(found) ||
+    // A package's own files stay what it compiled.
+    (inNodeModules(found) && inNodeModules(resolved))
+  ) {
     return undefined;
   }
   const stem = found.slice(0, -extname(found).length);

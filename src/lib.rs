@@ -3247,7 +3247,10 @@ fn lower_runner_to_commonjs<'a>(allocator: &'a Allocator, program: &mut Program<
                     // gets `undefined`, not a TDZ error.
                     // After the first declaration of a `var` declared again, where an
                     // earlier initializer has already set it.
+                    // A `var` also set inside a block may be set before that: its getter
+                    // comes first, and reads `undefined` until then.
                     let anchor = getter_object(value)
+                        .filter(|object| !nested_name(object))
                         .and_then(|object| first_declared.get(object))
                         .filter(|&&(_, hoisted_function)| !hoisted_function);
                     match anchor {

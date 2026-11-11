@@ -580,6 +580,52 @@ describe("a TypeScript file in a CommonJS package", () => {
     },
   );
 
+  // Windows lets only elevated processes create file symlinks.
+  test.skipIf(process.platform === "win32")(
+    "finds the source beside a symlink `--conditions` maps a package `imports` entry to",
+    () => {
+      const root = fixture({
+        "build/real.js": 'exports.where = "build/real.js";\n',
+        "prod.js": 'exports.where = "prod.js";\n',
+        "dev.ts": 'export const where: string = "dev.ts";\n',
+        "main.ts": 'import { where } from "#dep";\nconsole.log("where:", where);\n',
+      });
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({
+          ...JSON.parse(COMMONJS),
+          imports: { "#dep": { development: "./dev.js", default: "./prod.js" } },
+        }),
+      );
+      symlinkSync(join("build", "real.js"), join(root, "dev.js"));
+      expect(run(root, "./main.ts", ["--conditions=development"])).toContain("where: dev.ts\n");
+      expect(run(root, "./main.ts", [], { NODE_OPTIONS: "-C development" })).toContain(
+        "where: dev.ts\n",
+      );
+    },
+  );
+
+  // Windows lets only elevated processes create file symlinks.
+  test.skipIf(process.platform === "win32")(
+    "finds the source beside a package `imports` target that links into `node_modules`",
+    () => {
+      const root = fixture({
+        "node_modules/pkg/dep.js": 'exports.where = "pkg/dep.js";\n',
+        "dep.ts": 'export const where: string = "dep.ts";\n',
+        "main.ts":
+          'import { where } from "#dep";\n' +
+          'import { where as relative } from "./dep.js";\n' +
+          'console.log("where:", where, relative);\n',
+      });
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({ ...JSON.parse(COMMONJS), imports: { "#dep": "./dep.js" } }),
+      );
+      symlinkSync(join("node_modules", "pkg", "dep.js"), join(root, "dep.js"));
+      expect(run(root, "./main.ts")).toContain("where: dep.ts dep.ts\n");
+    },
+  );
+
   test("resolves `.` as the directory only, never a file beside it", () => {
     const root = fixture({
       "proj/main.ts": 'import { where } from ".";\nconsole.log("where:", where);\n',
@@ -624,6 +670,20 @@ describe("a TypeScript file in a CommonJS package", () => {
       { ...NODENEXT, allowJs: true, jsx: "react-jsx" },
     );
     expect(run(root, "./main.ts")).toMatch(/^where: dep\.ts$/m);
+  });
+
+  test("publishes a `var` a block sets before its own declaration", () => {
+    // `self.x` reads the export while the module runs: `1`, as under `tsc`.
+    const root = fixture({
+      "mod.ts":
+        'import * as self from "./mod";\n' +
+        "if (true) {\n  var x = 1;\n}\n" +
+        "export { x };\n" +
+        "export const seen = (self as { x?: number }).x;\n" +
+        "var x: number;\n",
+      "main.ts": 'import { seen } from "./mod";\nconsole.log("seen:", seen);\n',
+    });
+    expect(run(root, "./main.ts")).toContain("seen: 1\n");
   });
 
   test("resolves a package `imports` entry with the active conditions", () => {
