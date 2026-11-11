@@ -321,14 +321,19 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
     // its source: the ES module resolver tried the source first after mapping.
     // Node.js names only the file a symlink there reaches; the ES module resolver maps
     // the request again and finds the source beside the name it maps to.
-    // A local link into `node_modules` still finds the source beside it. When the ES
-    // module resolver keeps the very file Node.js found, no source stood before it.
+    // The ES module resolver maps it with Node.js' own conditions: a source it finds
+    // stands for what Node.js found — beside a symlink, a symlink itself, or a package
+    // `main` Node.js fell back from. A package's own files stay what it compiled; when the
+    // resolver keeps the very file Node.js found, no source stood before it.
     const found = resolveNative(request, parent.filename);
     source =
       found === resolved
         ? undefined
-        : (mappedLinkSource(found, resolved) ??
-          (inNodeModules(resolved) ? undefined : sourceBeside(resolved)));
+        : sourceOnly(found) !== undefined && !(inNodeModules(found) && inNodeModules(resolved))
+          ? found
+          : inNodeModules(resolved)
+            ? undefined
+            : sourceBeside(resolved);
   }
   // Node.js' own resolution gives the source its real path, as it gave `resolved`, so a
   // symlinked source is one module whichever name reaches it.
@@ -778,38 +783,6 @@ function resolveNative(request, filename) {
       flush(watch, takeWatchDependencies);
     }
   }
-}
-
-/**
- * The source the ES module resolver finds for a bare `request` mapped through a
- * package's `imports` or `exports`, when an output beside it is what Node.js mapped it
- * to — a symlink it followed to `resolved` included: `#dep` mapped to `./dep.js`, which
- * links to `build/real.js`, finds `dep.ts`, even with a `build/real.ts` beside the
- * target. The check keeps Node.js' own mapping, `--conditions` and all.
- *
- * @param {string | undefined} found what the ES module resolver found for the request
- * @param {string} resolved
- * @returns {string | undefined}
- */
-function mappedLinkSource(found, resolved) {
-  if (
-    found === undefined ||
-    found === resolved ||
-    !/\.(?:[cm]?ts|tsx)$/.test(found) ||
-    // A package's own files stay what it compiled.
-    (inNodeModules(found) && inNodeModules(resolved))
-  ) {
-    return undefined;
-  }
-  const stem = found.slice(0, -extname(found).length);
-  const linksThere = [".js", ".jsx", ".mjs", ".cjs"].some((extension) => {
-    try {
-      return realpathSync(stem + extension) === resolved;
-    } catch {
-      return false;
-    }
-  });
-  return linksThere ? found : undefined;
 }
 
 /**

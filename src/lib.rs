@@ -2859,6 +2859,11 @@ fn lowers_to_commonjs(
                     // The runner's helpers are found by their `__vite_ssr_` names: a
                     // declared global (`declare function __vite_ssr_import__`) is called
                     // at run time too, so only a type keeps the name free.
+                    // A declared `eval` is the built-in one, which reads the locals that
+                    // become `exports` members (no binding can take the name in strict code).
+                    if name == "eval" {
+                        return false;
+                    }
                     if name.starts_with("__vite_ssr_") {
                         let flags = scoping.symbol_flags(symbol);
                         return flags.is_type_import() || !flags.is_value();
@@ -6678,6 +6683,10 @@ mod tests {
             ("cjs/runner-global.ts", "export const n = __vite_ssr_import__('x');\n"),
             // A direct `eval` reads locals that would become `exports` members.
             ("cjs/eval.ts", "let n = 0;\nexport { n };\nn++;\nexport const seen = eval('n');\n"),
+            (
+                "cjs/declared-eval.ts",
+                "declare function eval(s: string): unknown;\nlet n = 0;\nexport { n };\nn++;\nexport const seen = eval('n');\n",
+            ),
             // `tsc` itself emits an ES module for these.
             ("esnext/lib.ts", "export const n = 1;\n"),
             ("preserve/lib.ts", "export const n = 1;\n"),

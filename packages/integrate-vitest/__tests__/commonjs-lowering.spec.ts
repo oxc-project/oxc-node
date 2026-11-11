@@ -637,6 +637,47 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
 
   // Windows lets only elevated processes create file symlinks.
   test.skipIf(process.platform === "win32")(
+    "finds a symlinked source beside a symlinked package `imports` target",
+    () => {
+      const root = fixture({
+        "build/real.js": 'exports.where = "build/real.js";\n',
+        "shared/source.ts": 'export const where: string = "shared/source.ts";\n',
+        "main.ts":
+          'import { where } from "#dep";\n' +
+          'import { where as relative } from "./dep.js";\n' +
+          'console.log("where:", where, relative);\n',
+      });
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({ ...JSON.parse(COMMONJS), imports: { "#dep": "./dep.js" } }),
+      );
+      symlinkSync(join("build", "real.js"), join(root, "dep.js"));
+      symlinkSync(join("shared", "source.ts"), join(root, "dep.ts"));
+      expect(run(root, "./main.ts")).toContain("where: shared/source.ts shared/source.ts\n");
+    },
+  );
+
+  // Windows needs a junction for the workspace link, which `fixture` does not make.
+  test.skipIf(process.platform === "win32")(
+    "finds a linked workspace package's `main` source before the index Node.js falls back to",
+    () => {
+      const root = fixture({
+        "packages/pkg/package.json": JSON.stringify({
+          name: "pkg",
+          type: "commonjs",
+          main: "./src/main.js",
+        }),
+        "packages/pkg/index.js": 'exports.where = "index.js";\n',
+        "packages/pkg/src/main.ts": 'export const where: string = "src/main.ts";\n',
+        "main.ts": 'import { where } from "pkg";\nconsole.log("where:", where);\n',
+      });
+      symlinkSync(join("..", "packages", "pkg"), join(root, "node_modules", "pkg"), "dir");
+      expect(run(root, "./main.ts")).toContain("where: src/main.ts\n");
+    },
+  );
+
+  // Windows lets only elevated processes create file symlinks.
+  test.skipIf(process.platform === "win32")(
     "finds the source beside a symlink `--conditions` maps a package `imports` entry to",
     () => {
       const root = fixture({
