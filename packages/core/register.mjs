@@ -205,7 +205,13 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
     // name in its `require()`. Node.js' CommonJS resolution knows only the output, so
     // when it is missing the source is tried instead, as the ES module resolver does.
     if (error?.code === "MODULE_NOT_FOUND") {
+      // Only the file itself: Node.js would complete `./dep.ts` to `dep.ts.json`, where
+      // the ES module resolver goes on to `dep.tsx`.
+      const base = typeof parent?.filename === "string" ? dirname(parent.filename) : process.cwd();
       for (const candidate of sourcesFor(request, MISSING_OUTPUT_SOURCES)) {
+        if (!searchedElsewhere && !isFile(resolvePath(base, candidate))) {
+          continue;
+        }
         try {
           return resolveFilename.call(this, candidate, parent, isMain, options);
         } catch {
@@ -232,6 +238,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
             // names compiled output too. Node.js has mapped it, with every active
             // condition, and names the file it found missing.
             (sourcesFor(mappedFile(error, request), MISSING_OUTPUT_SOURCES)
+              .filter(isFile)
               .map((candidate) => {
                 try {
                   return resolveFilename.call(this, candidate, parent, isMain, options);

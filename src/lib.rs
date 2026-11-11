@@ -2849,6 +2849,7 @@ fn lowers_to_commonjs(
                     .root_unresolved_references()
                     .keys()
                     .any(|name| name.as_str().starts_with("__vite_ssr_") || name == "eval")
+                && !pattern_binds_an_assigned_function(program, &scoping)
         }
 }
 
@@ -2857,17 +2858,40 @@ fn lowers_to_commonjs(
 /// binding would lose that name, and published after the whole pattern a later default
 /// reading it through an import cycle would miss it, so the file stays an ES module.
 fn names_a_function_by_pattern(program: &Program<'_>) -> bool {
-    program.body.iter().any(|statement| {
-        let declaration = match statement {
-            Statement::VariableDeclaration(declaration) => declaration,
+    top_level_declarators(program).any(|declarator| names_a_default(&declarator.id))
+}
+
+/// Whether a top-level pattern binds a name a later assignment gives a function or class
+/// (`let [a = 1, b = self.a] = []; a = () => 1`): the binding must keep its name, so it
+/// cannot become a member, and the pattern would publish it only once it is done.
+fn pattern_binds_an_assigned_function(program: &Program<'_>, scoping: &Scoping) -> bool {
+    let mut assigned = AssignedFunctionNames(scoping, HashSet::new());
+    assigned.visit_program(program);
+    !assigned.1.is_empty()
+        && top_level_declarators(program).any(|declarator| {
+            declarator.id.get_binding_identifier().is_none()
+                && declarator.id.get_binding_identifiers().iter().any(|ident| {
+                    ident.symbol_id.get().is_some_and(|symbol| assigned.1.contains(&symbol))
+                })
+        })
+}
+
+/// The declarators of the top-level variable declarations, exported or not.
+fn top_level_declarators<'p, 'a>(
+    program: &'p Program<'a>,
+) -> impl Iterator<Item = &'p oxc::ast::ast::VariableDeclarator<'a>> {
+    program
+        .body
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::VariableDeclaration(declaration) => Some(declaration),
             Statement::ExportDeclaration(export) => match &export.declaration {
-                Declaration::VariableDeclaration(declaration) => declaration,
-                _ => return false,
+                Declaration::VariableDeclaration(declaration) => Some(declaration),
+                _ => None,
             },
-            _ => return false,
-        };
-        declaration.declarations.iter().any(|declarator| names_a_default(&declarator.id))
-    })
+            _ => None,
+        })
+        .flat_map(|declaration| declaration.declarations.iter())
 }
 
 /// Parses generated CommonJS into `allocator`, without mappings.
@@ -6580,6 +6604,11 @@ mod tests {
             // A function default would lose its name as a member, and published after the
             // pattern, a cycle reading it from a later default would miss it.
             ("cjs/pattern-default.ts", "export const [x = function () {}, y = class {}] = [];\n"),
+            // As would one a later assignment names.
+            (
+                "cjs/pattern-assigned.ts",
+                "export let [a = 1, b = a]: unknown[] = [];\na = () => 42;\n",
+            ),
             // The compiled output finds the runner's helpers by their names.
             (
                 "cjs/runner-import.ts",

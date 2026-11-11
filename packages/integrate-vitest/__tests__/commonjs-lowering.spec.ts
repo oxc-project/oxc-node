@@ -765,6 +765,32 @@ describe("a TypeScript file in a CommonJS package", () => {
     expect(run(root, "./main.ts", [], env)).toContain("feature: b/feature.ts\n");
   });
 
+  test("finds a missing output's source itself, not a file Node.js completes it to", () => {
+    // Node.js would complete `./dep.ts` to `dep.ts.json`; `tsc` takes `dep.tsx`.
+    const root = fixture(
+      {
+        "dep.tsx": 'export const where: string = "dep.tsx";\n',
+        "dep.ts.json": '{ "where": "dep.ts.json" }\n',
+        "main.ts": 'import { where } from "./dep.js";\nconsole.log("where:", where);\n',
+      },
+      { ...NODENEXT, jsx: "react-jsx" },
+    );
+    expect(run(root, "./main.ts")).toContain("where: dep.tsx\n");
+  });
+
+  test("keeps a file an ES module when a later assignment names a pattern's binding", () => {
+    // `a` keeps the name the assignment gives it. An ES module importer, as Node.js 22.18
+    // cannot `require()` this ES module from a file compiled to CommonJS.
+    const root = fixture({
+      "mod.ts":
+        "export let [a = 1, b = a]: unknown[] = [];\na = () => 42;\nexport const seen = b;\n",
+      "main.mts":
+        'import { seen, a } from "./mod.js";\n' +
+        'console.log("result:", seen, (a as { name: string }).name);\n',
+    });
+    expect(run(root, "./main.mts")).toContain("result: 1 a\n");
+  });
+
   test("resolves an extensionless import in the ES module resolver's order", () => {
     // Node.js tries the registered extensions in its own order and finds `dep.jsx`;
     // the ES module resolver found `dep.ts` first.
