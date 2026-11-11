@@ -727,8 +727,12 @@ function mappedFile(error, request) {
 function resolveNative(request, filename) {
   // `#`, `?` and `%` are part of a CommonJS file name, but the ES module resolver reads
   // a fragment, a query or an escape there, and would find another file. A bare `#`
-  // names a package `imports` entry.
-  if (PATH_REQUEST.test(request) ? /[#?%]/.test(request) : /[?%]/.test(request)) {
+  // names a package `imports` entry. Outside Windows a `\` is part of a file name too, where
+  // the ES module resolver reads a separator.
+  if (
+    (PATH_REQUEST.test(request) ? /[#?%]/.test(request) : /[?%]/.test(request)) ||
+    (process.platform !== "win32" && request.includes("\\"))
+  ) {
     return undefined;
   }
   try {

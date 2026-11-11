@@ -25,6 +25,9 @@ afterAll(() => {
 
 const COMMONJS = JSON.stringify({ name: "fx", private: true, type: "commonjs" });
 const NODENEXT = { module: "nodenext" };
+// Node.js 26.2 and later run the hooks on this thread, as `module.registerHooks()`.
+const [MAJOR, MINOR] = process.versions.node.split(".", 2).map(Number);
+const SYNC_HOOKS = MAJOR > 26 || (MAJOR === 26 && MINOR >= 2);
 
 function fixture(
   files: Record<string, string>,
@@ -679,6 +682,23 @@ describe("a TypeScript file in a CommonJS package", () => {
     });
     expect(run(root, "./main.cts")).toMatch(/^code: MODULE_NOT_FOUND$/m);
   });
+
+  // Windows reads `\` as a separator, as the ES module resolver does everywhere. Before
+  // Node.js 26.2 the hooks load a TypeScript file by URL, where Node.js rejects `%5C`.
+  test.skipIf(process.platform === "win32" || !SYNC_HOOKS)(
+    "keeps `\\` in a require()'s file name, as Node.js does outside Windows",
+    () => {
+      const root = fixture({
+        "dir\\dep.js": 'exports.where = "dir\\\\dep.js";\n',
+        "dir\\dep.ts": 'export const where: string = "dir\\\\dep.ts";\n',
+        "dir/dep.ts": 'export const where: string = "dir/dep.ts";\n',
+        "main.ts":
+          'const { where } = require("./dir\\\\dep.js") as { where: string };\n' +
+          'console.log("where:", where);\nexport {};\n',
+      });
+      expect(run(root, "./main.ts")).toContain("where: dir\\dep.ts\n");
+    },
+  );
 
   test("resolves an extensionless import in the ES module resolver's order", () => {
     // Node.js tries the registered extensions in its own order and finds `dep.jsx`;
