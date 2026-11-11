@@ -1083,14 +1083,18 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
 
   test("maps a request with the conditions of Node.js' configuration file", () => {
     // `#dep` takes its `development` branch, as the ES module resolver does, not the
-    // `prod.ts` source of its default branch.
+    // `prod.ts` source of its default branch. Conditions in `NODE_OPTIONS` replace the
+    // file's, as they do for Node.js.
     const root = fixture({
       "package.json": JSON.stringify({
         type: "commonjs",
-        imports: { "#dep": { development: "./dev.js", default: "./prod.js" } },
+        imports: {
+          "#dep": { development: "./dev.js", staging: "./staging.js", default: "./prod.js" },
+        },
       }),
       "node.config.json": JSON.stringify({ nodeOptions: { conditions: ["development"] } }),
       "dev.js": 'exports.where = "dev.js";\n',
+      "staging.js": 'exports.where = "staging.js";\n',
       "prod.ts": 'export const where: string = "prod.ts";\n',
       "main.ts": '// @ts-nocheck\nimport { where } from "#dep";\nconsole.log("where:", where);\n',
     });
@@ -1100,6 +1104,11 @@ describe.skipIf(!LOWERS)("a TypeScript file in a CommonJS package", () => {
     ]) {
       expect(run(root, "./main.ts", args), args[0]).toContain("where: dev.js\n");
     }
+    expect(
+      run(root, "./main.ts", ["--experimental-config-file=node.config.json"], {
+        NODE_OPTIONS: "--conditions=staging",
+      }),
+    ).toContain("where: staging.js\n");
   });
 
   test("a path request into a package takes the ES module resolver's answer", () => {

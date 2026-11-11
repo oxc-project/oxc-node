@@ -391,11 +391,13 @@ const REQUIRE_CONDITIONS = (() => {
   let addons = true;
   /** @type {string | undefined} */
   let configFile;
+  let fromEnvironment = false;
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     const match = /^(?:--conditions|-C)(?:=(.*))?$/.exec(arg);
     const config = /^--(?:experimental-)?config-file(?:=(.*))?$/.exec(arg);
     if (match) {
+      fromEnvironment ||= index < options.length;
       const value = match[1] ?? args[++index];
       if (value) {
         added.push(value);
@@ -409,14 +411,15 @@ const REQUIRE_CONDITIONS = (() => {
     }
   }
   if (configFile) {
-    // Node.js has read it already, and adds its conditions to the command line's.
+    // Node.js has read it already. Its conditions add to the command line's, unless
+    // `NODE_OPTIONS` sets some: those replace them.
     let nodeOptions;
     try {
       nodeOptions = JSON.parse(readFileSync(resolvePath(configFile), "utf8"))?.nodeOptions;
     } catch {
       // Node.js reports a configuration file it cannot read.
     }
-    const value = nodeOptions?.conditions;
+    const value = fromEnvironment ? undefined : nodeOptions?.conditions;
     for (const condition of typeof value === "string"
       ? [value]
       : Array.isArray(value)
