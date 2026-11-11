@@ -21,8 +21,9 @@ type checker, and it does not write build output to disk.
 - ESM and CommonJS, including `.mts`, `.cts`, `.mjs`, and `.cjs`
 - JSX and selected TypeScript compiler options
 - `tsconfig.json` path aliases and TypeScript-aware import resolution
-- Imports such as `./file.js` resolving to `./file.ts` or `./file.tsx`. From
-  JavaScript files and the entry point, `./file.js` itself runs when it exists
+- Imports and `require()` calls such as `./file.js` resolving to `./file.ts` or
+  `./file.tsx`. From JavaScript files and the entry point, `./file.js` itself runs
+  when it exists
 - Source-mapped stack traces
 - Importing TypeScript from a tool, without hooks (`@oxc-node/core/importer`)
 - Node features and flags such as watch mode, the test runner, and the
@@ -359,6 +360,107 @@ transformation. These include path aliases, module and JSX settings, legacy
 decorators and decorator metadata, class-field semantics, and relative import
 extension rewriting.
 
+### ES module syntax in a CommonJS package
+
+A `.ts`, `.tsx`, `.js` or `.jsx` file with `import`/`export` syntax in a
+`"type": "commonjs"` package is compiled to CommonJS when its tsconfig's `module`
+is `commonjs`, `node16`, `node18`, `node20` or `nodenext`, as `tsc` compiles it.
+The output takes `tsc`'s shape. An exported local is a plain, writable property of
+`exports`, so `mock.method(namespace, "name")` replaces it for every CommonJS
+importer, as it does under `tsc`. A local that is never reassigned is assigned once
+it is declared; a reassigned one is `exports.name` itself, so it stays live, and
+so is each binding of an `export const [a, b] = …` pattern. A re-export, and a
+reassigned local exported under two names, declared by a pattern with a binding
+that is not exported, or set to an anonymous function, stays live through a
+getter instead, which a test cannot replace. In an import cycle, an export that has not
+been set yet reads as `undefined`, as under `tsc`; function declarations are
+exported before the file runs. A file's imports run before the rest of it, as in
+an ES module.
+
+The package must say `"type": "commonjs"`: `tsc` also emits CommonJS for a package
+without a `"type"`, but there such a file runs as an ES module, as before, so a
+project relying on Node.js' syntax detection keeps working. A file also stays an
+ES module when it uses `import.meta` or top-level await, which have no CommonJS
+form, or declares a value named like one the CommonJS wrapper or the compiled
+output uses (`exports`, `require`, `module`, `__filename`, `__dirname`,
+`__importDefault`, `__importStar`, `__exportStar`, `Object`, `Symbol`) at its top
+level, or `exports` or a name starting with `__vite_ssr_` anywhere, a parameter
+included, or used as a global; a type of that name is fine. So does a file that
+calls `eval`, which can read any local, and a top-level destructuring pattern
+whose default is an anonymous function or class (`const [f = () => 1] = []`), or
+whose binding a later assignment sets to one, as the function takes its name from
+the binding. Removing `"type": "commonjs"` turns the compilation off.
+
+It needs Node.js 22.22.3, 24.8 or later, where a file compiled to CommonJS can
+`require()` one that stays an ES module. On earlier releases Node.js itself crashes
+there, so every file runs as an ES module, as before.
+Outside that combination — no `"type"`, `"type": "module"`, or an ES `module`
+setting — a file with module syntax runs as an ES module, as before. A `.cts`
+file is not compiled this way; see
+[Programmatic transformation](#programmatic-transformation).
+
+With `node16`, `node18`, `node20` or `nodenext`, the package's `"type"` decides the
+format of a `.ts` or `.tsx` file without module syntax, as it does for `tsc`: in a
+`"type": "commonjs"` package, or one without a `"type"`, such a file is CommonJS,
+also when an ES module imports it. Earlier releases ran it as an ES module. Only an
+ES `module` setting, such as `esnext`, makes every `.ts` and `.tsx` file an ES
+module.
+
+An ES module that imports the compiled file gets what Node.js gives it for any
+CommonJS module:
+
+- Its named imports are the names Node.js' `cjs-module-lexer` finds: the file's
+  own exports, but not those it re-exports with `export *` from another TypeScript
+  file, because Node.js only follows re-exports into `.js` and `.cjs` files.
+- Its default import is `module.exports`, whose `default` property is the file's
+  default export: after `import lib from "./lib.js"`, the class `lib.ts` exports
+  as default is `lib.default`. TypeScript types the import the same way under
+  `nodenext`. Earlier releases ran the file as an ES module, whose default import
+  was its default export.
+- Its imports are a snapshot taken when the file finishes loading, as for any
+  CommonJS module: a later write to an exported `let` does not reach them.
+  Earlier releases kept them live.
+
+The compiled file's imports are `require()` calls. They resolve as its imports
+did, with two differences:
+
+- A dependency resolves with the `require` condition, as under `tsc`, so a package
+  whose `exports` offers only `import` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
+  An ES `module` setting or `"type": "module"` keeps such a file an ES module.
+- Node.js caches a relative `require()` per directory and request. When a
+  JavaScript file `require()`s `./lib.js` before a TypeScript file in the same
+  directory does, both get `lib.js`, even next to `lib.ts`; when the TypeScript
+  file asks first, both get `lib.ts`.
+
+Otherwise TypeScript comes first, by the file's own name or by its output's:
+`./lib.js` and `./lib` find `lib.ts`, also when a compiled `lib.js` sits next to
+it, `./lib.mjs` finds `lib.mts`, and `./config` finds `config.ts` before
+`config.json`. When no `lib.js` exists, `./lib.js` finds `lib.jsx` too. tsconfig
+`paths` and `baseUrl` are tried before `node_modules`, and a package `imports`
+entry or a self-reference that names output finds its source the same way. The
+source is looked for beside the name a request reaches, before a symlink there is
+followed. The
+`require()` calls of every TypeScript file outside `node_modules` resolve this
+way, and so do the extensionless ones of a `.js` file compiled from an ES module;
+a file a package ships keeps its compiled `.js`. `require.resolve()` with a
+`paths` option returns what Node.js finds in those directories.
+
+Stack traces report the source's lines; for a file Node.js loads through the
+module hooks — the entry point, or one an ES module imports — a column can be a
+character off. Error messages and `Function#toString` show the compiled names of
+imports, such as `__vite_ssr_import_0__`.
+
+Importing an ES module — an `.mts` or `.mjs` file, or a `"type": "module"`
+package — from the compiled file is `require()` of an ES module. Node.js loads the
+entry point, test files and files an ES module imports through the module hooks,
+together with the compiled files they `require()`, and `require()` of an ES module
+from a file loaded that way needs
+[nodejs/node#59679](https://github.com/nodejs/node/pull/59679), which the 22.x line
+has from 22.22.3. Earlier releases fail with `TypeError: Cannot read properties of
+undefined (reading 'exports')`.
+
+### Dependencies
+
 The loader does not transform files in `node_modules` by default. Set
 `OXC_TRANSFORM_ALL=typescript` to transform only the TypeScript dependencies —
 `.ts`, `.mts`, `.cts` and `.tsx`; JavaScript dependencies are still left to
@@ -411,8 +513,8 @@ The standalone transformer emits CommonJS. The registered loader preserves the
 module format selected for ESM files.
 
 A `.cts` file is CommonJS, so it cannot use ES module syntax (`import`, `export`,
-or `import.meta`): oxc does not compile it to CommonJS the way `tsc` and `tsx` do,
-and the loader reports an error instead. Rename such a file to `.mts`, or write it
+or `import.meta`): oxc-node does not compile a `.cts` file's module syntax to
+CommonJS the way `tsc` and `tsx` do, and the loader reports an error instead. Rename such a file to `.mts`, or write it
 with `import x = require()` and `export =`. Type-only imports and exports are fine.
 
 ## Importing TypeScript from a tool

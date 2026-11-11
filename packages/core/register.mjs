@@ -1,6 +1,17 @@
 import { createHash } from "node:crypto";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import * as NodeModule from "node:module";
-import { pathToFileURL } from "node:url";
+import {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  resolve as resolvePath,
+  sep,
+} from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { parseEnv } from "node:util";
 import { isMainThread } from "node:worker_threads";
 
 import { addHook } from "pirates";
@@ -15,6 +26,7 @@ import {
   load as oxcLoad,
   takeWatchDependencies,
   transformsDep,
+  tsconfigPathCandidates,
 } from "./index.js";
 import { installSignalAck } from "./signal-ack.mjs";
 import { createRelay, flush, watchSink, withFlush } from "./watch-report.mjs";
@@ -34,6 +46,9 @@ if (watch) {
 
 // Destructure from NodeModule namespace to support older Node.js versions
 const { Module, createRequire, register, registerHooks, setSourceMapsSupport } = NodeModule;
+const isBuiltin =
+  NodeModule.isBuiltin ??
+  ((request) => NodeModule.builtinModules.includes(request.replace(/^node:/, "")));
 
 const DEFAULT_EXTENSIONS = new Set([
   ".js",
@@ -58,15 +73,21 @@ const DEFAULT_EXTENSIONS = new Set([
 // resolves against the copy that emitted it.
 const HELPER_SPECIFIER_PREFIX = "@oxc-node/core/helpers/";
 const HELPER_TAGGED_PREFIX = "@oxc-node/core@";
-const HELPER_TAG =
-  "c" +
-  createHash("sha256")
-    .update(import.meta.url)
-    .digest("hex")
-    .slice(0, 12);
+/**
+ * The tag of the module at `url`, as `esm.mjs` computes its own.
+ *
+ * @param {string} url
+ * @returns {string}
+ */
+function helperTag(url) {
+  return "c" + createHash("sha256").update(url).digest("hex").slice(0, 12);
+}
+
+const HELPER_TAG = helperTag(import.meta.url);
 const HELPER_MODULE_NAME = `${HELPER_TAGGED_PREFIX}${HELPER_TAG}`;
 
 const requireHelper = createRequire(import.meta.url);
+const resolveHelper = (subpath) => requireHelper.resolve(`@oxc-node/core/${subpath}`);
 
 // Each copy's resolver lives in a realm-wide registry keyed by its tag. Tagged
 // specifiers take exactly their owner's resolver; untagged ones — emitted by older
@@ -74,7 +95,7 @@ const requireHelper = createRequire(import.meta.url);
 // newest registration first.
 const HELPER_RESOLVERS = Symbol.for("@oxc-node/core:helperResolvers");
 const helperResolvers = (globalThis[HELPER_RESOLVERS] ??= {});
-helperResolvers[HELPER_TAG] = (subpath) => requireHelper.resolve(`@oxc-node/core/${subpath}`);
+helperResolvers[HELPER_TAG] = resolveHelper;
 
 function isHelperSpecifier(specifier) {
   return (
@@ -114,7 +135,7 @@ const resolveFilename = Module._resolveFilename;
 // process-wide via `Symbol.for`: with several copies registered, each one wraps the
 // previous function, and the inner call has to pass them all.
 const HELPER_RESOLVING = Symbol.for("@oxc-node/core:resolvingHelper");
-Module._resolveFilename = function (request, parent, isMain, options) {
+Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, options) {
   if (!globalThis[HELPER_RESOLVING] && isHelperSpecifier(request)) {
     if (request.startsWith(HELPER_TAGGED_PREFIX)) {
       globalThis[HELPER_RESOLVING] = true;
@@ -150,8 +171,795 @@ Module._resolveFilename = function (request, parent, isMain, options) {
       }
     }
   }
-  return resolveFilename.call(this, request, parent, isMain, options);
+  // Node.js' CommonJS resolution knows nothing of tsconfig `paths` and `baseUrl`. The
+  // ES module resolver, `tsc` and tsx try them before `node_modules`, so a bare
+  // request does here too: an ES module compiled to CommonJS finds what it imported as
+  // an ES module (#905). Each file an alias maps to resolves through this function, so
+  // the rules below apply to it as well.
+  // `require.resolve(request, { paths })` searches other directories, which the ES
+  // module resolver has no notion of: what Node.js finds there is the answer, with no
+  // tsconfig alias before it and no source beside the caller after it.
+  const searchedElsewhere = Array.isArray(options?.paths);
+  if (!searchedElsewhere && mapsThroughTsconfig(request, parent)) {
+    const candidates = tsconfigPathCandidates(process.cwd(), parent.filename, request);
+    // Finding the importer's tsconfig reads it.
+    if (watch) {
+      flush(watch, takeWatchDependencies);
+    }
+    for (const candidate of candidates) {
+      try {
+        return oxcResolveFilename.call(this, candidate, parent, isMain, options);
+      } catch (error) {
+        // The next candidate, then the request itself, may still resolve.
+        if (error?.code !== "MODULE_NOT_FOUND") {
+          throw error;
+        }
+      }
+    }
+  }
+  let resolved;
+  try {
+    resolved = resolveFilename.call(this, request, parent, isMain, options);
+  } catch (error) {
+    // A TypeScript file is imported by its output's name — `./lib.js` for `lib.ts`,
+    // `./lib.mjs` for `lib.mts` — and an ES module compiled to CommonJS keeps that
+    // name in its `require()`. Node.js' CommonJS resolution knows only the output, so
+    // when it is missing the source is tried instead, as the ES module resolver does.
+    if (error?.code === "MODULE_NOT_FOUND") {
+      // Only the file itself: Node.js would complete `./dep.ts` to `dep.ts.json`, where
+      // the ES module resolver goes on to `dep.tsx`.
+      const base = typeof parent?.filename === "string" ? dirname(parent.filename) : process.cwd();
+      for (const candidate of sourcesFor(request, MISSING_OUTPUT_SOURCES)) {
+        if (!searchedElsewhere && !isFile(resolvePath(base, candidate))) {
+          continue;
+        }
+        try {
+          return resolveFilename.call(this, candidate, parent, isMain, options);
+        } catch {
+          // Not this one either; the original error is the one to report.
+        }
+      }
+      const filename = parent?.filename;
+      // A dependency compiled from an ES module (`OXC_TRANSFORM_ALL`) found it as one too.
+      const dependency = typeof filename === "string" && inNodeModules(filename);
+      if (
+        !searchedElsewhere &&
+        typeof filename === "string" &&
+        (!dependency ||
+          /** @type {{ __esModule?: unknown } | undefined} */ (parent?.exports)?.__esModule ===
+            true) &&
+        !isBuiltin(request)
+      ) {
+        const found = PATH_REQUEST.test(request)
+          ? // The ES module resolver's other candidates — `index.ts` in a directory, say
+            // — and its report of them to watch mode, so creating one restarts the app.
+            resolveNative(request, filename, options)
+          : // A package `imports` entry (`#value`) or a self-reference through `exports`
+            // names compiled output too. Node.js has mapped it, with every active
+            // condition, and names the file it found missing.
+            (sourcesFor(mappedFile(error, request), MISSING_OUTPUT_SOURCES)
+              .filter(isFile)
+              .map((candidate) => {
+                try {
+                  return resolveFilename.call(this, candidate, parent, isMain, options);
+                } catch {
+                  return undefined;
+                }
+              })
+              .find((resolved) => resolved !== undefined) ??
+            // A package subpath Node.js names no file for (`pkg/feature.js` of a package
+            // that ships `feature.ts`, `pkg/feature.jsx` of one that ships `feature.js`):
+            // what the ES module resolver finds for it, as the file found it as one.
+            resolveNative(request, filename, options));
+        if (found !== undefined) {
+          return found;
+        }
+      }
+    }
+    throw error;
+  }
+  // A TypeScript importer resolves TypeScript first, as the ES module resolver does for
+  // it (#840), where Node.js' CommonJS resolution finds another file first: the output
+  // beside its source — compiled in place, or stale — that `./lib.js` and `./lib` both
+  // name, or `config.json` beside `config.ts` for `./config`. A package's files stay
+  // what it compiled, as they do for the ES module resolver. A JavaScript file compiled
+  // from an ES module resolves an extensionless request the same way, as it did as an
+  // ES module; one that names its file keeps it.
+  // The output may be a symlink: Node.js has followed it, and the source sits beside
+  // the name the request reaches, as the ES module resolver looks for it.
+  let source;
+  const sourceFirst = !searchedElsewhere && resolvesSourceFirst(request, parent);
+  const fromEsm = !searchedElsewhere && !sourceFirst && compiledFromEsm(request, parent);
+  // The ES module resolver's own answer, when it has one: the file this request found
+  // as an ES module, symlinks, a directory's `main` and index, and its extension order
+  // included. A local source comes first even when the output it stands for links into
+  // `node_modules`; a package's own files stay what it compiled.
+  const native =
+    sourceFirst || fromEsm
+      ? resolveNative(request, /** @type {string} */ (parent?.filename), options)
+      : undefined;
+  if (searchedElsewhere) {
+    // Nothing to probe beside the caller.
+  } else if (native !== undefined && isFile(native)) {
+    source = native;
+  } else if (sourceFirst && !inNodeModules(resolved)) {
+    // Without it — a file name with `#`, `?` or `%` it would read otherwise — its order
+    // is rebuilt from what Node.js found. An extensionless request takes the ES module
+    // resolver's extension order first; the aliases of the extension Node.js added come
+    // after it. `./foo.js` finds `foo.ts` first, whatever Node.js completed it with: a
+    // `foo.js/` directory, or a `foo.js.json` file.
+    const named = requested(request, parent.filename, resolved);
+    const file = !throughDirectory(request, parent.filename, resolved);
+    source =
+      (DIRECTORY_ONLY.test(request)
+        ? undefined
+        : explicitSource(resolvePath(dirname(parent.filename), request))) ??
+      directoryLinkSource(request, parent.filename, resolved) ??
+      directoryMainSource(request, parent.filename, resolved) ??
+      directoryMainOrderSource(request, parent.filename, resolved) ??
+      directoryIndexSource(request, parent.filename, resolved) ??
+      (file ? extensionlessSource(request, named) : undefined) ??
+      sourceBeside(named);
+  } else if (fromEsm && !inNodeModules(resolved)) {
+    const named = requested(request, parent.filename, resolved);
+    const file = !throughDirectory(request, parent.filename, resolved);
+    source =
+      directoryMainSource(request, parent.filename, resolved) ??
+      directoryMainOrderSource(request, parent.filename, resolved) ??
+      directoryIndexSource(request, parent.filename, resolved) ??
+      (file
+        ? (extensionlessSource(request, named) ?? extensionlessSource(request, resolved))
+        : undefined);
+  } else if (mapsToProjectFile(request, parent, resolved)) {
+    // A package `imports` entry or a self-reference that maps to compiled output beside
+    // its source: the ES module resolver tried the source first after mapping.
+    // Node.js names only the file a symlink there reaches; the ES module resolver maps
+    // the request again and finds the source beside the name it maps to.
+    // The ES module resolver maps it with Node.js' own conditions: what it finds stands
+    // for what Node.js found — a source beside a symlink, a symlink itself, a package
+    // `main` Node.js fell back from, or an index (`index.ts`, `index.mjs`) before the
+    // `index.json` Node.js takes. In a package it keeps compiled JavaScript before its
+    // source; when it keeps the very file Node.js found, nothing stood before it.
+    const found = resolveNative(request, parent.filename, options);
+    source =
+      found === resolved
+        ? undefined
+        : found !== undefined && isFile(found)
+          ? found
+          : inNodeModules(resolved)
+            ? undefined
+            : sourceBeside(resolved);
+  }
+  // Node.js' own resolution gives the source its real path, as it gave `resolved`, so a
+  // symlinked source is one module whichever name reaches it.
+  return source === undefined
+    ? resolved
+    : resolveFilename.call(this, source, parent, isMain, options);
 };
+
+// The files the ES module resolver tries, for a TypeScript importer, ahead of the
+// compiled output a request names (`source_order` in `src/lib.rs`).
+const SOURCES_BEFORE_OUTPUT = {
+  ".js": [".ts", ".tsx"],
+  ".jsx": [".tsx", ".ts"],
+  ".mjs": [".mts"],
+  ".cjs": [".cts"],
+};
+
+// Every other file it tries for that request, which stand in for the output when it is
+// missing: those, then `.jsx` for `./x.js` and `.js` for `./x.jsx`, which it tries
+// after the named file.
+const MISSING_OUTPUT_SOURCES = {
+  ".js": [".ts", ".tsx", ".jsx"],
+  ".jsx": [".tsx", ".ts", ".js"],
+  ".mjs": [".mts"],
+  ".cjs": [".cts"],
+};
+
+// The extensions the ES module resolver tries for an extensionless request from a
+// TypeScript importer, in its order. Node.js' CommonJS resolution tries `.js`, `.json`
+// and `.node` first, then the extensions the `pirates` hook registers.
+const SOURCE_EXTENSIONS = [
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mts",
+  ".mjs",
+  ".cts",
+  ".cjs",
+  ".json",
+  ".node",
+];
+
+// `.` and `..` themselves are relative too: `require("..")` names the parent directory.
+const PATH_REQUEST = /^(?:\.{1,2}(?:[\\/]|$)|[\\/]|[a-zA-Z]:[\\/])/;
+
+/**
+ * The conditions Node.js resolves a `require()` with, for the ES module resolver to map
+ * a request as Node.js did: its built-in ones, and what `--conditions` (`-C`) adds, from
+ * `NODE_OPTIONS`, the command line or the `nodeOptions` of a configuration file
+ * (`--experimental-config-file`, `--config-file`, `--experimental-default-config-file`).
+ */
+const REQUIRE_CONDITIONS = (() => {
+  const environment = process.env.NODE_OPTIONS;
+  const options = (environment ?? "").match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
+  const args = [...options.map((option) => option.replaceAll('"', "")), ...process.execArgv];
+  const conditions = ["node", "require"];
+  /** @type {string[]} */
+  const added = [];
+  /** @type {string | undefined} */
+  let explicitFile;
+  let defaultFile = false;
+  let defaultLast = false;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    const match = /^(?:--conditions|-C)(?:=(.*))?$/.exec(arg);
+    const config = /^--(?:experimental-)?config-file(?:=(.*))?$/.exec(arg);
+    if (match) {
+      const value = match[1] ?? args[++index];
+      if (value) {
+        added.push(value);
+      }
+    } else if (config) {
+      explicitFile = config[1] ?? args[++index];
+      defaultLast = false;
+    } else if (arg === "--experimental-default-config-file") {
+      defaultFile = true;
+      defaultLast = true;
+    }
+  }
+  // Given both, Node.js 24.19 and 26.1 and later take the flag that comes last; earlier
+  // versions the named file.
+  const [major, minor] = process.versions.node.split(".", 2).map(Number);
+  const laterWins = major === 24 ? minor >= 19 : major === 26 ? minor >= 1 : major > 26;
+  const configFile =
+    explicitFile === undefined || (defaultFile && defaultLast && laterWins)
+      ? defaultFile
+        ? "node.config.json"
+        : undefined
+      : explicitFile;
+  // Node.js has read it already. Its conditions add to the command line's; when
+  // `NODE_OPTIONS` is set at all, even empty, Node.js takes none of its options. Set by
+  // an `--env-file` only, it counts as unset: Node.js reads that file later.
+  if (configFile && (environment === undefined || fromEnvFile(environment))) {
+    let nodeOptions;
+    try {
+      // Node.js takes a file that starts with a byte order mark.
+      const text = readFileSync(resolvePath(configFile), "utf8").replace(/^\uFEFF/, "");
+      nodeOptions = JSON.parse(text)?.nodeOptions;
+    } catch {
+      // Node.js reports a configuration file it cannot read.
+    }
+    const value = nodeOptions?.conditions;
+    for (const condition of typeof value === "string"
+      ? [value]
+      : Array.isArray(value)
+        ? value
+        : []) {
+      if (typeof condition === "string" && condition) {
+        added.push(condition);
+      }
+    }
+  }
+  // `node-addons` is active unless native addons are off — by `--no-addons`, its
+  // `--no_addons` spelling, or a configuration file's `addons`, where the running
+  // version reads it. Node.js refuses `process.dlopen()` then, before it looks for the
+  // file, and so tells which applies.
+  try {
+    // A file that is not there: loading it fails either way.
+    process.dlopen({ exports: {} }, join(dirname(fileURLToPath(import.meta.url)), ".no-addon"));
+  } catch (error) {
+    if (/** @type {{ code?: unknown }} */ (error).code !== "ERR_DLOPEN_DISABLED") {
+      conditions.push("node-addons");
+    }
+  }
+  // `require()` loads an ES module, and takes its `module-sync` branch.
+  if (/** @type {{ require_module?: boolean }} */ (process.features).require_module) {
+    conditions.push("module-sync");
+  }
+  return [...conditions, ...added];
+})();
+
+/**
+ * Whether `NODE_OPTIONS` holds what an `--env-file` (or `--env-file-if-exists`) of the
+ * command line sets it to, rather than what the process started with: Node.js keeps a
+ * variable the environment has.
+ *
+ * @param {string} value
+ * @returns {boolean}
+ */
+function fromEnvFile(value) {
+  const args = process.execArgv;
+  for (let index = 0; index < args.length; index++) {
+    const match = /^--env-file(?:-if-exists)?(?:=(.*))?$/.exec(args[index]);
+    const file = match && (match[1] ?? args[++index]);
+    if (file) {
+      try {
+        if (parseEnv(readFileSync(resolvePath(file), "utf8")).NODE_OPTIONS === value) {
+          return true;
+        }
+      } catch {
+        // A file Node.js could not read either.
+      }
+    }
+  }
+  return false;
+}
+
+/** A request that names a directory only: `./foo/`, `.`, `..`. */
+const DIRECTORY_ONLY = /(?:[\\/]|(?:^|[\\/])\.\.?)$/;
+
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
+function inNodeModules(path) {
+  return /[\\/]node_modules[\\/]/.test(path);
+}
+
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
+function isFile(path) {
+  return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+}
+
+/**
+ * Whether the importer's tsconfig may map `request`, as the ES module resolver decides:
+ * a bare request that is not a built-in module, from a file outside `node_modules`.
+ *
+ * @param {string} request
+ * @param {{ filename?: string | null } | null | undefined} parent
+ * @returns {parent is { filename: string }}
+ */
+function mapsThroughTsconfig(request, parent) {
+  const filename = parent?.filename;
+  return (
+    typeof filename === "string" &&
+    !inNodeModules(filename) &&
+    !PATH_REQUEST.test(request) &&
+    !isBuiltin(request)
+  );
+}
+
+/**
+ * Whether `parent` resolves `request` TypeScript first, as the ES module resolver
+ * decides: a relative or absolute request from a TypeScript or JSX file outside
+ * `node_modules`. The entry point has no parent and runs the file it names (#878).
+ *
+ * @param {string} request
+ * @param {{ filename?: string | null } | null | undefined} parent
+ * @returns {boolean}
+ */
+function resolvesSourceFirst(request, parent) {
+  const filename = parent?.filename;
+  return (
+    typeof filename === "string" &&
+    /\.(?:[cm]?ts|tsx|jsx)$/.test(filename) &&
+    (!inNodeModules(filename) || compiledDependency(parent)) &&
+    PATH_REQUEST.test(request)
+  );
+}
+
+/**
+ * Whether `parent` is a dependency's file oxc-node compiled to CommonJS from an ES
+ * module (`OXC_TRANSFORM_ALL`): the ES module resolver's package order, which keeps
+ * compiled JavaScript before its source, is what it found as an ES module. A package's
+ * JavaScript counts only when `OXC_TRANSFORM_ALL` covers it: otherwise it is output
+ * oxc-node leaves to Node.js.
+ *
+ * @param {{ filename?: string | null, exports?: unknown } | null | undefined} parent
+ * @returns {boolean}
+ */
+function compiledDependency(parent) {
+  const filename = parent?.filename;
+  return (
+    typeof filename === "string" &&
+    inNodeModules(filename) &&
+    // An extensionless entry (`bin/run`) is JavaScript too.
+    (/\.(?:[cm]?ts|tsx|jsx?)$/.test(filename) || extname(filename) === "") &&
+    /** @type {{ __esModule?: unknown } | undefined} */ (parent?.exports)?.__esModule === true &&
+    transformsDep(filename)
+  );
+}
+
+/**
+ * The file a relative or absolute `request` from `filename` names before Node.js follows
+ * a symlink to `resolved`: the request itself, or with the extension Node.js added to
+ * it. `resolved` when the request reached it some other way, such as a directory.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {string}
+ */
+function requested(request, filename, resolved) {
+  // `./foo/`, `.` and `..` name the directory only, never a `foo.js` beside it.
+  if (DIRECTORY_ONLY.test(request)) {
+    return resolved;
+  }
+  const path = resolvePath(dirname(filename), request);
+  if (path === resolved) {
+    return resolved;
+  }
+  if (extname(path) !== "" && isFile(path)) {
+    return path;
+  }
+  // An extensionless file is what Node.js tries first: `./dep` that is itself a link.
+  try {
+    if (isFile(path) && realpathSync(path) === resolved) {
+      return path;
+    }
+  } catch {
+    // A dangling link; Node.js did not take it either.
+  }
+  const withExtension = path + extname(resolved);
+  if (isFile(withExtension)) {
+    return withExtension;
+  }
+  // A symlink Node.js followed: `./dep` found `dep.js`, linking to `build/real.cjs`. The
+  // extension it added is the first, in its order, whose file reaches `resolved`.
+  for (const extension of Object.keys(Module._extensions)) {
+    const candidate = path + extension;
+    try {
+      if (isFile(candidate) && realpathSync(candidate) === resolved) {
+        return candidate;
+      }
+    } catch {
+      // A dangling link; Node.js did not take it either.
+    }
+  }
+  return resolved;
+}
+
+/**
+ * The source of a directory's `package.json` `main` when Node.js found that output
+ * missing and fell back to the directory's `index` file, as it does for `./lib` with
+ * `"main": "./src/main.js"` and only `src/main.ts`. The ES module resolver tried the
+ * source of `main` before the index.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {string | undefined}
+ */
+function directoryMainSource(request, filename, resolved) {
+  const directory = directoryNamed(request, filename, resolved);
+  if (dirname(resolved) !== directory || !basename(resolved).startsWith("index.")) {
+    return undefined;
+  }
+  const target = directoryMain(directory);
+  return target === undefined || isFile(target)
+    ? undefined
+    : sourcesFor(target, MISSING_OUTPUT_SOURCES).find(isFile);
+}
+
+/**
+ * The source beside a directory's `main` or index file that is a symlink Node.js
+ * followed, as the ES module resolver looks beside the name the directory gives:
+ * `"main": "./src/entry.js"` linking to `../dist/real.js` finds `src/entry.ts`, and
+ * `index.js` linking to `../build/real.js` finds `index.ts`.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {string | undefined}
+ */
+function directoryLinkSource(request, filename, resolved) {
+  const directory = resolvePath(dirname(filename), request);
+  if (!statSync(directory, { throwIfNoEntry: false })?.isDirectory()) {
+    return undefined;
+  }
+  /** @param {string} file */
+  const linked = (file) => {
+    try {
+      return file !== resolved && isFile(file) && realpathSync(file) === resolved;
+    } catch {
+      return false;
+    }
+  };
+  const main = directoryMain(directory);
+  if (main !== undefined && linked(main)) {
+    return sourceBeside(main);
+  }
+  // The index Node.js took, in its extension order.
+  const index = Object.keys(Module._extensions)
+    .map((extension) => join(directory, `index${extension}`))
+    .find(linked);
+  if (index === undefined) {
+    return undefined;
+  }
+  // Node.js fell back to it from a missing `main`, whose source comes first.
+  const mainSource =
+    main === undefined || isFile(main)
+      ? undefined
+      : sourcesFor(main, MISSING_OUTPUT_SOURCES).find(isFile);
+  return mainSource ?? extensionlessSource("index", index) ?? sourceBeside(index);
+}
+
+/**
+ * The directory a relative or absolute `request` from `filename` names, spelled as
+ * `resolved` spells it: its real path when Node.js followed a symlink to reach
+ * `resolved`, as it does unless `--preserve-symlinks` is set.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {string}
+ */
+function directoryNamed(request, filename, resolved) {
+  const path = resolvePath(dirname(filename), request);
+  if (resolved.startsWith(path + sep)) {
+    return path;
+  }
+  try {
+    const real = realpathSync(path);
+    return resolved.startsWith(real + sep) ? real : path;
+  } catch {
+    // Not there at all; nothing below it was resolved either.
+    return path;
+  }
+}
+
+/**
+ * Whether Node.js resolved `request` as a directory, to its `main` or index: no file
+ * the request names with an extension added was there, since Node.js tries those
+ * first. `./lib` reaching `lib/src/lib.cjs` named the directory, not `lib.cjs`.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {boolean}
+ */
+function throughDirectory(request, filename, resolved) {
+  return resolved.startsWith(directoryNamed(request, filename, resolved) + sep);
+}
+
+/**
+ * The file a directory's `package.json` names as its `main`, if it names one.
+ *
+ * @param {string} directory
+ * @returns {string | undefined}
+ */
+function directoryMain(directory) {
+  let main;
+  try {
+    main = JSON.parse(readFileSync(join(directory, "package.json"), "utf8")).main;
+  } catch {
+    // No `package.json` there, or one Node.js would have rejected already.
+    return undefined;
+  }
+  return typeof main === "string" && main !== "" ? resolvePath(directory, main) : undefined;
+}
+
+/**
+ * The index file the ES module resolver would find for a directory `request` that
+ * Node.js resolved to an index with an extension it tries later — `index.json` beside
+ * `index.ts`, say — when one exists.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {string | undefined}
+ */
+function directoryIndexSource(request, filename, resolved) {
+  const directory = directoryNamed(request, filename, resolved);
+  if (dirname(resolved) !== directory || !basename(resolved).startsWith("index.")) {
+    return undefined;
+  }
+  // A `main` that names the index file Node.js found is that file, not a fallback.
+  const main = directoryMain(directory);
+  if (
+    main !== undefined &&
+    (main === resolved || (!isFile(main) && resolved.startsWith(`${main}.`)))
+  ) {
+    return undefined;
+  }
+  return extensionlessSource("index", join(directory, basename(resolved)));
+}
+
+/**
+ * The file the ES module resolver would find for a directory whose `package.json` names
+ * an extensionless `main` that Node.js completed with an extension it tries later —
+ * `./src/entry` to `entry.json` beside `entry.ts`, say — when one exists.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {string} resolved
+ * @returns {string | undefined}
+ */
+function directoryMainOrderSource(request, filename, resolved) {
+  const main = directoryMain(directoryNamed(request, filename, resolved));
+  // A `main` that is a file is what Node.js loaded; one it completed is not, dots in
+  // its name (`./src/entry.prod`) or not.
+  if (main === undefined || isFile(main)) {
+    return undefined;
+  }
+  if (resolved.startsWith(`${main}.`)) {
+    return extensionlessSource(main, resolved);
+  }
+  // A `main` that names a directory, completed with that directory's index.
+  return dirname(resolved) === main && basename(resolved).startsWith("index.")
+    ? extensionlessSource("index", resolved)
+    : undefined;
+}
+
+/**
+ * Whether a bare `request` from a TypeScript or JSX `parent` outside `node_modules`, or
+ * a JavaScript one compiled to CommonJS from an ES module, mapped to a file: through a
+ * package's `imports`, `exports` or `main`.
+ *
+ * @param {string} request
+ * @param {{ filename?: string | null, exports?: unknown } | null | undefined} parent
+ * @param {string} resolved
+ * @returns {boolean}
+ */
+function mapsToProjectFile(request, parent, resolved) {
+  const filename = parent?.filename;
+  return (
+    typeof filename === "string" &&
+    (/\.(?:[cm]?ts|tsx|jsx)$/.test(filename) ||
+      ((filename.endsWith(".js") || extname(filename) === "") &&
+        /** @type {{ __esModule?: unknown } | undefined} */ (parent?.exports)?.__esModule ===
+          true)) &&
+    (!inNodeModules(filename) || compiledDependency(parent)) &&
+    !PATH_REQUEST.test(request) &&
+    !isBuiltin(request) &&
+    isAbsolute(resolved)
+  );
+}
+
+/**
+ * Whether a JavaScript `parent` was compiled to CommonJS from an ES module, and asks for
+ * a relative or absolute `request`. In `node_modules`, only one oxc-node compiled. Its first statement marks `exports` with
+ * `__esModule`, before any `require()`, as `tsc`'s output does.
+ *
+ * @param {string} request
+ * @param {{ filename?: string | null, exports?: unknown } | null | undefined} parent
+ * @returns {boolean}
+ */
+function compiledFromEsm(request, parent) {
+  const filename = parent?.filename;
+  const exports = parent?.exports;
+  return (
+    typeof filename === "string" &&
+    // An extensionless entry (`bin/run`) is JavaScript too.
+    (filename.endsWith(".js") || extname(filename) === "") &&
+    (!inNodeModules(filename) || compiledDependency(parent)) &&
+    PATH_REQUEST.test(request) &&
+    exports != null &&
+    /** @type {{ __esModule?: unknown }} */ (exports).__esModule === true
+  );
+}
+
+/**
+ * The missing file Node.js mapped a bare `request` to through a package's `imports` or
+ * `exports`, as its error names it, or `""`. A package that is not there at all is
+ * named by the request itself.
+ *
+ * @param {{ message?: unknown }} error
+ * @param {string} request
+ * @returns {string}
+ */
+function mappedFile(error, request) {
+  const mapped = /^Cannot find module '(.+)'/.exec(String(error.message))?.[1];
+  return mapped !== undefined && mapped !== request && isAbsolute(mapped) ? mapped : "";
+}
+
+/**
+ * The file the ES module resolver finds for a relative or absolute `request` from
+ * `filename`, when Node.js' CommonJS resolution found none.
+ *
+ * It maps the request with the conditions Node.js resolved it with: those a
+ * `module.registerHooks()` hook passed on, which Node.js hands `_resolveFilename` as
+ * `options.conditions`, or the ones Node.js starts with.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @param {{ conditions?: Iterable<string> } | undefined} options
+ * @returns {string | undefined}
+ */
+function resolveNative(request, filename, options) {
+  // `#`, `?` and `%` are part of a CommonJS file name, but the ES module resolver reads
+  // a fragment, a query or an escape there, and would find another file. A bare `#`
+  // names a package `imports` entry. Outside Windows a `\` is part of a file name too, where
+  // the ES module resolver reads a separator.
+  if (
+    (PATH_REQUEST.test(request) ? /[#?%]/.test(request) : /[?%]/.test(request)) ||
+    (process.platform !== "win32" && request.includes("\\"))
+  ) {
+    return undefined;
+  }
+  try {
+    const { url } = /** @type {{ url: string }} */ (
+      createResolve(
+        { getCurrentDirectory: () => process.cwd() },
+        request,
+        {
+          conditions: options?.conditions != null ? [...options.conditions] : REQUIRE_CONDITIONS,
+          importAttributes: {},
+          parentURL: pathToFileURL(filename).href,
+        },
+        // Called with the file it found, or with the request itself.
+        (url) => ({ url }),
+      )
+    );
+    return typeof url === "string" && url.startsWith("file:") ? fileURLToPath(url) : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    // Resolving records the files it looked for, and the tsconfig it read.
+    if (watch) {
+      flush(watch, takeWatchDependencies);
+    }
+  }
+}
+
+/**
+ * The source an explicit request for compiled output names, as the ES module resolver
+ * tries it before what Node.js completed the request with: beside the output, or in
+ * its place when it is missing (`./dep.js` finds `dep.jsx` before `dep.js.json`).
+ *
+ * @param {string} path
+ * @returns {string | undefined}
+ */
+function explicitSource(path) {
+  return isFile(path) ? sourceBeside(path) : sourcesFor(path, MISSING_OUTPUT_SOURCES).find(isFile);
+}
+
+/**
+ * The TypeScript file a resolved JavaScript file may be compiled from, when it exists.
+ *
+ * @param {string} filename
+ * @returns {string | undefined}
+ */
+function sourceBeside(filename) {
+  return sourcesFor(filename, SOURCES_BEFORE_OUTPUT).find(isFile);
+}
+
+/**
+ * The file the ES module resolver would find for an extensionless `request` that
+ * Node.js resolved to `filename` by adding an extension it tries later, when one exists.
+ *
+ * @param {string} request
+ * @param {string} filename
+ * @returns {string | undefined}
+ */
+function extensionlessSource(request, filename) {
+  // A request that names its file's extension resolves to that very name.
+  const name = basename(request);
+  const file = basename(filename);
+  if (!file.startsWith(`${name}.`)) {
+    return undefined;
+  }
+  const added = file.slice(name.length);
+  const stem = filename.slice(0, -added.length);
+  // An extension the ES module resolver does not try (`.es6`, `.es`) keeps its file.
+  const index = SOURCE_EXTENSIONS.indexOf(added);
+  return index === -1
+    ? undefined
+    : SOURCE_EXTENSIONS.slice(0, index)
+        .map((extension) => stem + extension)
+        .find(isFile);
+}
+
+/**
+ * The files a relative or absolute request for compiled output may name, from `table`.
+ *
+ * @param {string} request
+ * @param {Record<string, string[]>} table
+ * @returns {string[]}
+ */
+function sourcesFor(request, table) {
+  if (!PATH_REQUEST.test(request)) {
+    return [];
+  }
+  const extension = /\.[cm]?jsx?$/.exec(request)?.[0];
+  const sources = extension && table[extension];
+  return sources ? sources.map((source) => request.slice(0, -extension.length) + source) : [];
+}
 
 if (typeof setSourceMapsSupport === "function") {
   setSourceMapsSupport(true, { nodeModules: true, generatedCode: true });
@@ -375,7 +1183,12 @@ if (canRegisterSyncHooks()) {
   // environment can be an older snapshot than the registering worker's.
   // That thread has no `process.send`, so its watch reports use `watchPort`.
   const watchPort = watch ? createRelay(watch, takeWatchDependencies) : undefined;
-  register("@oxc-node/core/esm", {
+  // The hook thread tags the helpers it emits with its own module's URL. A file it
+  // compiles to CommonJS `require()`s them on this thread, so that tag resolves here
+  // too, against this same copy.
+  const esmHooks = import.meta.resolve("@oxc-node/core/esm");
+  helperResolvers[helperTag(esmHooks)] = resolveHelper;
+  register(esmHooks, {
     parentURL: import.meta.url,
     data: {
       tsconfig: freezeTsconfig(process.cwd()),

@@ -1,0 +1,9 @@
+{
+  "name": "integrate-commonjs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "test": "node run-tests.mjs"
+  }
+}

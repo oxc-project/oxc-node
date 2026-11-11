@@ -167,6 +167,21 @@ ${KEEP}`,
     await o.editUntil(join(root, "gen/deep/x.ts"), () => value("x"), runLine("later x"));
   });
 
+  test("creating a missing index file an import compiled to CommonJS names", async () => {
+    // `require("./barrel")` from a file compiled to CommonJS reports `barrel/index.ts`
+    // too, as the import did when the file ran as an ES module (#905).
+    const root = project({
+      "package.json": JSON.stringify({ private: true, type: "commonjs" }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { module: "nodenext" } }),
+      "main.ts": `import { v } from "./barrel";\nconsole.log("RUN", v, process.pid);\n${KEEP}`,
+      "barrel/other.ts": value("other"),
+    });
+    const o = startOxnode(["watch", "main.ts"], root);
+    await o.waitFor(/\[oxnode\] exited with code 1 — waiting for changes/);
+    await o.watched(join(root, "barrel/index.ts"));
+    await o.editUntil(join(root, "barrel/index.ts"), () => value("made"), runLine("made"));
+  });
+
   test("tsconfig.json and the config it extends", async () => {
     const paths = (dir: string) => ({ paths: { "@lib/*": [`./${dir}/*`] } });
     const root = project({
@@ -765,8 +780,11 @@ ${KEEP}`,
     const [, gc] = await o.waitFor(/^GC listening v1 (\d+)\n/m);
     await o.watched(join(root, "dep.ts"));
     await o.editUntil(join(root, "dep.ts"), () => value("v2"), /^GC listening v2 \d+\n/m);
+    // The app and oxnode write to stdout separately, so these two lines arrive in either
+    // order; each comes before the restart.
+    expect(o.stdout()).toMatch(/^GC ignored v1\n[\s\S]*^RUN v2 /m);
     expect(o.stdout()).toMatch(
-      /^GC ignored v1\n[\s\S]*\[oxnode\] still running after 300ms, force killing\n[\s\S]*^RUN v2 /m,
+      /\[oxnode\] still running after 300ms, force killing\n[\s\S]*^RUN v2 /m,
     );
     expect(count(o.stdout(), /force killing/)).toBe(1);
     expect(await isGone(Number(gc)), "the app's server").toBe(true);
