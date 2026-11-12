@@ -868,35 +868,340 @@ describe("DirWatcher", () => {
     },
   );
 
-  test("a folder swapped by rename gets a new watch, found by its inode", async () => {
-    const root = temp();
-    const gen = join(root, "gen");
-    const file = join(gen, "x.ts");
-    mkdirSync(gen);
-    writeFileSync(file, "1");
-    const fake = fakeWatch();
-    // Not Linux: only a new inode makes the watch stale.
-    const { w, changes } = start({ platform: "darwin", watch: fake.watch });
-    try {
-      w.add(file);
-      await until(() => fake.open(gen).length === 1, "the first watch");
-      const [first] = fake.open(gen);
-      // An event named after the folder, with the folder unchanged, keeps the watch.
-      first.emit("gen");
-      await new Promise((r) => setTimeout(r, 100));
-      expect(fake.open(gen)).toEqual([first]);
+  test.each(["win32", "darwin"] as const)(
+    "%s: a folder swapped by rename is a change, found by its inode",
+    async (platform) => {
+      const root = temp();
+      const gen = join(root, "gen");
+      const file = join(gen, "x.ts");
+      mkdirSync(gen);
+      writeFileSync(file, "1");
+      const fake = fakeWatch();
+      // Not Linux: there the event for the folder itself drops the watch.
+      const { w, changes } = start({ platform, watch: fake.watch });
+      try {
+        w.add(file);
+        await until(() => fake.open(gen).length === 1, "the first watch");
+        const [first] = fake.open(gen);
+        // An event named after the folder, with the folder unchanged, keeps the watch.
+        first.emit("gen");
+        await new Promise((r) => setTimeout(r, 100));
+        expect(fake.open(gen)).toEqual([first]);
 
-      mkdirSync(join(root, "gen.tmp"));
-      writeFileSync(join(root, "gen.tmp", "x.ts"), "22");
-      rmSync(gen, { recursive: true });
-      renameSync(join(root, "gen.tmp"), gen);
-      first.emit("gen");
-      await until(() => changes.includes(file), "a change");
-      expect(first.closed).toBe(true);
-      await until(() => fake.open(gen).length === 1, "a new watch");
-    } finally {
-      w.close();
-    }
+        mkdirSync(join(root, "gen.tmp"));
+        writeFileSync(join(root, "gen.tmp", "x.ts"), "22");
+        rmSync(gen, { recursive: true });
+        renameSync(join(root, "gen.tmp"), gen);
+        first.emit("gen");
+        await until(() => changes.includes(file), "a change");
+        if (platform === "darwin") {
+          // FSEvents watches the path: the watch sees the new folder, and stays.
+          await new Promise((r) => setTimeout(r, 100));
+          expect(first.closed).toBe(false);
+          expect(fake.opened).toHaveLength(1);
+          writeFileSync(file, "333");
+          first.emit("x.ts");
+          expect(changes.filter((c) => c === file)).toHaveLength(2);
+        } else {
+          expect(first.closed).toBe(true);
+          await until(() => fake.open(gen).length === 1, "a new watch");
+        }
+      } finally {
+        w.close();
+      }
+    },
+  );
+
+  describe("macOS: a folder's watch follows its path (libuv#5283)", () => {
+    // Each open or close of a watch rebuilds libuv's one FSEvents stream, and leaks memory for
+    // every folder watched: replacing folders must open and close nothing.
+    test("a folder replaced by rm -rf and mkdir keeps its watch", async () => {
+      const root = temp();
+      const gen = join(root, "gen");
+      const file = join(gen, "x.ts");
+      mkdirSync(gen);
+      writeFileSync(file, "1");
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "darwin", watch: fake.watch });
+      try {
+        w.add(file);
+        await until(() => fake.open(gen).length === 1, "the first watch");
+        const [first] = fake.open(gen);
+        rmSync(gen, { recursive: true });
+        mkdirSync(gen);
+        writeFileSync(file, "22");
+        first.emit("x.ts");
+        await until(() => changes.includes(file), "a change");
+        await new Promise((r) => setTimeout(r, 100));
+        expect(fake.opened).toHaveLength(1);
+        expect(first.closed).toBe(false);
+      } finally {
+        w.close();
+      }
+    });
+
+    test("a folder missing for a moment keeps its watch, and its parent's goes once it is back", async () => {
+      const root = temp();
+      const gen = join(root, "gen");
+      const file = join(gen, "x.ts");
+      mkdirSync(gen);
+      writeFileSync(file, "1");
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "darwin", watch: fake.watch, linger: 5_000 });
+      try {
+        w.add(file);
+        await until(() => fake.open(gen).length === 1, "the first watch");
+        const [first] = fake.open(gen);
+        rmSync(gen, { recursive: true });
+        first.emit("gen");
+        await until(() => changes.includes(file), "the removal");
+        // The parent sees the folder come back, renamed into place too.
+        await until(() => fake.open(root).length === 1, "the parent's watch");
+        expect(first.closed).toBe(false);
+        mkdirSync(gen);
+        writeFileSync(file, "22");
+        fake.open(root)[0].emit("gen");
+        await until(() => changes.filter((c) => c === file).length === 2, "the file back");
+        await until(() => fake.open(root).length === 0, "the parent's watch closed");
+        expect(fake.open(gen)).toEqual([first]);
+        writeFileSync(file, "333");
+        first.emit("x.ts");
+        expect(changes.filter((c) => c === file)).toHaveLength(3);
+      } finally {
+        w.close();
+      }
+    });
+
+    test("a folder missing for longer than the linger time loses its watch", async () => {
+      // A tool that makes and deletes folders with new names must not keep a watch for each.
+      const root = temp();
+      const gen = join(root, "gen");
+      const file = join(gen, "x.ts");
+      mkdirSync(gen);
+      writeFileSync(file, "1");
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "darwin", watch: fake.watch, linger: 300 });
+      try {
+        w.add(file);
+        await until(() => fake.open(gen).length === 1, "the first watch");
+        const [first] = fake.open(gen);
+        rmSync(gen, { recursive: true });
+        first.emit("gen");
+        await until(() => changes.includes(file), "the removal");
+        await until(() => first.closed, "the watch closed");
+        expect(fake.open(root)).toHaveLength(1);
+        expect(changes).toEqual([file]);
+      } finally {
+        w.close();
+      }
+    });
+
+    test("a folder gone with its parent, with no event of its own, is a change", async () => {
+      // `mv src src.old`: FSEvents names `src` in the root's watch, and nothing in src/a's.
+      const root = temp();
+      const file = join(root, "src", "a", "x.ts");
+      mkdirSync(join(file, ".."), { recursive: true });
+      writeFileSync(file, "1");
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "darwin", watch: fake.watch });
+      try {
+        w.add(join(root, "main.ts"));
+        w.add(file);
+        await until(() => fake.open(join(file, "..")).length === 1, "the first watches");
+        // Past the look at every file that follows each open.
+        await new Promise((r) => setTimeout(r, 400));
+        renameSync(join(root, "src"), join(root, "src.old"));
+        fake.open(root)[0].emit("src");
+        await until(() => changes.includes(file), "the removal");
+      } finally {
+        w.close();
+      }
+    });
+
+    test("removing a walked folder reports the files in its subfolders", async () => {
+      // `rm -rf src/a`: FSEvents names `a` in src/a's watch, and nothing in src/a/sub's.
+      const root = temp();
+      const src = join(root, "src");
+      const [c, n] = [join(src, "c.ts"), join(src, "a", "sub", "n.ts")];
+      mkdirSync(join(n, ".."), { recursive: true });
+      writeFileSync(c, "1");
+      writeFileSync(n, "1");
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "darwin", watch: fake.watch });
+      try {
+        w.addRoot(src, Infinity);
+        await until(() => fake.open(join(n, "..")).length === 1, "the first watches");
+        // Past the look at every file that follows each open.
+        await new Promise((r) => setTimeout(r, 400));
+        rmSync(join(src, "a"), { recursive: true });
+        fake.open(join(src, "a"))[0].emit("a");
+        await until(() => changes.includes(n), "the removal");
+      } finally {
+        w.close();
+      }
+    });
+
+    test("a nested folder renamed into place with its parent is looked at again", async () => {
+      // `mv gen gen.old; mv gen.tmp gen`: FSEvents names `gen` in gen's watch, and nothing in
+      // gen/sub's, whose folder is new too. The sync that event starts finds it new.
+      const root = temp();
+      const gen = join(root, "gen");
+      const [x, y] = [join(gen, "x.ts"), join(gen, "sub", "y.ts")];
+      mkdirSync(join(gen, "sub"), { recursive: true });
+      writeFileSync(x, "1");
+      writeFileSync(y, "1");
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "darwin", watch: fake.watch });
+      try {
+        w.add(x);
+        w.add(y);
+        await until(() => fake.open(join(gen, "sub")).length === 1, "the first watches");
+        const opened = fake.opened.length;
+        const tmp = join(root, "gen.tmp");
+        mkdirSync(join(tmp, "sub"), { recursive: true });
+        writeFileSync(join(tmp, "x.ts"), "1");
+        writeFileSync(join(tmp, "sub", "y.ts"), "22");
+        renameSync(gen, join(root, "gen.old"));
+        renameSync(tmp, gen);
+        fake.open(gen)[0].emit("gen");
+        await until(() => changes.includes(y), "a change in the nested folder");
+        await new Promise((r) => setTimeout(r, 100));
+        expect(fake.opened).toHaveLength(opened);
+      } finally {
+        w.close();
+      }
+    });
+
+    test("a watch no longer needed lingers, serves again, and closes once unneeded long enough", async () => {
+      const root = temp();
+      const [a, b] = ["a", "b"].map((d) => join(root, d, "x.ts"));
+      for (const f of [a, b]) {
+        mkdirSync(join(f, ".."));
+        writeFileSync(f, "1");
+      }
+      const fake = fakeWatch();
+      const { w, changes } = start({ platform: "darwin", watch: fake.watch, linger: 300 });
+      try {
+        w.add(a);
+        w.add(b, true);
+        await until(() => fake.open(join(b, "..")).length === 1, "the first watches");
+        const [first] = fake.open(join(b, ".."));
+        // Two runs that do not report b, as runs that fail early do, and one that does.
+        w.dropRun();
+        w.dropRun();
+        await new Promise((r) => setTimeout(r, 100));
+        expect(first.closed).toBe(false);
+        w.add(b, true);
+        await new Promise((r) => setTimeout(r, 100));
+        expect(fake.opened).toHaveLength(2);
+        writeFileSync(b, "22");
+        first.emit("x.ts");
+        expect(changes).toEqual([b]);
+        // Unneeded for good: it closes once the time has passed.
+        w.dropRun();
+        w.dropRun();
+        await until(() => first.closed, "the watch closed");
+        expect(fake.open(join(a, ".."))).toHaveLength(1);
+      } finally {
+        w.close();
+      }
+    });
+
+    // Windows lets only elevated processes create links to folders.
+    test.skipIf(process.platform === "win32")(
+      "a folder reached through a link pointed elsewhere gets a new watch",
+      async () => {
+        const root = temp();
+        for (const d of ["one", "two"]) {
+          mkdirSync(join(root, d));
+          writeFileSync(join(root, d, "x.ts"), d);
+        }
+        const gen = join(root, "gen");
+        symlinkSync("one", gen);
+        const file = join(gen, "x.ts");
+        const fake = fakeWatch();
+        const { w, changes } = start({ platform: "darwin", watch: fake.watch });
+        try {
+          w.add(file);
+          await until(() => fake.open(gen).length === 1, "the first watch");
+          const [first] = fake.open(gen);
+          rmSync(gen);
+          symlinkSync("two", gen);
+          first.emit("gen");
+          await until(() => changes.includes(file), "a change");
+          // FSEvents watches the real path it was opened on, `one`.
+          await until(() => first.closed && fake.open(gen).length === 1, "a new watch");
+        } finally {
+          w.close();
+        }
+      },
+    );
+
+    test.skipIf(process.platform === "win32")(
+      "a folder moved away, then linked back from its new place, gets a new watch",
+      async () => {
+        const root = temp();
+        const gen = join(root, "gen");
+        const file = join(gen, "x.ts");
+        mkdirSync(gen);
+        writeFileSync(file, "1");
+        const fake = fakeWatch();
+        const { w, changes } = start({ platform: "darwin", watch: fake.watch });
+        try {
+          w.add(file);
+          await until(() => fake.open(gen).length === 1, "the first watch");
+          const [first] = fake.open(gen);
+          renameSync(gen, join(root, "gen.real"));
+          first.emit("gen");
+          await until(() => changes.includes(file), "the removal");
+          await until(() => fake.open(root).length === 1, "the parent's watch");
+          // The same folder as before, but FSEvents watches the old path.
+          symlinkSync("gen.real", gen);
+          fake.open(root)[0].emit("gen");
+          await until(() => first.closed && fake.open(gen).length === 1, "a new watch");
+        } finally {
+          w.close();
+        }
+      },
+    );
+
+    test.runIf(process.platform === "darwin")(
+      "folders replaced again and again open no new watch, and every change is seen",
+      async () => {
+        const root = temp();
+        const files = Array.from({ length: 40 }, (_, i) => join(root, `m${i}`, "index.ts"));
+        for (const f of files) {
+          mkdirSync(join(f, ".."));
+          writeFileSync(f, "0");
+        }
+        const { w, changes, debug } = start({ platform: "darwin" });
+        try {
+          for (const f of files) w.add(f);
+          await until(() => files.every((f) => debug.includes(`ready ${join(f, "..")}`)), "ready");
+          await new Promise((r) => setTimeout(r, 500));
+          const ready = () => debug.filter((l) => l.startsWith("ready ")).length;
+          const before = ready();
+          for (let round = 1; round <= 3; round++) {
+            changes.length = 0;
+            for (const f of files) {
+              const dir = join(f, "..");
+              renameSync(dir, `${dir}.old`);
+              mkdirSync(dir);
+              writeFileSync(f, String(round));
+              rmSync(`${dir}.old`, { recursive: true });
+            }
+            await until(() => files.every((f) => changes.includes(f)), `round ${round}`);
+          }
+          // Missing folders may watch their parent for a moment: that one opens, no other.
+          expect(debug.filter((l) => l.startsWith("ready ") && l !== `ready ${root}`)).toHaveLength(
+            before,
+          );
+          expect(ready() - before).toBeLessThanOrEqual(3);
+        } finally {
+          w.close();
+        }
+      },
+    );
   });
 
   describe("dropRun", () => {
