@@ -807,7 +807,7 @@ dependencies = [
  "napi-derive",
  "oxc",
  "oxc_resolver",
- "oxc_sourcemap",
+ "oxc_sourcemap 10.0.0",
  "phf",
  "serde_json",
  "simdutf8",
@@ -883,7 +883,7 @@ dependencies = [
  "oxc_ecmascript",
  "oxc_index",
  "oxc_semantic",
- "oxc_sourcemap",
+ "oxc_sourcemap 9.0.0",
  "oxc_span",
  "oxc_str",
  "oxc_syntax",
@@ -1062,6 +1062,19 @@ name = "oxc_sourcemap"
 version = "9.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1133371a5fadc14b9f66a8fec14be3564a77647c7ab21b1ef0ec973bd82613ce"
+dependencies = [
+ "base64-simd",
+ "json-escape-simd",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "oxc_sourcemap"
+version = "10.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ca9998ccb8eabb05099c5827ce983cca9f5dfc008c6c47d7dcc034cee301e91"
 dependencies = [
  "base64-simd",
  "json-escape-simd",
