@@ -71,7 +71,7 @@ yarn_pnp = ["oxc_resolver/yarn_pnp"]
 memchr = "2"
 napi = { version = "3.12.2", default-features = false, features = ["serde-json", "napi3"] }
 napi-derive = { version = "3.6.3", default-features = false, features = ["type-def"] }
-oxc = { version = "0.158.0", features = [
+oxc = { version = "0.159.0", features = [
   "ast_visit",
   "codegen",
   "transformer",
@@ -79,7 +79,7 @@ oxc = { version = "0.158.0", features = [
   "regular_expression",
 ] }
 oxc_resolver = { version = "11.24.3" }
-oxc_sourcemap = "9"
+oxc_sourcemap = "10"
 phf = { version = "0.14", features = ["macros"] }
 serde_json = "1"
 simdutf8 = "0.1"
