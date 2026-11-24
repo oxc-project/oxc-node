@@ -22,9 +22,12 @@ import {
   enableWatchReport,
   freezeTsconfig,
   freezeTransformDeps,
+  getImportGlob,
   initTracing,
   load as oxcLoad,
+  setImportGlob,
   takeWatchDependencies,
+  takeWatchGlobs,
   transformsDep,
   tsconfigPathCandidates,
 } from "./index.js";
@@ -42,6 +45,14 @@ if (isMainThread) {
 const watch = watchSink();
 if (watch) {
   enableWatchReport();
+}
+
+// `import.meta.glob` is not Node.js syntax, and a script may test for it, so its
+// expansion is opt-in. The grammar is `OXC_TRANSFORM_ALL`'s: absent, empty, "0"
+// and "false" leave it off. A preload may also have called `setImportGlob(true)`.
+const importGlob = process.env.OXC_IMPORT_GLOB;
+if (importGlob !== undefined && importGlob !== "" && importGlob !== "0" && importGlob !== "false") {
+  setImportGlob(true);
 }
 
 // Destructure from NodeModule namespace to support older Node.js versions
@@ -184,7 +195,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
     const candidates = tsconfigPathCandidates(process.cwd(), parent.filename, request);
     // Finding the importer's tsconfig reads it.
     if (watch) {
-      flush(watch, takeWatchDependencies);
+      flush(watch, takeWatchDependencies, takeWatchGlobs);
     }
     for (const candidate of candidates) {
       try {
@@ -892,7 +903,7 @@ function resolveNative(request, filename, options) {
   } finally {
     // Resolving records the files it looked for, and the tsconfig it read.
     if (watch) {
-      flush(watch, takeWatchDependencies);
+      flush(watch, takeWatchDependencies, takeWatchGlobs);
     }
   }
 }
@@ -994,7 +1005,7 @@ addHook(
     } finally {
       // A transform reads the tsconfig of the file it compiles.
       if (watch) {
-        flush(watch, takeWatchDependencies);
+        flush(watch, takeWatchDependencies, takeWatchGlobs);
       }
     }
     let transformed = output.source();
@@ -1171,8 +1182,8 @@ if (canRegisterSyncHooks()) {
   registerHooks(
     watch
       ? {
-          load: withFlush(load, watch, takeWatchDependencies),
-          resolve: withFlush(resolve, watch, takeWatchDependencies),
+          load: withFlush(load, watch, takeWatchDependencies, takeWatchGlobs),
+          resolve: withFlush(resolve, watch, takeWatchDependencies, takeWatchGlobs),
         }
       : { load, resolve },
   );
@@ -1182,7 +1193,7 @@ if (canRegisterSyncHooks()) {
   // and ESM use different configs. Send explicit discovery too: the hook thread's
   // environment can be an older snapshot than the registering worker's.
   // That thread has no `process.send`, so its watch reports use `watchPort`.
-  const watchPort = watch ? createRelay(watch, takeWatchDependencies) : undefined;
+  const watchPort = watch ? createRelay(watch, takeWatchDependencies, takeWatchGlobs) : undefined;
   // The hook thread tags the helpers it emits with its own module's URL. A file it
   // compiles to CommonJS `require()`s them on this thread, so that tag resolves here
   // too, against this same copy.
@@ -1193,6 +1204,8 @@ if (canRegisterSyncHooks()) {
     data: {
       tsconfig: freezeTsconfig(process.cwd()),
       transformDeps: freezeTransformDeps(),
+      // No deadline: the switch as it is now, on the thread that registers.
+      importGlob: getImportGlob(),
       watchPort,
     },
     transferList: watchPort ? [watchPort] : [],

@@ -9,9 +9,11 @@ import {
   initTracing,
   initializeLoader,
   load as oxcLoad,
+  setImportGlob,
   setTransformDeps,
   setTsconfigPath,
   takeWatchDependencies,
+  takeWatchGlobs,
 } from "./index.js";
 import { withFlush } from "./watch-report.mjs";
 
@@ -158,7 +160,7 @@ function loadHook(url, context, nextLoad) {
  * The watch port is taken first, on every binding: a native one shares its queue
  * with the main thread but still needs someone to drain it after these hooks run.
  *
- * @param {{ tsconfig?: { path?: string | null, source?: string | null }, tsconfigPath?: string | null, transformDeps?: string | null, watchPort?: import('node:worker_threads').MessagePort } | undefined} data
+ * @param {{ tsconfig?: { path?: string | null, source?: string | null }, tsconfigPath?: string | null, transformDeps?: string | null, importGlob?: boolean, watchPort?: import('node:worker_threads').MessagePort } | undefined} data
  */
 function initialize(data) {
   const port = data?.watchPort;
@@ -166,8 +168,8 @@ function initialize(data) {
     port.unref();
     const sink = (message) => port.postMessage(message);
     watchHooks = {
-      resolve: withFlush(resolve, sink, takeWatchDependencies),
-      load: withFlush(load, sink, takeWatchDependencies),
+      resolve: withFlush(resolve, sink, takeWatchDependencies, takeWatchGlobs),
+      load: withFlush(load, sink, takeWatchDependencies, takeWatchGlobs),
     };
     // A WASI copy has a recorder of its own; on native this repeats the main thread.
     enableWatchReport();
@@ -180,6 +182,10 @@ function initialize(data) {
   }
   if (data?.transformDeps != null) {
     setTransformDeps(data.transformDeps);
+  }
+  // `import.meta.glob` expansion, as the registering thread has it.
+  if (data?.importGlob) {
+    setImportGlob(true);
   }
 }
 

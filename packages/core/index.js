@@ -778,20 +778,24 @@ function __napiStampBindingTarget(exportsObject, target) {
 // linked import resolves to `undefined`.
 module.exports.__napiBindingTarget = __napiStampBindingTarget(nativeBinding, __napiLoadedBindingTarget)
 module.exports = nativeBinding
+module.exports.GlobMatcher = nativeBinding.GlobMatcher
 module.exports.Output = nativeBinding.Output
 module.exports.OxcTransformer = nativeBinding.OxcTransformer
 module.exports.createResolve = nativeBinding.createResolve
 module.exports.enableWatchReport = nativeBinding.enableWatchReport
 module.exports.freezeTransformDeps = nativeBinding.freezeTransformDeps
 module.exports.freezeTsconfig = nativeBinding.freezeTsconfig
+module.exports.getImportGlob = nativeBinding.getImportGlob
 module.exports.getTransformDeps = nativeBinding.getTransformDeps
 module.exports.getTsconfigPath = nativeBinding.getTsconfigPath
 module.exports.initializeLoader = nativeBinding.initializeLoader
 module.exports.initTracing = nativeBinding.initTracing
 module.exports.load = nativeBinding.load
+module.exports.setImportGlob = nativeBinding.setImportGlob
 module.exports.setTransformDeps = nativeBinding.setTransformDeps
 module.exports.setTsconfigPath = nativeBinding.setTsconfigPath
 module.exports.takeWatchDependencies = nativeBinding.takeWatchDependencies
+module.exports.takeWatchGlobs = nativeBinding.takeWatchGlobs
 module.exports.transform = nativeBinding.transform
 module.exports.transformAsync = nativeBinding.transformAsync
 module.exports.transformModuleRunner = nativeBinding.transformModuleRunner

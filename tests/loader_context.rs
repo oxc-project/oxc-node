@@ -13,8 +13,8 @@ use std::{
 
 use napi::Either;
 use oxc_node::{
-    CapturedLoaderContext, OxcTransformer, get_tsconfig_path, initialize_loader_js,
-    set_transform_deps, set_tsconfig_path,
+    CapturedLoaderContext, OxcTransformer, get_import_glob, get_tsconfig_path,
+    initialize_loader_js, set_import_glob, set_transform_deps, set_tsconfig_path,
 };
 
 const SOURCE: &str = r#"
@@ -193,6 +193,51 @@ fn embedders_initialize_loaders_from_a_frozen_selection() {
                 ));
                 assert_eq!(get_tsconfig_path(), Some(fixture.config("assign")));
                 assert_eq!(setter_calls(&transform(&fixture.transformer())), 1);
+            })
+            .join()
+            .unwrap();
+    });
+}
+
+#[test]
+fn import_glob_is_per_context_and_off_by_default() {
+    let fixture = Fixture::new();
+    fs::create_dir_all(fixture.0.join("routes")).unwrap();
+    fs::write(fixture.0.join("routes/a.ts"), "export {};\n").unwrap();
+    let path = fixture.0.join("glob.ts").to_string_lossy().into_owned();
+    let glob = |transformer: &OxcTransformer| {
+        let source = "console.log(Object.keys(import.meta.glob('./routes/*.ts')));\n";
+        unwrap_oxc(transformer.transform(path.clone(), Either::A(source.into()))).source()
+    };
+    let expanded = |code: &str| code.contains(r#""./routes/a.ts": 0"#);
+    thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let transformer = fixture.transformer();
+                assert!(!get_import_glob());
+                assert!(!expanded(&glob(&transformer)));
+                // No deadline: the next file sees it, after this thread's first transform.
+                set_import_glob(true);
+                assert!(get_import_glob());
+                assert!(expanded(&glob(&transformer)));
+                let context = transformer.capture_context();
+                thread::scope(|inner| {
+                    inner
+                        .spawn(|| {
+                            // A thread of its own starts with it off; a captured context
+                            // carries it.
+                            assert!(!get_import_glob());
+                            assert!(!expanded(&glob(&transformer)));
+                            assert!(
+                                context.with(|| get_import_glob() && expanded(&glob(&transformer)))
+                            );
+                            assert!(!get_import_glob());
+                        })
+                        .join()
+                        .unwrap();
+                });
+                set_import_glob(false);
+                assert!(!expanded(&glob(&transformer)));
             })
             .join()
             .unwrap();

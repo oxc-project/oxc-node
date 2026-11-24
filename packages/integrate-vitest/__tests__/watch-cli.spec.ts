@@ -670,6 +670,62 @@ ${KEEP}`,
   });
 });
 
+// `import.meta.glob` under `OXC_IMPORT_GLOB`: the binding reports each call it expanded, and
+// the watcher matches files with the binding's `GlobMatcher`, as the transform listed them.
+describe.skipIf(EMULATED)("import.meta.glob", () => {
+  test("a matching file added, renamed or removed restarts; another file, or an edit of one the app did not load, does not", async () => {
+    const root = project({
+      "package.json": ESM,
+      "main.ts": `import { s } from "./sentinel.js";
+const routes = Object.keys(import.meta.glob("./routes/*.ts")).join(",") || "none";
+console.log("RUN", routes, s, process.pid);
+${KEEP}`,
+      "routes/a.ts": value("a"),
+      "sentinel.ts": sentinel("s1"),
+    });
+    const routes = join(root, "routes");
+    const o = startOxnode(["watch", "main.ts"], root, { env: { OXC_IMPORT_GLOB: "1" } });
+    await o.waitFor(runLine("./routes/a.ts s1"));
+    await o.waitDebug(new RegExp(`^ready ${escapeRe(routes)}$`, "m"));
+    await globReported(o, routes);
+    await reported(o, join(root, "sentinel.ts"));
+
+    // Neither a new file the glob does not match nor an edit of a.ts, which the app
+    // never imports, restarts it: the next restart is the sentinel's.
+    let from = o.mark();
+    let before = o.runs().length;
+    write(join(routes, "notes.md"), "notes\n");
+    write(join(routes, "a.ts"), value("a2"));
+    await o.editUntil(join(root, "sentinel.ts"), () => sentinel("s2"), runLine("./routes/a.ts s2"));
+    expect(o.runs()[before]).toMatch(/^\.\/routes\/a\.ts s2 /);
+    expect(firstReason(o.stdout().slice(from))).toMatch(reason("sentinel.ts"));
+
+    // Each try creates the file anew: an edit would not restart the app.
+    await globReported(o, routes);
+    const create = (file: string, contents: string) => {
+      rmSync(file, { force: true });
+      write(file, contents);
+    };
+    const b = join(routes, "b.ts");
+    await o.editUntil(b, () => value("b"), runLine("./routes/a.ts,./routes/b.ts s2"), create);
+    expect(o.stdout()).toMatch(reason("routes/b.ts"));
+
+    await globReported(o, routes);
+    from = o.mark();
+    before = o.runs().length;
+    renameSync(b, join(routes, "c.ts"));
+    await o.waitFor(runLine("./routes/a.ts,./routes/c.ts s2"), 20_000, from);
+    // A rename is one restart.
+    expect(o.runs().length).toBe(before + 1);
+
+    await globReported(o, routes);
+    from = o.mark();
+    rmSync(join(routes, "c.ts"));
+    await o.waitFor(runLine("./routes/a.ts s2"), 20_000, from);
+    expect(firstReason(o.stdout().slice(from))).toMatch(reason("routes/c.ts"));
+  });
+});
+
 describe.skipIf(EMULATED)("the terminal", () => {
   test("--rerun-on-enter: a bare Return on a pipe reruns, other text does not", async () => {
     const root = project({
@@ -845,6 +901,12 @@ function escapeRe(text: string) {
  */
 function reported(o: Oxnode, file: string) {
   const line = `^watch ${escapeRe(file)}$`;
+  return o.waitDebug(new RegExp(`(?:${line}[\\s\\S]*?){${o.runs().length}}`, "m"));
+}
+
+/** Waits until the last run has reported its glob with the root `dir`: each report logs `glob <dir>`. */
+function globReported(o: Oxnode, dir: string) {
+  const line = `^glob ${escapeRe(dir)}$`;
   return o.waitDebug(new RegExp(`(?:${line}[\\s\\S]*?){${o.runs().length}}`, "m"));
 }
 

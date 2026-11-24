@@ -26,6 +26,8 @@ type checker, and it does not write build output to disk.
   when it exists
 - Source-mapped stack traces
 - Importing TypeScript from a tool, without hooks (`@oxc-node/core/importer`)
+- Vite's `import.meta.glob`, when you turn it on (see
+  [Glob imports](#glob-imports))
 - Node features and flags such as watch mode, the test runner, and the
   inspector
 
@@ -108,6 +110,7 @@ on the next change.
 | a Node.js config file (`--experimental-config-file`) | yes                        | no                                |
 | the `--tsconfig` file                                | yes                        | (no such flag)                    |
 | a file matching `--include`                          | yes, even if created later | use `--watch-path`                |
+| a file an `import.meta.glob` call matches            | yes, when created or gone  | only an edit of a loaded file     |
 | a file in `node_modules`                             | only with `--include`      | Node's rules                      |
 | a file matching `--exclude`                          | no                         | (no such flag)                    |
 
@@ -226,24 +229,28 @@ for example) can run the same watcher. Both sides have an entry:
 The watcher side:
 
 ```js
+import { createRequire } from "node:module";
 import { runWatch } from "@oxc-node/cli/watch";
 
 process.exitCode = await runWatch(process.argv.slice(2), {
   name: "vpx watch",
   loaderArgs: ["--enable-source-maps", "--require", preloadPath, "--import", hooksURL],
   ignoreDirs: [loaderDir],
-  // Optional: match the globs your loader reports as your loader does.
-  globMatcher: ({ include, exclude = [], dot, nocase }) => {
-    const accepts = picomatch(include, { dot, nocase });
-    const rejects = picomatch(exclude, { dot, nocase });
-    return (file) => accepts(file) && !(exclude.length > 0 && rejects(file));
+  // Optional: match the globs your loader reports as your loader does. With the
+  // oxc-node binding, its `GlobMatcher` is the code that listed the files.
+  globMatcher: ({ include, exclude, dot, nocase }) => {
+    const { GlobMatcher } = createRequire(import.meta.url)("<your binding>");
+    const matcher = new GlobMatcher(include, exclude, dot, nocase);
+    return (file) => matcher.matches(file);
   },
 });
 ```
 
 `globMatcher` gets each `watch:glob` entry once per run, and the test it
 returns gets absolute paths with `/` on every platform. If it throws, the
-watcher logs the error and skips that entry.
+watcher logs the error and skips that entry. Load the binding in it, not at
+the top, so that a run without globs does not load it. `oxnode watch` passes
+the `GlobMatcher` of `@oxc-node/core`.
 
 | Option        | Default                                                                          | What it does                                                                                    |
 | ------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
@@ -259,28 +266,31 @@ the process, so add no handlers of your own and run one at a time. Importing
 binding.
 
 The app side, in your loader. `take` is your binding's
-`takeWatchDependencies`, so these entries load no binding of their own:
+`takeWatchDependencies`, and `takeGlobs` its `takeWatchGlobs`, so these entries
+load no binding of their own:
 
 ```js
 import { isMainThread } from "node:worker_threads";
 import { installSignalAck } from "@oxc-node/core/signal-ack";
 import { watchSink, withFlush } from "@oxc-node/core/watch-report";
-import { enableWatchReport, takeWatchDependencies } from "<your binding>";
+import { enableWatchReport, takeWatchDependencies, takeWatchGlobs } from "<your binding>";
 
 if (isMainThread) installSignalAck(); // first, before the app's code
 const sink = watchSink(); // once per thread; share it between your --require and --import
 if (sink) enableWatchReport(); // before the first resolve or transform
 const hooks = sink
   ? {
-      resolve: withFlush(resolve, sink, takeWatchDependencies),
-      load: withFlush(load, sink, takeWatchDependencies),
+      resolve: withFlush(resolve, sink, takeWatchDependencies, takeWatchGlobs),
+      load: withFlush(load, sink, takeWatchDependencies, takeWatchGlobs),
     }
   : { resolve, load };
 ```
 
-`flush(sink, take)` sends what the binding recorded, for code that is not a
-hook (a CommonJS transform). `sink({ "watch:glob": [glob] })` sends a glob
-report; the sink drops a repeated `watch:import` URL, never a glob report. `createRelay(sink, take)` returns a port for hooks
+`flush(sink, take, takeGlobs)` sends what the binding recorded, for code that
+is not a hook (a CommonJS transform): each URL in a message of its own, then
+the expanded `import.meta.glob` calls in one `watch:glob` message.
+`takeGlobs` is optional, in all three functions. `sink({ "watch:glob": [glob] })` sends a glob
+report; the sink drops a repeated `watch:import` URL, never a glob report. `createRelay(sink, take, takeGlobs)` returns a port for hooks
 registered with `module.register()`, which run on a thread with no IPC.
 From a CommonJS `--require` preload, `require()` of these two entries works on
 Node.js 22.12 and later, as for `@oxc-node/core/importer`.
@@ -520,6 +530,75 @@ this one reads any non-empty, non-`0`/`false` value as transform-all, so if an
 older copy is registered alongside (`NODE_OPTIONS` preloading a global install
 is the common case) it transforms JavaScript dependencies too. The
 `setTransformDeps` API is invisible to older copies and avoids that entirely.
+
+## Glob imports
+
+Vite's [`import.meta.glob`](https://vite.dev/guide/features.html#glob-import)
+is not Node.js syntax, and a script may test for it, so oxc-node expands it
+only when you turn it on. Set `OXC_IMPORT_GLOB=1` (absent, empty, `0` and
+`false` keep it off, as for `OXC_TRANSFORM_ALL`):
+
+```ts
+// src/server.ts, next to src/routes/health.ts
+const routes = import.meta.glob("./routes/*.ts");
+console.log(Object.keys(routes)); // [ './routes/health.ts' ]
+```
+
+```bash
+OXC_IMPORT_GLOB=1 npx oxnode ./src/server.ts
+```
+
+A tool that wraps the loader can call `setImportGlob(true)` instead. The switch
+is per JavaScript thread and has no deadline: a file transformed after the
+call expands its globs. `@oxc-node/core/register` passes it on to the
+`module.register()` hook thread, and `@oxc-node/core/importer` reads
+`OXC_IMPORT_GLOB` too.
+
+```js
+import { setImportGlob } from "@oxc-node/core";
+
+setImportGlob(true);
+await import("@oxc-node/core/register");
+```
+
+oxc-node replaces each call with an object when it transforms the file, as
+Vite does:
+
+| Form                                     | The object holds                                               |
+| ---------------------------------------- | -------------------------------------------------------------- |
+| `import.meta.glob("./routes/*.ts")`      | `"./routes/a.ts": () => import("./routes/a.ts")` for each file |
+| `["./a/*.ts", "./b/*.ts", "!**/*.d.ts"]` | the files of each pattern, less those a `!` pattern matches    |
+| `{ eager: true }`                        | the modules, imported before the file's own imports            |
+| `{ import: "default" }`                  | one export of each module                                      |
+| `{ base: "./routes" }`                   | keys relative to `base`, as are the patterns                   |
+| `{ exhaustive: true }`                   | also names that start with `.`, and `node_modules`             |
+| `{ caseSensitive: false }`               | also the files whose names differ in case only                 |
+| `Object.keys(import.meta.glob(...))`     | the keys only, and imports nothing                             |
+| `Object.values(import.meta.glob(...))`   | the values only, as an array                                   |
+
+The keys start with `./` or `../` and are sorted; the file itself is left out.
+A pattern uses the syntax of the `fast-glob` crate: `*`, `**`, `?`, `[...]`,
+`{a,b}` and `\`. Without `exhaustive`, a name that starts with `.` matches only
+in the folder before the first glob character, or as the file name when the
+last part of the pattern starts with `.`. Only a direct call expands:
+`const glob = import.meta.glob` stays as written.
+
+A call that cannot be expanded fails the transform, with the source line, as a
+syntax error does:
+
+- An argument that is not a literal, an unknown option or one of the wrong
+  type, and 0 or 3+ arguments, with Vite's messages.
+- A pattern or `base` that does not start with `./` or `../`: oxc-node has no
+  project root and resolves no aliases. A negative `**` pattern
+  (`"!**/*.test.ts"`) is fine.
+- `query` and `as`: Node.js loads each file as a module, without import
+  queries.
+
+A file with a glob call is an ES module, as a file with `import.meta` is, and a
+`.cts` file gets the `.cts` error. When the call was the only module syntax of
+the file, the output ends with `export {}`, so that `require()` runs it as an
+ES module too. Under `oxnode watch`, a file a call matches restarts the app when
+it is created or deleted.
 
 ## Programmatic transformation
 

@@ -35,6 +35,9 @@ export type WatchSink = (message: WatchMessage | WatchGlobMessage) => void;
 /** The binding's `takeWatchDependencies`: the URLs recorded since the last call. */
 export type TakeWatchDependencies = () => string[];
 
+/** The binding's `takeWatchGlobs`: the `import.meta.glob` calls expanded since the last call. */
+export type TakeWatchGlobs = () => WatchGlob[];
+
 /**
  * Where this thread sends its reports, or `null` when nobody is watching
  * (`WATCH_REPORT_DEPENDENCIES` is unset, or the main thread has no IPC channel).
@@ -42,18 +45,31 @@ export type TakeWatchDependencies = () => string[];
  */
 export declare function watchSink(): WatchSink | null;
 
-/** Send what the binding recorded, one URL per message, marked `"oxc-node": true`. */
-export declare function flush(sink: WatchSink, take: TakeWatchDependencies): void;
+/**
+ * Send what the binding recorded, one URL per message, marked `"oxc-node": true`, and then
+ * what `takeGlobs` returns, in one `watch:glob` message when it is not empty.
+ */
+export declare function flush(
+  sink: WatchSink,
+  take: TakeWatchDependencies,
+  takeGlobs?: TakeWatchGlobs,
+): void;
 
 /** `fn`, flushing after each call whether it returns, throws or returns a promise. */
 export declare function withFlush<F extends (...args: any[]) => any>(
   fn: F,
   sink: WatchSink,
   take: TakeWatchDependencies,
+  takeGlobs?: TakeWatchGlobs,
 ): F;
 
 /**
  * For `module.register()`: a port to pass to the hooks thread, whose reports the
- * calling thread forwards to `sink`. It also drains `take` before the process ends.
+ * calling thread forwards to `sink`. It also drains `take` and `takeGlobs` before the
+ * process ends.
  */
-export declare function createRelay(sink: WatchSink, take: TakeWatchDependencies): MessagePort;
+export declare function createRelay(
+  sink: WatchSink,
+  take: TakeWatchDependencies,
+  takeGlobs?: TakeWatchGlobs,
+): MessagePort;

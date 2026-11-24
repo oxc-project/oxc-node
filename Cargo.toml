@@ -24,8 +24,10 @@ default = ["napi"]
 # `load`, `transform`, `OxcTransformer`, `set_tsconfig_path`,
 # `get_tsconfig_path`, `initialize_loader_js`, `freeze_tsconfig_js`,
 # `set_transform_deps`, `get_transform_deps`,
-# `transforms_dep`, `freeze_transform_deps`, `transform_module_runner`, and for
-# watch mode `enable_watch_report` and `take_watch_dependencies` — compiling this crate against
+# `transforms_dep`, `freeze_transform_deps`, `transform_module_runner`, for
+# watch mode `enable_watch_report`, `take_watch_dependencies` and
+# `take_watch_globs`, and for `import.meta.glob` `set_import_glob`,
+# `get_import_glob` and `GlobMatcher` — compiling this crate against
 # the same napi 3.x version so the `Function`, `PromiseRaw`, `Either` and
 # `FnArgs` types used in those signatures unify with the host's. It also calls
 # `detect_runtime_syntax` from its own `napi(module_exports)` hook (without it
@@ -68,6 +70,7 @@ default_global_allocator = []
 yarn_pnp = ["oxc_resolver/yarn_pnp"]
 
 [dependencies]
+fast-glob = "1.1.2"
 memchr = "2"
 napi = { version = "3.12.2", default-features = false, features = ["serde-json", "napi3"] }
 napi-derive = { version = "3.6.3", default-features = false, features = ["type-def"] }

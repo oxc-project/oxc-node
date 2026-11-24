@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createRequire } from "node:module";
 import process from "node:process";
 
 import { Builtins, Cli, Command, Option, Usage } from "clipanion";
@@ -7,8 +8,33 @@ import { Builtins, Cli, Command, Option, Usage } from "clipanion";
 import pkgJson from "../package.json" with { type: "json" };
 import { runChild, usesNodeWatch } from "./run.js";
 import { runWatch } from "./watch/command.js";
+import type { WatchGlob } from "./watch/messages.js";
 
 const [node, app, ...stdArgs] = process.argv;
+
+/** The binding's `GlobMatcher`, which the transform listed the files with. */
+interface GlobMatcherClass {
+  new (
+    include: string[],
+    exclude?: string[],
+    dot?: boolean,
+    nocase?: boolean,
+  ): { matches(file: string): boolean };
+}
+
+let GlobMatcher: GlobMatcherClass | undefined;
+
+/**
+ * Matches the files of a `watch:glob` report as `import.meta.glob` listed them. The binding
+ * loads on the first report, so a run without globs never loads it here.
+ */
+function globMatcher(glob: WatchGlob): (file: string) => boolean {
+  GlobMatcher ??= (
+    createRequire(import.meta.url)("@oxc-node/core") as { GlobMatcher: GlobMatcherClass }
+  ).GlobMatcher;
+  const matcher = new GlobMatcher(glob.include, glob.exclude, glob.dot, glob.nocase);
+  return (file) => matcher.matches(file);
+}
 
 class MainCommand extends Command {
   static paths = [[]];
@@ -67,7 +93,7 @@ class WatchCommand extends Command {
   args = Option.Proxy();
 
   async execute() {
-    return runWatch(this.args);
+    return runWatch(this.args, { globMatcher });
   }
 }
 

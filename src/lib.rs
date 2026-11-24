@@ -65,6 +65,9 @@ use phf::Set;
 #[global_allocator]
 static ALLOC: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
 
+/// `import.meta.glob` expansion, a pass of [`transform_program`].
+mod import_glob;
+
 const BUILTIN_MODULES: Set<&str> = phf::phf_set! {
     "_http_agent",
     "_http_client",
@@ -610,6 +613,108 @@ pub fn take_watch_dependencies() -> Vec<String> {
     mem::take(&mut WATCH_QUEUE.lock().unwrap_or_else(PoisonError::into_inner).1)
 }
 
+/// A folder the watcher walks for one [`WatchGlob`].
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WatchGlobRoot {
+    /// An absolute path with `/`.
+    pub base: String,
+    /// Levels below `base` to walk: 1 for the files in it, absent for no limit.
+    pub depth: Option<u32>,
+}
+
+/// An `import.meta.glob` call the transform expanded, as `@oxc-node/core/watch-report`
+/// sends it to the watcher in a `watch:glob` report.
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WatchGlob {
+    /// One folder for each positive pattern.
+    pub roots: Vec<WatchGlobRoot>,
+    /// The positive patterns: absolute, with `/`, and the literal folder escaped.
+    pub include: Vec<String>,
+    /// The negative patterns, without their `!`.
+    pub exclude: Option<Vec<String>>,
+    /// `exhaustive`: names that start with `.` and `node_modules` count too.
+    pub dot: Option<bool>,
+    /// `caseSensitive: false`.
+    pub nocase: Option<bool>,
+    /// The files the call listed, the importer included.
+    pub files: Option<Vec<String>>,
+}
+
+/// The globs expanded since the last [`take_watch_globs`]. One list for every thread,
+/// as [`WATCH_QUEUE`] is.
+static WATCH_GLOBS: LazyLock<Mutex<Vec<WatchGlob>>> = LazyLock::new(Default::default);
+
+/// Queue what a transform expanded for the watch parent, while recording is on.
+fn report_watch_globs(globs: Vec<WatchGlob>) {
+    if !watching() || globs.is_empty() {
+        return;
+    }
+    WATCH_GLOBS.lock().unwrap_or_else(PoisonError::into_inner).extend(globs);
+}
+
+/// The `import.meta.glob` calls expanded since the last call, one entry for each call
+/// with a positive pattern. Always empty while recording is off.
+#[cfg_attr(feature = "napi", napi)]
+pub fn take_watch_globs() -> Vec<WatchGlob> {
+    if !watching() {
+        return Vec::new();
+    }
+    mem::take(&mut *WATCH_GLOBS.lock().unwrap_or_else(PoisonError::into_inner))
+}
+
+/// Whether a file counts for one `watch:glob` entry, by the rules the transform listed
+/// its files with. For the `globMatcher` of `runWatch`.
+#[cfg_attr(feature = "napi", napi)]
+pub struct GlobMatcher {
+    set: import_glob::GlobSet,
+}
+
+impl GlobMatcher {
+    /// `include`, `exclude`, `dot` and `nocase` of a [`WatchGlob`].
+    pub fn new(
+        include: Vec<String>,
+        exclude: Option<Vec<String>>,
+        dot: Option<bool>,
+        nocase: Option<bool>,
+    ) -> Self {
+        Self {
+            set: import_glob::GlobSet::from_patterns(
+                &include,
+                &exclude.unwrap_or_default(),
+                dot.unwrap_or(false),
+                nocase.unwrap_or(false),
+            ),
+        }
+    }
+
+    /// Whether `file`, an absolute path with `/`, counts.
+    pub fn matches(&self, file: String) -> bool {
+        self.set.is_match(&file)
+    }
+}
+
+#[cfg(feature = "napi")]
+#[napi]
+impl GlobMatcher {
+    #[napi(constructor)]
+    pub fn new_js(
+        include: Vec<String>,
+        exclude: Option<Vec<String>>,
+        dot: Option<bool>,
+        nocase: Option<bool>,
+    ) -> Self {
+        Self::new(include, exclude, dot, nocase)
+    }
+
+    /// Whether `file`, an absolute path with `/`, counts.
+    #[napi(js_name = "matches")]
+    pub fn matches_js(&self, file: String) -> bool {
+        self.matches(file)
+    }
+}
+
 /// The paths a failed resolve looked for that are worth watching, sorted
 /// (the resolver's set is unordered) and capped. The resolver also lists a
 /// `package.json` in every ancestor up to the root and the `node_modules`
@@ -713,6 +818,9 @@ struct LoaderContext {
     /// compiled to CommonJS may import: too old, or `--no-require-module`, which a
     /// Worker can set apart from its parent. Off by default, so an embedder compiles.
     keeps_es_modules: AtomicBool,
+    /// Whether the transform expands `import.meta.glob` calls ([`set_import_glob`]).
+    /// Off by default: it is not Node.js syntax, and a script may test for it.
+    import_glob: AtomicBool,
 }
 
 thread_local! {
@@ -1100,6 +1208,21 @@ pub fn freeze_transform_deps() -> String {
 pub fn freeze_transform_deps_js(env: Env) -> Result<String> {
     let _environment = LoaderEnvironmentGuard::from_env(&env)?;
     Ok(freeze_transform_deps())
+}
+
+/// Turn the expansion of `import.meta.glob` calls on or off for this thread. A file
+/// transformed after the call sees the new value. Off by default. A loader passes
+/// [`get_import_glob`] to its `module.register()` hook thread, whose context starts
+/// with it off.
+#[cfg_attr(feature = "napi", napi)]
+pub fn set_import_glob(enabled: bool) {
+    loader_context().import_glob.store(enabled, Ordering::Relaxed);
+}
+
+/// Whether this thread's transforms expand `import.meta.glob` calls.
+#[cfg_attr(feature = "napi", napi)]
+pub fn get_import_glob() -> bool {
+    loader_context().import_glob.load(Ordering::Relaxed)
 }
 
 /// Node.js' `--preserve-symlinks` and `--preserve-symlinks-main`.
@@ -2488,8 +2611,15 @@ fn oxc_transform<S: TryAsStr>(
         enable_top_level_await && !flip_to_module,
         helper_module_name,
         module_runner,
+        expands_import_glob(&module_record),
     )?;
     Ok((output, flip_to_module))
+}
+
+/// Whether [`transform_program`] runs the `import.meta.glob` pass on a file: the
+/// parser found an `import.meta`, and this thread turned the pass on.
+fn expands_import_glob(module_record: &ModuleRecord<'_>) -> bool {
+    !module_record.import_metas.is_empty() && loader_context().import_glob.load(Ordering::Relaxed)
 }
 
 /// Semantic analysis, transform and codegen for an already-parsed program. Split from
@@ -2506,6 +2636,7 @@ fn transform_program<'a>(
     enable_top_level_await: bool,
     helper_module_name: Option<&str>,
     mut module_runner: Option<&mut ModuleRunner>,
+    import_glob: bool,
 ) -> Result<Output> {
     let legacy_decorators =
         compiler_options.and_then(|c| c.experimental_decorators).unwrap_or(false);
@@ -2673,6 +2804,18 @@ fn transform_program<'a>(
         program.body.retain(|statement| {
             !matches!(statement, Statement::ExportNamedDeclaration(decl) if decl.specifiers.is_empty())
         });
+    }
+
+    // After the TypeScript transform, as Vite's plugin runs after Vite's: what is left
+    // is JavaScript. The module runner below turns the generated imports into its calls.
+    if import_glob
+        && let Err(errors) = import_glob::expand(allocator, src_path, program, source_str)
+    {
+        let msg = join_errors(errors, source_str, src_path);
+        return Err(Error::new(
+            Status::GenericFailure,
+            format!("Failed to transform {}:\n{}", src_path.display(), msg),
+        ));
     }
 
     let esm = matches!(module_target, Some(Module::Esm));
@@ -2946,6 +3089,20 @@ fn parse_generated<'a>(
     debug_assert!(diagnostics.is_empty(), "{diagnostics:?} in {source}");
     Unmap.visit_program(&mut program);
     (program.directives, program.body)
+}
+
+/// Parses generated ES module statements (`import`, `export`) into `allocator`, without
+/// mappings.
+fn parse_generated_module<'a>(
+    allocator: &'a Allocator,
+    source: &str,
+) -> oxc::allocator::Vec<'a, Statement<'a>> {
+    let source = allocator.alloc_str(source);
+    let ParserReturn { mut program, diagnostics, .. } =
+        Parser::new(allocator, source, SourceType::mjs()).parse();
+    debug_assert!(diagnostics.is_empty(), "{diagnostics:?} in {source}");
+    Unmap.visit_program(&mut program);
+    program.body
 }
 
 /// `exports.name` for an export name, or `exports["name"]` when it is not an identifier.
@@ -4780,6 +4937,7 @@ fn load_commonjs_esm(
             false,
             helper_module_name.as_deref(),
             Some(&mut ModuleRunner::commonjs()),
+            expands_import_glob(&module_record),
         )?;
         tracing::debug!("loaded {} format: commonjs", url);
         return Ok(Some(LoadFnOutput {
@@ -4802,6 +4960,7 @@ fn load_commonjs_esm(
         false,
         helper_module_name.as_deref(),
         None,
+        expands_import_glob(&module_record),
     )?;
     tracing::debug!("loaded {} format: module", url);
     Ok(Some(LoadFnOutput {
@@ -4859,6 +5018,8 @@ fn reject_cts_module_syntax(
         true,
         None,
         None,
+        // Only the verdict on the module syntax is kept.
+        false,
     );
     if has_cts_module_declaration(&program) { Err(cts_module_syntax_error(path)) } else { Ok(None) }
 }
@@ -6155,6 +6316,7 @@ mod tests {
             fn drop(&mut self) {
                 WATCH_ENABLED.store(false, Ordering::Relaxed);
                 *WATCH_QUEUE.lock().unwrap_or_else(PoisonError::into_inner) = Default::default();
+                WATCH_GLOBS.lock().unwrap_or_else(PoisonError::into_inner).clear();
             }
         }
         let guard = Reset(LOCK.lock().unwrap_or_else(PoisonError::into_inner));
@@ -6199,6 +6361,42 @@ mod tests {
         assert!(take_watch_dependencies().is_empty());
         report_watch_path(&file);
         assert_eq!(take_watch_dependencies(), [url_of(&file)]);
+    }
+
+    // `import.meta.glob` calls are recorded as the files are: only while recording is on,
+    // and each list taken once.
+    #[test]
+    fn watch_globs_are_recorded_only_while_on() {
+        let _lock = watch_lock();
+        let root = watch_fixture("watch-globs", &[("routes/a.ts", ""), ("main.ts", "")]);
+        let main = root.join("main.ts").to_string_lossy().into_owned();
+        // From this test's own folder: other tests may expand globs at the same time.
+        let mine = || {
+            take_watch_globs()
+                .into_iter()
+                .filter(|glob| glob.include[0].contains("oxc-node-watch-globs-"))
+                .collect::<Vec<_>>()
+        };
+        set_import_glob(true);
+        let transform = || {
+            let source = "import.meta.glob('./routes/*.ts');\n";
+            match OxcTransformer::new(None, None).transform(main.clone(), Either::A(source.into()))
+            {
+                Ok(output) => output.code,
+                Err(error) => panic!("{}", mem::ManuallyDrop::new(error).reason),
+            }
+        };
+        assert!(transform().contains("./routes/a.ts"));
+        assert!(mine().is_empty());
+        enable_watch_report();
+        assert!(mine().is_empty());
+        transform();
+        let globs = mine();
+        assert_eq!(globs.len(), 1, "{globs:?}");
+        assert_eq!(globs[0].files.as_ref().unwrap().len(), 1);
+        assert!(mine().is_empty());
+        set_import_glob(false);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     // Pins what `WatchFs` relies on: oxc_resolver reads tsconfig files, and only
