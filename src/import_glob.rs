@@ -26,6 +26,8 @@ use oxc::{
     span::{GetSpan, Span},
 };
 
+use globstar::{CompileOptions, DirMatch, Glob};
+
 use crate::{
     WatchGlob, WatchGlobRoot, file_url_to_path, generated_expression, has_module_declaration,
     parse_generated_module, report_watch_globs, watching,
@@ -212,11 +214,17 @@ impl<'a> Expander<'a, '_> {
         let mut exclude = Vec::new();
         let mut roots = Vec::new();
         for (pattern, _) in &patterns {
-            match pattern.strip_prefix('!') {
-                Some(negative) if negative.starts_with("**") => exclude.push(negative.to_owned()),
-                Some(negative) => exclude.push(resolve(&dir, negative).pattern),
-                None => {
-                    let resolved = resolve(&dir, pattern);
+            let (negative, pattern) = match pattern.strip_prefix('!') {
+                Some(negative) => (true, negative),
+                None => (false, pattern.as_str()),
+            };
+            for pattern in translate(pattern) {
+                if negative && pattern.starts_with("**") {
+                    exclude.push(pattern);
+                } else if negative {
+                    exclude.push(resolve(&dir, &pattern).pattern);
+                } else {
+                    let resolved = resolve(&dir, &pattern);
                     include.push(resolved.pattern);
                     roots.push(WatchGlobRoot { base: resolved.dir, depth: resolved.depth });
                 }
@@ -730,6 +738,233 @@ fn escape(text: &str) -> String {
     escaped
 }
 
+/// `pattern` in `globstar`'s syntax, for the `picomatch` forms that Vite's glob reads and
+/// `globstar` does not:
+///
+/// - A group `(a|b)` is `{a,b}`, and `(a)` is `a`. `picomatch` also matches a path that
+///   equals the pattern's text, so a pattern whose only glob syntax is a group also gets
+///   its literal text: `./(auth)/x.ts` matches the folder `(auth)` too.
+/// - A range of two characters, `{1..3}` or `{c..a}`, is the class `[1-3]` or `[a-c]`, its
+///   step ignored, as `picomatch` reads it. Other ranges match nothing, there too.
+/// - A POSIX class in a bracket, `[[:digit:]]`, is its ranges, `[0-9]`.
+fn translate(pattern: &str) -> Vec<String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut translated = String::with_capacity(pattern.len());
+    rewrite(&chars, false, &mut translated);
+    let literal =
+        translated != pattern && first_glob_char(pattern).is_none() && chars.contains(&'(');
+    if literal { vec![translated, pattern.to_owned()] } else { vec![translated] }
+}
+
+/// Write `chars` to `out` in `globstar`'s syntax. `in_group`: `chars` is an alternative of a
+/// group, now a brace, so its own `,` is escaped.
+fn rewrite(chars: &[char], in_group: bool, out: &mut String) {
+    let mut at = 0;
+    while at < chars.len() {
+        match chars[at] {
+            '\\' => {
+                out.push('\\');
+                out.extend(chars.get(at + 1));
+                at += 2;
+                continue;
+            }
+            '[' => {
+                if let Some(end) = class_end(chars, at) {
+                    rewrite_class(&chars[at..=end], out);
+                    at = end + 1;
+                    continue;
+                }
+            }
+            '(' => {
+                if let Some(end) = closing(chars, at, '(', ')') {
+                    let alternatives = split_alternatives(&chars[at + 1..end]);
+                    if let [only] = alternatives.as_slice() {
+                        rewrite(only, in_group, out);
+                    } else {
+                        out.push('{');
+                        for (index, alternative) in alternatives.iter().enumerate() {
+                            if index > 0 {
+                                out.push(',');
+                            }
+                            rewrite(alternative, true, out);
+                        }
+                        out.push('}');
+                    }
+                    at = end + 1;
+                    continue;
+                }
+            }
+            '{' => {
+                if let Some(end) = closing(chars, at, '{', '}') {
+                    let body = &chars[at + 1..end];
+                    if let Some(class) = range_class(body) {
+                        out.push_str(&class);
+                    } else {
+                        out.push('{');
+                        rewrite(body, false, out);
+                        out.push('}');
+                    }
+                    at = end + 1;
+                    continue;
+                }
+            }
+            ',' if in_group => {
+                out.push_str("\\,");
+                at += 1;
+                continue;
+            }
+            _ => {}
+        }
+        out.push(chars[at]);
+        at += 1;
+    }
+}
+
+/// The index of the `]` that closes the bracket at `start`: a `]` right after `[`, `[!` or
+/// `[^` is literal, and `[:name:]` is skipped whole.
+fn class_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut at = start + 1;
+    if matches!(chars.get(at), Some('!' | '^')) {
+        at += 1;
+    }
+    if chars.get(at) == Some(&']') {
+        at += 1;
+    }
+    while at < chars.len() {
+        match chars[at] {
+            '\\' => at += 2,
+            '[' if chars.get(at + 1) == Some(&':') => {
+                let name_end = (at + 2..chars.len().saturating_sub(1))
+                    .find(|&end| chars[end] == ':' && chars[end + 1] == ']');
+                at = name_end.map_or(at + 1, |end| end + 2);
+            }
+            ']' => return Some(at),
+            _ => at += 1,
+        }
+    }
+    None
+}
+
+/// A bracket, `[` to `]`, with each POSIX class it names written as ranges. An unknown name
+/// stays, and matches nothing.
+fn rewrite_class(class: &[char], out: &mut String) {
+    let mut at = 0;
+    while at < class.len() {
+        if class[at] == '\\' {
+            out.push('\\');
+            out.extend(class.get(at + 1));
+            at += 2;
+            continue;
+        }
+        if at > 0 && class[at] == '[' && class.get(at + 1) == Some(&':') {
+            let name_end = (at + 2..class.len().saturating_sub(1))
+                .find(|&end| class[end] == ':' && class[end + 1] == ']');
+            if let Some(end) = name_end {
+                let name: String = class[at + 2..end].iter().collect();
+                if let Some(ranges) = posix_class(&name) {
+                    out.push_str(ranges);
+                    at = end + 2;
+                    continue;
+                }
+            }
+        }
+        out.push(class[at]);
+        at += 1;
+    }
+}
+
+/// The ranges of a POSIX class, as `picomatch` defines them.
+fn posix_class(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "alnum" => "a-zA-Z0-9",
+        "alpha" => "a-zA-Z",
+        "blank" => " \t",
+        "digit" => "0-9",
+        "lower" => "a-z",
+        "space" => " \t\r\n\u{b}\u{c}",
+        "upper" => "A-Z",
+        "word" => "A-Za-z0-9_",
+        "xdigit" => "A-Fa-f0-9",
+        _ => return None,
+    })
+}
+
+/// The index of the `close` that ends the `open` at `start`, past escapes and brackets.
+fn closing(chars: &[char], start: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0;
+    let mut at = start;
+    while at < chars.len() {
+        match chars[at] {
+            '\\' => at += 1,
+            '[' => {
+                if let Some(end) = class_end(chars, at) {
+                    at = end;
+                }
+            }
+            char if char == open => depth += 1,
+            char if char == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    None
+}
+
+/// The parts of a group's body between its own `|`.
+fn split_alternatives(body: &[char]) -> Vec<&[char]> {
+    let mut alternatives = Vec::new();
+    let mut depth = 0usize;
+    let mut from = 0;
+    let mut at = 0;
+    while at < body.len() {
+        match body[at] {
+            '\\' => at += 1,
+            '[' => {
+                if let Some(end) = class_end(body, at) {
+                    at = end;
+                }
+            }
+            '(' | '{' => depth += 1,
+            ')' | '}' => depth = depth.saturating_sub(1),
+            '|' if depth == 0 => {
+                alternatives.push(&body[from..at]);
+                from = at + 1;
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    alternatives.push(&body[from..]);
+    alternatives
+}
+
+/// `[x-y]` for a brace body `x..y` or `x..y..step` whose ends are two digits, or two letters
+/// of the same case.
+fn range_class(body: &[char]) -> Option<String> {
+    let [start, '.', '.', end, rest @ ..] = body else { return None };
+    let step = match rest {
+        [] => true,
+        ['.', '.', step @ ..] => {
+            let digits = step.strip_prefix(&['-']).unwrap_or(step);
+            !digits.is_empty() && digits.iter().all(char::is_ascii_digit)
+        }
+        _ => false,
+    };
+    let same_kind = (start.is_ascii_digit() && end.is_ascii_digit())
+        || (start.is_ascii_lowercase() && end.is_ascii_lowercase())
+        || (start.is_ascii_uppercase() && end.is_ascii_uppercase());
+    if !step || !same_kind {
+        return None;
+    }
+    let (low, high) = if start <= end { (start, end) } else { (end, start) };
+    Some(format!("[{low}-{high}]"))
+}
+
 /// A relative pattern joined to its folder.
 struct Resolved {
     /// The folder before the first glob character, literal.
@@ -772,66 +1007,47 @@ pub(crate) struct GlobSet {
 }
 
 struct Pattern {
-    /// Lower-case with `nocase`.
-    glob: String,
-    /// The folder before the first glob character, unescaped.
+    /// `None` for a pattern that `globstar` rejects: it matches nothing.
+    glob: Option<Glob>,
+    /// The folder before the first glob character, unescaped; lower-case with `nocase`.
     dir: String,
-    /// Whether the last segment starts with `.`, which makes such a file name visible.
-    dot_name: bool,
-    /// Whether it starts with `**`: it matches the path without its root.
-    rootless: bool,
-    /// Whether `fast-glob` accepts it. One it rejects matches nothing.
-    valid: bool,
 }
 
 impl Pattern {
-    fn new(glob: &str, nocase: bool) -> Self {
+    /// `dot` is `globstar`'s: a wildcard takes a name that starts with `.` only with it, and
+    /// a segment of the pattern that spells the `.` takes such a name in any case, as in
+    /// `picomatch`. Case is folded by lower-casing the pattern and the path, so that it
+    /// covers more than ASCII, as `picomatch`'s `nocase` does.
+    fn new(glob: &str, dot: bool, nocase: bool) -> Self {
         let glob = if nocase { glob.to_lowercase() } else { glob.to_owned() };
         let head = unescape(first_glob_char(&glob).map_or(glob.as_str(), |at| &glob[..at]));
         let dir = head.rfind('/').map_or_else(String::new, |at| head[..at].to_owned());
-        let dot_name = glob.rsplit('/').next().is_some_and(|name| name.starts_with('.'));
-        let rootless = glob.starts_with("**");
-        let valid = fast_glob::validate(&glob).is_ok();
-        Self { glob, dir, dot_name, rootless, valid }
+        let glob = Glob::new_with(&glob, CompileOptions::default().dot(dot)).ok();
+        Self { glob, dir }
     }
 
     fn matches(&self, path: &str) -> bool {
-        self.valid
-            && fast_glob::glob_match(
-                &self.glob,
-                if self.rootless { strip_root(path) } else { path },
-            )
+        self.glob.as_ref().is_some_and(|glob| glob.is_match(path.as_bytes()))
     }
 
-    /// Without `exhaustive`: below the folder of the pattern, no `node_modules`, no
-    /// folder whose name starts with `.`, and a file name that starts with `.` only when
-    /// the pattern's last segment does.
-    fn visible(&self, path: &str) -> bool {
-        let below = if self.rootless {
-            Some(strip_root(path))
-        } else {
-            path.strip_prefix(self.dir.as_str()).and_then(|rest| rest.strip_prefix('/'))
-        };
-        let Some(below) = below else { return false };
-        let (dirs, name) = match below.rfind('/') {
-            Some(at) => (&below[..at], &below[at + 1..]),
-            None => ("", below),
-        };
-        name != "node_modules"
-            && (self.dot_name || !name.starts_with('.'))
-            && (dirs.is_empty()
-                || dirs.split('/').all(|dir| dir != "node_modules" && !dir.starts_with('.')))
+    /// Vite ignores `**/node_modules/**` unless `exhaustive`; here only below the folder of
+    /// the pattern, so that a pattern that names a `node_modules` folder still lists it.
+    fn outside_node_modules(&self, path: &str) -> bool {
+        let below = path.strip_prefix(self.dir.as_str()).unwrap_or(path);
+        !below.split('/').any(|segment| segment == "node_modules")
     }
-}
 
-/// `path` without its root (`/`, `C:/`).
-fn strip_root(path: &str) -> &str {
-    &path[root_len(path)..]
+    /// Whether something below the folder `dir` may match.
+    fn may_enter(&self, dir: &str) -> bool {
+        self.glob.as_ref().is_some_and(|glob| {
+            !matches!(glob.match_dir(dir.as_bytes()), DirMatch::Pruned | DirMatch::Match)
+        })
+    }
 }
 
 impl GlobSet {
-    /// `include` and `exclude` are absolute patterns with `/`; `exclude` is without the
-    /// `!`, and one that starts with `**` matches anywhere.
+    /// `include` and `exclude` are absolute patterns with `/` in `globstar`'s syntax;
+    /// `exclude` is without the `!`, and one that starts with `**` matches anywhere.
     pub(crate) fn from_patterns(
         include: &[String],
         exclude: &[String],
@@ -839,33 +1055,41 @@ impl GlobSet {
         nocase: bool,
     ) -> Self {
         Self {
-            include: include.iter().map(|glob| Pattern::new(glob, nocase)).collect(),
-            exclude: exclude.iter().map(|glob| Pattern::new(glob, nocase)).collect(),
+            include: include.iter().map(|glob| Pattern::new(glob, dot, nocase)).collect(),
+            exclude: exclude.iter().map(|glob| Pattern::new(glob, dot, nocase)).collect(),
             dot,
             nocase,
         }
     }
 
-    /// Whether the absolute path `path`, with `/`, counts: a positive pattern matches it
-    /// and does not hide it, and no negative pattern matches it.
+    /// `path`, lower-case with `nocase`.
+    fn fold<'p>(&self, path: &'p str) -> Cow<'p, str> {
+        if self.nocase { Cow::Owned(path.to_lowercase()) } else { Cow::Borrowed(path) }
+    }
+
+    /// Whether the absolute path `path`, with `/`, counts: a positive pattern matches it,
+    /// it is not in `node_modules` below that pattern's folder unless `exhaustive`, and no
+    /// negative pattern matches it.
     pub(crate) fn is_match(&self, path: &str) -> bool {
-        let lower;
-        let path = if self.nocase {
-            lower = path.to_lowercase();
-            lower.as_str()
-        } else {
-            path
-        };
-        self.include
-            .iter()
-            .any(|pattern| pattern.matches(path) && (self.dot || pattern.visible(path)))
-            && !self.exclude.iter().any(|pattern| pattern.matches(path))
+        let path = self.fold(path);
+        self.include.iter().any(|pattern| {
+            pattern.matches(&path) && (self.dot || pattern.outside_node_modules(&path))
+        }) && !self.exclude.iter().any(|pattern| pattern.matches(&path))
+    }
+
+    /// Whether the walk enters the absolute folder `dir`, with `/`: a positive pattern may
+    /// match something below it. A folder that starts with `.` is entered only when a
+    /// pattern spells its `.`, or with `exhaustive`.
+    fn may_enter(&self, dir: &str) -> bool {
+        let dir = self.fold(dir);
+        self.include.iter().any(|pattern| pattern.may_enter(&dir))
     }
 }
 
 /// Add to `found` the files below `root` (to `depth` levels) that `set` accepts.
-/// Without `dot`, folders named `node_modules` or starting with `.` are skipped. A
-/// linked folder is walked under the link's path, unless it leads back into the branch.
+/// Without `dot`, folders named `node_modules` are skipped; the patterns decide on folders
+/// that start with `.`. A linked folder is walked under the link's path, unless it leads
+/// back into the branch.
 fn walk(root: &str, depth: Option<u32>, dot: bool, set: &GlobSet, found: &mut Vec<String>) {
     let mut branch = vec![fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root))];
     walk_dir(root, 1, depth, dot, set, &mut branch, found);
@@ -905,7 +1129,8 @@ fn walk_dir(
         }
         if !is_dir
             || depth.is_some_and(|depth| level >= depth)
-            || (!dot && (name == "node_modules" || name.starts_with('.')))
+            || (!dot && name == "node_modules")
+            || !set.may_enter(&path)
         {
             continue;
         }
@@ -1413,6 +1638,94 @@ mod tests {
         );
     }
 
+    // The `picomatch` forms that Vite reads and `globstar` lacks, in `globstar`'s syntax.
+    #[test]
+    fn translates_picomatch_forms() {
+        let one = |pattern: &str| {
+            let mut translated = translate(pattern);
+            assert_eq!(translated.len(), 1, "{pattern}: {translated:?}");
+            translated.remove(0)
+        };
+        assert_eq!(one("./routes/**/index.(ts|tsx)"), "./routes/**/index.{ts,tsx}");
+        assert_eq!(one("./(a|b(c|d))/*.ts"), "./{a,b{c,d}}/*.ts");
+        assert_eq!(one("./(a,b|c)/*.ts"), "./{a\\,b,c}/*.ts");
+        assert_eq!(one("./(x)*.ts"), "./x*.ts");
+        assert_eq!(one("./a\\(1|2\\).js"), "./a\\(1|2\\).js");
+        assert_eq!(one("./a(1|2.js"), "./a(1|2.js");
+        assert_eq!(one("./a{1..3}.js"), "./a[1-3].js");
+        assert_eq!(one("./a{3..1}.js"), "./a[1-3].js");
+        assert_eq!(one("./a{c..a}.js"), "./a[a-c].js");
+        assert_eq!(one("./a{1..3..2}.js"), "./a[1-3].js");
+        assert_eq!(one("./a{1..12}.js"), "./a{1..12}.js");
+        assert_eq!(one("./a{a..C}.js"), "./a{a..C}.js");
+        assert_eq!(one("./a{1..3}{x,y}.js"), "./a[1-3]{x,y}.js");
+        assert_eq!(one("./a[[:digit:]].js"), "./a[0-9].js");
+        assert_eq!(one("./a[[:alnum:]_].js"), "./a[a-zA-Z0-9_].js");
+        assert_eq!(one("./a[![:upper:]].js"), "./a[!A-Z].js");
+        assert_eq!(one("./a[[:nope:]].js"), "./a[[:nope:]].js");
+        // A pattern whose only glob syntax is a group: also its literal text.
+        assert_eq!(translate("./(auth)/x.ts"), ["./auth/x.ts", "./(auth)/x.ts"]);
+        assert_eq!(translate("./(a|b)/x.ts"), ["./{a,b}/x.ts", "./(a|b)/x.ts"]);
+        assert_eq!(translate("./(auth)/*.ts"), ["./auth/*.ts"]);
+    }
+
+    #[test]
+    fn picomatch_forms_list_what_vite_lists() {
+        let fixture = Fixture::new(
+            "picomatch-forms",
+            &[
+                "r/x.ts",
+                "r/x.tsx",
+                "r/x.mdx",
+                "r/a1.js",
+                "r/a2.js",
+                "r/a3.js",
+                "r/a12.js",
+                "r/ab.js",
+                "r/aZ.js",
+                "r/(auth)/in.ts",
+                "r/auth/out.ts",
+                "r/(auth)/x.ts",
+                "r/auth/x.ts",
+            ],
+        );
+        let main = fixture.path("main.mjs");
+        let keys =
+            |source: &str| keys(&code(&main, &format!("Object.keys(import.meta.glob({source}));")));
+        assert_eq!(keys("'./r/x.(ts|tsx)'"), ["./r/x.ts", "./r/x.tsx"]);
+        assert_eq!(keys("['./r/*.(ts|tsx|mdx)', '!./r/*.(mdx)']"), ["./r/x.ts", "./r/x.tsx"]);
+        assert_eq!(keys("'./r/a{1..2}.js'"), ["./r/a1.js", "./r/a2.js"]);
+        assert_eq!(keys("'./r/a{1..12}.js'"), Vec::<String>::new());
+        assert_eq!(keys("'./r/a[[:digit:]].js'"), ["./r/a1.js", "./r/a2.js", "./r/a3.js"]);
+        assert_eq!(keys("'./r/a[[:upper:]].js'"), ["./r/aZ.js"]);
+        assert_eq!(keys("'./r/(auth)/*.ts'"), ["./r/auth/out.ts", "./r/auth/x.ts"]);
+        assert_eq!(keys("'./r/(auth)/x.ts'"), ["./r/(auth)/x.ts", "./r/auth/x.ts"]);
+    }
+
+    // `picomatch` takes a name that starts with `.` wherever a segment of the pattern spells
+    // the `.`, also after a wildcard; `globstar` reads `dot` the same way.
+    #[test]
+    fn a_dot_folder_that_the_pattern_names_after_a_wildcard() {
+        let fixture = Fixture::new(
+            "dot-after-wildcard",
+            &["r/a/.config/x.ts", "r/a/b/.config/y.ts", "r/a/.other/z.ts", "r/a/w.ts"],
+        );
+        let main = fixture.path("main.mjs");
+        let keys =
+            |source: &str| keys(&code(&main, &format!("Object.keys(import.meta.glob({source}));")));
+        assert_eq!(keys("'./r/*/.config/*.ts'"), ["./r/a/.config/x.ts"]);
+        assert_eq!(keys("'./r/**/.config/*.ts'"), ["./r/a/.config/x.ts", "./r/a/b/.config/y.ts"]);
+        assert_eq!(keys("'./r/**/*.ts'"), ["./r/a/w.ts"]);
+        let matcher = GlobMatcher::new(
+            vec![format!("{}/*/.config/*.ts", fixture.path("r"))],
+            None,
+            None,
+            None,
+        );
+        assert!(matcher.matches(fixture.path("r/b/.config/new.ts")));
+        assert!(!matcher.matches(fixture.path("r/b/.other/new.ts")));
+    }
+
     // The rules the watcher's `GlobMatcher` applies are the transform's.
     #[test]
     fn glob_matcher_matches_as_the_transform_lists() {
@@ -1439,7 +1752,7 @@ mod tests {
         let literal = matcher(&["/p/a\\[1\\]/*.ts"], &[], false, false);
         assert!(literal.matches("/p/a[1]/x.ts".into()));
         assert!(!literal.matches("/p/a1/x.ts".into()));
-        // `fast-glob` rejects an unclosed brace: it matches nothing, so it excludes nothing.
+        // `globstar` rejects an unclosed brace: it matches nothing, so it excludes nothing.
         assert!(!matcher(&["/p/{a,b/*.ts"], &[], false, false).matches("/p/{a,b/x.ts".into()));
         assert!(matcher(&["/p/*.ts"], &["/p/*.{ts"], false, false).matches("/p/x.ts".into()));
         let windows = matcher(&["C:/p/*.ts"], &["**/b.ts"], false, false);

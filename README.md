@@ -578,10 +578,13 @@ Vite does:
 | `Object.values(import.meta.glob(...))`   | the values only, as an array                                   |
 
 The keys start with `./` or `../` and are sorted; the file itself is left out.
-A pattern uses the syntax of the `fast-glob` crate: `*`, `**`, `?`, `[...]`,
-`{a,b}` and `\`. Without `exhaustive`, a name that starts with `.` matches only
-in the folder before the first glob character, or as the file name when the
-last part of the pattern starts with `.`. Only a direct call expands:
+A pattern uses the syntax of the [`globstar`](https://crates.io/crates/globstar)
+crate, which Rolldown's glob plugin uses too: `*`, `**`, `?`, `[...]`, `{a,b}`
+and `\`. The `picomatch` forms that Vite reads are rewritten to it first:
+`(a|b)` groups, ranges of two characters (`{1..3}`, `{a..c}`), and POSIX
+classes (`[[:digit:]]`). Without `exhaustive`, a wildcard does not take a name
+that starts with `.`, but a part of the pattern that spells the `.` does
+(`./*/.config/*.ts`), as in `picomatch`. Only a direct call expands:
 `const glob = import.meta.glob` stays as written.
 
 A call that cannot be expanded fails the transform, with the source line, as a

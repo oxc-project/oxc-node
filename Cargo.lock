@@ -357,6 +357,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "globstar"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1d4989169eb40469469b2aecfc0d8d9ebcf56149fa23b57a515d261e67e3907"
+
+[[package]]
 name = "halfbrown"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -799,7 +805,7 @@ dependencies = [
 name = "oxc-node"
 version = "0.0.0"
 dependencies = [
- "fast-glob",
+ "globstar",
  "idna",
  "memchr",
  "mimalloc-safe",
