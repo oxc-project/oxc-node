@@ -2557,9 +2557,14 @@ fn transform_program<'a>(
                 emit_decorator_metadata: compiler_options
                     .and_then(|c| c.emit_decorator_metadata)
                     .unwrap_or(false),
+                // Decides whether metadata keeps `null`/`undefined` in a union
+                // (`string | null` is `Object`, not `String`). `tsc` reads
+                // `strictNullChecks` and falls back to `strict`, which TypeScript 6 and
+                // later default to `true` (issue #927). Rolldown resolves it the same way
+                // (rolldown#9590), and `true` is also oxc's own default.
                 strict_null_checks: compiler_options
-                    .and_then(|c| c.strict_null_checks)
-                    .unwrap_or(false),
+                    .and_then(|c| c.strict_null_checks.or(c.strict))
+                    .unwrap_or(true),
             },
             jsx: {
                 // `compilerOptions.jsx` holds `tsc`'s values (`react`, `react-jsx`,
