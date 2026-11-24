@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createRequire, registerHooks } from "node:module";
 import { join } from "node:path";
@@ -14,6 +14,7 @@ import {
   removeProjects,
   startOxnode,
   stopAll,
+  write,
 } from "./helpers/watch.js";
 
 /**
@@ -253,6 +254,82 @@ describe.skipIf(EMULATED || !registerHooks)("a run with the tool's loader", () =
     await o.editUntil(join(root, "tsconfig.json"), () => paths("b"), /^RUN v2 b custom /m);
     expect(o.stdout()).toMatch(/\[vpx\] change in \.[\\/]tsconfig\.json, restarting\n/);
     expect(o.stdout()).not.toContain("[oxnode]");
+  });
+});
+
+describe.skipIf(EMULATED)("a glob the app reports", () => {
+  // No loader: the app lists its routes itself and reports the glob, as a loader that expands
+  // `import.meta.glob` does. The tool's matcher logs each file it is asked about.
+  const EMBED_GLOB = `import { runWatch } from "@oxc-node/cli/watch";
+
+process.exitCode = await runWatch(process.argv.slice(2), {
+  name: "vpx watch",
+  loaderArgs: [],
+  globMatcher: ({ include }) => {
+    const dirs = include.map((p) => p.slice(0, p.lastIndexOf("/") + 1));
+    return (file) => {
+      console.log("MATCH " + file);
+      return file.endsWith(".mjs") && dirs.some((dir) => file.startsWith(dir));
+    };
+  },
+});
+`;
+  const MAIN = `import { readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { watchSink } from "@oxc-node/core/watch-report";
+
+const dir = new URL("./routes/", import.meta.url);
+const names = readdirSync(dir).filter((n) => n.endsWith(".mjs")).sort();
+console.log("RUN " + names.join(","));
+const base = fileURLToPath(dir).replaceAll("\\\\", "/");
+watchSink()?.({
+  "watch:glob": [
+    {
+      roots: [{ base: dir.href, depth: 1 }],
+      include: [base + "*.mjs"],
+      files: names.map((n) => new URL(n, dir).href),
+    },
+  ],
+});
+${KEEP}`;
+
+  test("a matching file that appears or goes restarts the app; an edit or another file does not", async () => {
+    const root = project(
+      {
+        "package.json": JSON.stringify({ private: true, type: "module" }),
+        "embed.mjs": EMBED_GLOB,
+        "main.mjs": MAIN,
+        "routes/a.mjs": "export default 1;\n",
+      },
+      { linkCli: true },
+    );
+    const routes = join(root, "routes");
+    const o = startOxnode(["--no-clear-screen", "main.mjs"], root, {
+      script: join(root, "embed.mjs"),
+    });
+    await o.waitFor(/^RUN a\.mjs\n/m);
+    await o.waitDebug(new RegExp(`^glob ${escape(routes)}$`, "m"));
+    await o.waitDebug(new RegExp(`^ready ${escape(routes)}$`, "m"));
+
+    // Each try creates the file anew: an edit would not restart the app.
+    const create = (file: string, contents: string) => {
+      rmSync(file, { force: true });
+      write(file, contents);
+    };
+    const b = join(routes, "b.mjs");
+    await o.editUntil(b, () => "export default 2;\n", /^RUN a\.mjs,b\.mjs\n/m, create);
+    expect(o.stdout()).toMatch(/\[vpx\] change in \.[\\/]routes[\\/]b\.mjs, restarting\n/);
+    // The matcher gets absolute paths with `/`.
+    expect(o.stdout()).toContain(`MATCH ${b.replaceAll("\\", "/")}\n`);
+
+    await o.waitDebug(new RegExp(`^glob ${escape(routes)}$(?:[^]*)^glob ${escape(routes)}$`, "m"));
+    write(join(routes, "a.mjs"), "export default 3;\n");
+    write(join(routes, "notes.md"), "notes\n");
+    await new Promise((r) => setTimeout(r, 1000));
+    const from = o.mark();
+    rmSync(b);
+    await o.waitFor(/^RUN a\.mjs\n/m, 20_000, from);
+    expect(o.runs()).toEqual(["a.mjs", "a.mjs,b.mjs", "a.mjs"]);
   });
 });
 

@@ -13,11 +13,11 @@ import {
   type FSWatcher,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, test, vi } from "vitest";
 
-import { DirWatcher, type DirWatcherOptions } from "../../cli/src/watch/dirs.js";
+import { DirWatcher, type DirWatcherOptions, type GlobWatch } from "../../cli/src/watch/dirs.js";
 import {
   descendants,
   parseProcStat,
@@ -28,7 +28,7 @@ import {
 } from "../../cli/src/watch/kill-tree.js";
 import { DEFAULT_NAMES, help, namesFor, usage } from "../../cli/src/watch/help.js";
 import { createLog } from "../../cli/src/watch/log.js";
-import { fromOxcNode, parseWatchMessage } from "../../cli/src/watch/messages.js";
+import { fromOxcNode, parseWatchGlobs, parseWatchMessage } from "../../cli/src/watch/messages.js";
 
 const abs = (p: string) => resolve(p);
 
@@ -89,6 +89,63 @@ describe("parseWatchMessage", () => {
     expect(
       parseWatchMessage({ "watch:require": [a], "watch:import": [pathToFileURL(b).href] }),
     ).toEqual([a, b]);
+  });
+});
+
+describe("parseWatchGlobs", () => {
+  const base = abs("/proj/src/routes");
+  const glob = { roots: [{ base, depth: 1 }], include: ["/proj/src/routes/*.ts"] };
+
+  test("not a glob message", () => {
+    expect(parseWatchGlobs(null)).toBe(null);
+    expect(parseWatchGlobs({ "watch:import": ["file:///x.ts"] })).toBe(null);
+    expect(parseWatchGlobs({ "watch:glob": "x" })).toEqual([]);
+    // Not a watch:import message either: the watcher keeps it to itself.
+    expect(parseWatchMessage({ "watch:glob": [glob] })).toBe(null);
+  });
+
+  test("roots and files as file URLs or absolute paths, and every field", () => {
+    const file = abs("/proj/src/routes/a b.ts");
+    expect(
+      parseWatchGlobs({
+        "watch:glob": [
+          {
+            roots: [{ base: pathToFileURL(base).href }, { base, depth: 2 }],
+            include: ["/proj/src/routes/**/*.ts"],
+            exclude: ["/proj/src/routes/*.test.ts"],
+            dot: true,
+            nocase: false,
+            files: [pathToFileURL(file).href, "rel.ts", base],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        roots: [{ base }, { base, depth: 2 }],
+        include: ["/proj/src/routes/**/*.ts"],
+        exclude: ["/proj/src/routes/*.test.ts"],
+        dot: true,
+        nocase: false,
+        files: [file, base],
+      },
+    ]);
+  });
+
+  test("a bad entry is dropped alone", () => {
+    const bad = [
+      null,
+      { ...glob, roots: [] },
+      { ...glob, roots: [{ base: "rel" }] },
+      { ...glob, roots: [{ base, depth: 0 }] },
+      { ...glob, roots: [{ base, depth: 1.5 }] },
+      { ...glob, include: [] },
+      { ...glob, include: "/proj/*.ts" },
+      { ...glob, exclude: [1] },
+      { ...glob, files: "x" },
+      { ...glob, dot: "yes" },
+      { ...glob, nocase: 1 },
+    ];
+    expect(parseWatchGlobs({ "watch:glob": [...bad, glob] })).toEqual([glob]);
   });
 });
 
@@ -1202,6 +1259,196 @@ describe("DirWatcher", () => {
         }
       },
     );
+  });
+
+  describe("addGlob", () => {
+    // `*.ts` anywhere below the roots; the walk skips node_modules.
+    const globOf = (root: string, extra: Partial<GlobWatch> = {}): GlobWatch => ({
+      roots: [{ base: root, depth: Infinity }],
+      counts: (file) => file.endsWith(".ts"),
+      prune: (dir) => basename(dir) === "node_modules",
+      ...extra,
+    });
+    // `#fireOnce` reports on a microtask.
+    const settle = () => new Promise((r) => setImmediate(r));
+    const linux = () => {
+      const fake = fakeWatch();
+      const started = start({ platform: "linux", watch: fake.watch });
+      const emit = (dir: string, name: string) => fake.open(dir)[0]?.emit(name);
+      const ready = (dir: string) =>
+        until(() => fake.open(dir).length === 1, `the watch of ${dir}`);
+      return { ...started, fake, emit, ready };
+    };
+
+    test("a file that appears and counts is a change, and so is one that goes; an edit is not", async () => {
+      const root = temp();
+      const [a, b, md] = ["a.ts", "b.ts", "b.md"].map((n) => join(root, n));
+      writeFileSync(a, "1");
+      const { w, changes, emit, ready } = linux();
+      try {
+        w.addGlob(globOf(root, { files: [a] }));
+        await ready(root);
+        writeFileSync(a, "2");
+        emit(root, "a.ts");
+        writeFileSync(md, "1");
+        emit(root, "b.md");
+        expect(changes).toEqual([]);
+        writeFileSync(b, "1");
+        emit(root, "b.ts");
+        expect(changes).toEqual([b]);
+        rmSync(a);
+        emit(root, "a.ts");
+        expect(changes).toEqual([b, a]);
+        // Back again: it appears.
+        writeFileSync(a, "3");
+        emit(root, "a.ts");
+        expect(changes).toEqual([b, a, a]);
+      } finally {
+        w.close();
+      }
+    });
+
+    test("a new folder is walked to the root's depth, and pruned folders are not", async () => {
+      const root = temp();
+      const { w, changes, emit, ready } = linux();
+      try {
+        w.addGlob(globOf(root, { roots: [{ base: root, depth: 2 }] }));
+        await ready(root);
+        mkdirSync(join(root, "sub", "deep"), { recursive: true });
+        writeFileSync(join(root, "sub", "c.ts"), "1");
+        writeFileSync(join(root, "sub", "deep", "d.ts"), "1");
+        mkdirSync(join(root, "node_modules"));
+        writeFileSync(join(root, "node_modules", "e.ts"), "1");
+        emit(root, "sub");
+        emit(root, "node_modules");
+        // `sub/deep` is a third level.
+        expect(changes).toEqual([join(root, "sub", "c.ts")]);
+        await ready(join(root, "sub"));
+        writeFileSync(join(root, "sub", "f.ts"), "1");
+        emit(join(root, "sub"), "f.ts");
+        expect(changes).toEqual([join(root, "sub", "c.ts"), join(root, "sub", "f.ts")]);
+      } finally {
+        w.close();
+      }
+    });
+
+    test("a listed file already gone, or an unlisted one found, is a change at once", async () => {
+      const root = temp();
+      const [a, gone, fresh] = ["a.ts", "gone.ts", "fresh.ts"].map((n) => join(root, n));
+      writeFileSync(a, "1");
+      writeFileSync(fresh, "1");
+      const { w, changes } = linux();
+      try {
+        w.addGlob(globOf(root, { files: [a, gone] }));
+        await settle();
+        expect(changes.sort()).toEqual([fresh, gone].sort());
+        // Without a list, what the first walk finds is no change.
+        const other = temp();
+        writeFileSync(join(other, "x.ts"), "1");
+        w.addGlob(globOf(other));
+        await settle();
+        expect(changes).toHaveLength(2);
+      } finally {
+        w.close();
+      }
+    });
+
+    test("what was found at once for the run before is not found again", async () => {
+      const root = temp();
+      const fresh = join(root, "fresh.ts");
+      writeFileSync(fresh, "1");
+      const { w, changes, debug } = linux();
+      try {
+        w.addGlob(globOf(root, { files: [] }));
+        await settle();
+        expect(changes).toEqual([fresh]);
+        // The app's list still lacks it: a second restart would not help.
+        w.dropRun();
+        w.addGlob(globOf(root, { files: [] }));
+        await settle();
+        expect(changes).toEqual([fresh]);
+        expect(debug).toContain(`skip ${fresh} (found for the run before)`);
+      } finally {
+        w.close();
+      }
+    });
+
+    test("a root that does not exist yet is walked when it appears, and its files are changes", async () => {
+      const root = temp();
+      const base = join(root, "routes");
+      const { w, changes, emit, ready } = linux();
+      try {
+        w.addGlob(globOf(root, { roots: [{ base, depth: 1 }], files: [] }));
+        await ready(root);
+        mkdirSync(base);
+        writeFileSync(join(base, "a.ts"), "1");
+        emit(root, "routes");
+        await until(() => changes.length === 1, "the new root's file");
+        expect(changes).toEqual([join(base, "a.ts")]);
+      } finally {
+        w.close();
+      }
+    });
+
+    test("dropRun forgets the glob, and an edit between runs is no change", async () => {
+      const root = temp();
+      const [a, b] = [join(root, "a.ts"), join(root, "b.ts")];
+      writeFileSync(a, "1");
+      const { w, changes, emit, ready } = linux();
+      try {
+        w.addGlob(globOf(root, { files: [a] }));
+        await ready(root);
+        w.dropRun();
+        writeFileSync(b, "1");
+        emit(root, "b.ts");
+        writeFileSync(a, "22");
+        // The next run imports a.ts: it read the edit.
+        w.add(a, true);
+        await settle();
+        expect(changes).toEqual([]);
+      } finally {
+        w.close();
+      }
+    });
+
+    test("a file the run also imports keeps that: an edit is a change", async () => {
+      const root = temp();
+      const [a, b] = [join(root, "a.ts"), join(root, "b.ts")];
+      writeFileSync(a, "1");
+      writeFileSync(b, "1");
+      const { w, changes, emit, ready } = linux();
+      try {
+        w.add(a, true);
+        w.addGlob(globOf(root, { files: [a, b] }));
+        // Reported by the run after the glob.
+        w.add(b, true);
+        await ready(root);
+        writeFileSync(a, "22");
+        emit(root, "a.ts");
+        writeFileSync(b, "22");
+        emit(root, "b.ts");
+        expect(changes).toEqual([a, b]);
+      } finally {
+        w.close();
+      }
+    });
+
+    test("--poll: a new file is found by the next walk, and an edit is no change", async () => {
+      const root = temp();
+      const [a, b] = [join(root, "a.ts"), join(root, "b.ts")];
+      writeFileSync(a, "1");
+      const { w, changes } = start({ poll: 10 });
+      try {
+        w.addGlob(globOf(root, { files: [a] }));
+        writeFileSync(a, "22");
+        writeFileSync(b, "1");
+        await until(() => changes.includes(b), "the new file");
+        await new Promise((r) => setTimeout(r, 300));
+        expect(changes).toEqual([b]);
+      } finally {
+        w.close();
+      }
+    });
   });
 
   describe("dropRun", () => {

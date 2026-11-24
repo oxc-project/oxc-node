@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 
-import { expandBraces, makeMatcher } from "../../cli/src/watch/glob.js";
+import {
+  defaultGlobMatcher,
+  expandBraces,
+  globPruneDir,
+  makeMatcher,
+} from "../../cli/src/watch/glob.js";
 
 const CWD = "/proj";
 const dirs = new Set(["/proj/config", "/proj/src"]);
@@ -18,6 +23,40 @@ const matcher = (
     isDir: (p) => dirs.has(p),
     ...extra,
   });
+
+describe("globs the app reports", () => {
+  test("the default matcher: an include matches and no exclude does", () => {
+    const test = defaultGlobMatcher({
+      include: ["/p/routes/*.ts", "/p/api/**/*.ts"],
+      exclude: ["/p/**/*.test.ts"],
+    });
+    expect(test("/p/routes/a.ts")).toBe(true);
+    expect(test("/p/api/v1/b.ts")).toBe(true);
+    expect(test("/p/routes/a.test.ts")).toBe(false);
+    expect(test("/p/routes/a.js")).toBe(false);
+    expect(test("/p/routes/deep/a.ts")).toBe(false);
+  });
+
+  test("the walk skips node_modules and .git, dot folders unless dot, and what --exclude covers", () => {
+    const prune = globPruneDir(matcher([], ["dist/**"]), false, "linux");
+    expect(prune("/proj/src/node_modules")).toBe(true);
+    expect(prune("/proj/.git")).toBe(true);
+    expect(prune("/proj/src/.hidden")).toBe(true);
+    expect(prune("/proj/dist")).toBe(true);
+    expect(prune("/proj/src/routes")).toBe(false);
+    const dot = globPruneDir(matcher([]), true, "linux");
+    expect(dot("/proj/src/.hidden")).toBe(false);
+    expect(dot("/proj/src/node_modules")).toBe(true);
+    expect(dot("/proj/.git")).toBe(true);
+  });
+
+  test("Windows: names in any case", () => {
+    const prune = globPruneDir({ excludesDir: () => false }, false, "win32");
+    expect(prune("C:\\proj\\Node_Modules")).toBe(true);
+    expect(prune("C:\\proj\\.GIT")).toBe(true);
+    expect(prune("C:\\proj\\src")).toBe(false);
+  });
+});
 
 describe("makeMatcher", () => {
   test("* stays in one folder, ** crosses folders", () => {

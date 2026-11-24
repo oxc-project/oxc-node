@@ -219,6 +219,7 @@ for example) can run the same watcher. Both sides have an entry:
  runWatch(argv, options)  ── node <loaderArgs> <node options> <entry> ──▶  installSignalAck()
    @oxc-node/cli/watch                                                     watchSink(), withFlush()
                           ◀── IPC { "watch:import": [url] } ──────────────   @oxc-node/core/watch-report
+                          ◀── IPC { "watch:glob": [glob] } ───────────────
                           ◀── "I" on the OXNODE_SIGNAL_ACK socket ─────────   @oxc-node/core/signal-ack
 ```
 
@@ -231,14 +232,25 @@ process.exitCode = await runWatch(process.argv.slice(2), {
   name: "vpx watch",
   loaderArgs: ["--enable-source-maps", "--require", preloadPath, "--import", hooksURL],
   ignoreDirs: [loaderDir],
+  // Optional: match the globs your loader reports as your loader does.
+  globMatcher: ({ include, exclude = [], dot, nocase }) => {
+    const accepts = picomatch(include, { dot, nocase });
+    const rejects = picomatch(exclude, { dot, nocase });
+    return (file) => accepts(file) && !(exclude.length > 0 && rejects(file));
+  },
 });
 ```
 
-| Option       | Default                                                                          | What it does                                                                                    |
-| ------------ | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `loaderArgs` | `["--enable-source-maps", "--import", "@oxc-node/core/register"]`                | Node.js flags that load your hooks, put before the user's Node.js options                       |
-| `ignoreDirs` | the folder of `@oxc-node/core/register`, if `loaderArgs` is not given, else none | Folders of your loader's own files: Node.js reports them, but they are not watched              |
-| `name`       | `"oxnode watch"`                                                                 | The command in errors, the usage line and `--help`; its first word tags the log lines (`[vpx]`) |
+`globMatcher` gets each `watch:glob` entry once per run, and the test it
+returns gets absolute paths with `/` on every platform. If it throws, the
+watcher logs the error and skips that entry.
+
+| Option        | Default                                                                          | What it does                                                                                    |
+| ------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `loaderArgs`  | `["--enable-source-maps", "--import", "@oxc-node/core/register"]`                | Node.js flags that load your hooks, put before the user's Node.js options                       |
+| `ignoreDirs`  | the folder of `@oxc-node/core/register`, if `loaderArgs` is not given, else none | Folders of your loader's own files: Node.js reports them, but they are not watched              |
+| `name`        | `"oxnode watch"`                                                                 | The command in errors, the usage line and `--help`; its first word tags the log lines (`[vpx]`) |
+| `globMatcher` | `include` and `exclude` matched with `path.matchesGlob`                          | Builds the test for one `watch:glob` entry: `(glob) => (file) => boolean`, see below            |
 
 `runWatch` resolves with the exit code once the watcher stops. Until then it
 handles `SIGINT`, `SIGTERM`, `SIGHUP`, stdin (Return) and the IPC channel of
@@ -267,7 +279,8 @@ const hooks = sink
 ```
 
 `flush(sink, take)` sends what the binding recorded, for code that is not a
-hook (a CommonJS transform). `createRelay(sink, take)` returns a port for hooks
+hook (a CommonJS transform). `sink({ "watch:glob": [glob] })` sends a glob
+report; the sink drops a repeated `watch:import` URL, never a glob report. `createRelay(sink, take)` returns a port for hooks
 registered with `module.register()`, which run on a thread with no IPC.
 From a CommonJS `--require` preload, `require()` of these two entries works on
 Node.js 22.12 and later, as for `@oxc-node/core/importer`.
@@ -283,6 +296,19 @@ What the two sides agree on, for a loader that does not use these entries:
   failed resolve looked for) also has `"oxc-node": true`: it counts even under
   `node_modules`, and is dropped before each rerun. Other messages pass through
   both ways.
+- **Globs.** A loader that expands globs, such as `import.meta.glob`, sends
+  `{ "watch:glob": [glob] }`, so that a matching file that appears or goes
+  restarts the app. Each `glob` has `roots` (`{ base, depth? }`: folders to
+  walk, `depth` 1 for the files in `base` only, absent for no limit),
+  `include` and `exclude` (absolute patterns with `/`), `dot` and `nocase`,
+  and `files` (what the app found). Paths are `file:` URLs or absolute
+  paths. The watcher walks the roots, skipping `node_modules`, `.git`,
+  folders that start with `.` unless `dot` is set, and what `--exclude`
+  covers. A file that `globMatcher` accepts is a change when it appears, and
+  a listed or found one is a change when it goes; an edit is not, unless the
+  app loaded the file. A listed file already gone, or a matching file the
+  first walk finds that is not listed, is a change at once, but not for two
+  runs in a row. The watcher drops the globs before each rerun.
 - **Ctrl+C.** On POSIX, `OXNODE_SIGNAL_ACK` names a unix socket. While the app
   has a `SIGINT` listener of its own, it writes the byte `I` to the socket for
   each `SIGINT` it gets, and the watcher then does not send it a second one.

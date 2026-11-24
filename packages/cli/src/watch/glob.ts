@@ -15,6 +15,8 @@ export interface Matcher {
   literals(): string[];
   /** Whether a walk skips a folder below one of its roots. */
   pruneDir(absDir: string): boolean;
+  /** Whether `--exclude` covers a folder and everything in it: the part of `pruneDir` that globs reported by the app obey too. */
+  excludesDir(absDir: string): boolean;
 }
 
 // `@ + !` mean something only before `(`: scoped packages and `(group)` folders are literal.
@@ -183,6 +185,9 @@ export function makeMatcher(opts: {
 
   const ignoreDirs = (opts.ignoreDirs ?? []).map(norm);
   const excluded = (n: string) => excludes.some((m) => m(n));
+  // `**/dist/**` matches what is inside dist, not dist itself. Only such a `/**` exclude
+  // speaks for every child: `dir/!(keep)` leaves `dir/keep`.
+  const excludesDir = (n: string) => excluded(n) || treeExcludes.some((m) => m(`${n}/__probe__`));
 
   return {
     classify(absPath, source) {
@@ -230,9 +235,48 @@ export function makeMatcher(opts: {
             (n.startsWith(include.base.endsWith("/") ? include.base : `${include.base}/`) &&
               fits(n.slice(include.base.replace(/\/$/, "").length + 1).split("/"), include.parts)),
         );
-      // `**/dist/**` matches what is inside dist, not dist itself. Only such a `/**` exclude
-      // speaks for every child: `dir/!(keep)` leaves `dir/keep`.
-      return skipped || excluded(n) || treeExcludes.some((m) => m(`${n}/__probe__`));
+      return skipped || excludesDir(n);
     },
+    excludesDir: (absDir) => excludesDir(norm(absDir)),
   };
+}
+
+/**
+ * The folders the walk of a glob that the app reported skips: `node_modules` and `.git`, other
+ * folders whose name starts with `.` unless `dot` is set, and what `--exclude` covers.
+ */
+export function globPruneDir(
+  matcher: Pick<Matcher, "excludesDir">,
+  dot: boolean,
+  platform: NodeJS.Platform,
+): (absDir: string) => boolean {
+  const win = platform === "win32";
+  return (absDir) => {
+    const base = (win ? path.win32 : path.posix).basename(absDir);
+    const name = win ? base.toLowerCase() : base;
+    return (
+      name === "node_modules" ||
+      name === ".git" ||
+      (!dot && name.startsWith(".")) ||
+      matcher.excludesDir(absDir)
+    );
+  };
+}
+
+/**
+ * The default test for a glob the app reported, when the embedder gives no `globMatcher`: a
+ * file counts when an `include` pattern matches it and no `exclude` pattern does, by
+ * `path.matchesGlob`. `dot` and `nocase` do not change it.
+ */
+export function defaultGlobMatcher(glob: {
+  include: string[];
+  exclude?: string[];
+}): (file: string) => boolean {
+  const matchesGlob = path.posix.matchesGlob as ((p: string, g: string) => boolean) | undefined;
+  if (typeof matchesGlob !== "function") {
+    throw new Error(`globs need Node.js 22.5 or later (path.matchesGlob)`);
+  }
+  const { include, exclude = [] } = glob;
+  return (file) =>
+    include.some((g) => matchesGlob(file, g)) && !exclude.some((g) => matchesGlob(file, g));
 }

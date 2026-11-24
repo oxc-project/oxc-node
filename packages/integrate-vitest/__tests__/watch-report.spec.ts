@@ -361,6 +361,59 @@ describe("paths a failed resolve looked for", () => {
   });
 });
 
+describe("glob reports", () => {
+  // A loader that expands globs sends them through the same sink. They load no binding.
+  const WATCH_REPORT = pathToFileURL(join(CORE, "watch-report.mjs")).href;
+  const GLOB = {
+    roots: [{ base: "/app/src/routes", depth: 1 }],
+    include: ["/app/src/routes/*.ts"],
+  };
+
+  test("the main thread, a worker and a relay pass each one on, and do not drop a repeat", async () => {
+    const root = project({
+      "main.mjs": [
+        'import { Worker } from "node:worker_threads";',
+        `import { createRelay, watchSink } from ${JSON.stringify(WATCH_REPORT)};`,
+        "const sink = watchSink();",
+        `const glob = ${JSON.stringify(GLOB)};`,
+        'sink({ "watch:glob": [glob] });',
+        'sink({ "watch:glob": [{ ...glob, files: ["/app/src/routes/a.ts"] }] });',
+        'sink({ "watch:glob": [glob] });',
+        'sink({ "watch:import": ["file:///app/x.ts"] });',
+        'sink({ "watch:import": ["file:///app/x.ts"] });',
+        'const worker = new Worker(new URL("./worker.mjs", import.meta.url));',
+        'await new Promise((resolve) => worker.on("exit", resolve));',
+        // The reports travel on a channel of their own; give it a turn after the exit.
+        "await new Promise((resolve) => setTimeout(resolve, 200));",
+        "const port = createRelay(sink, () => []);",
+        'port.postMessage({ "watch:glob": [{ ...glob, include: ["/app/src/relay/*.ts"] }] });',
+        "",
+      ].join("\n"),
+      "worker.mjs": [
+        `import { watchSink } from ${JSON.stringify(WATCH_REPORT)};`,
+        `const glob = ${JSON.stringify(GLOB)};`,
+        'watchSink()({ "watch:glob": [{ ...glob, include: ["/app/src/worker/*.ts"] }] });',
+        "",
+      ].join("\n"),
+    });
+    const { messages, code, stderr } = await spy(root, ["./main.mjs"]);
+    expect(code, stderr).toBe(0);
+    // Node.js reports the modules it loads too.
+    const sent = messages.filter((m) => {
+      const record = m as Record<string, unknown[]>;
+      return "watch:glob" in record || record["watch:import"]?.[0] === "file:///app/x.ts";
+    });
+    expect(sent).toEqual([
+      { "watch:glob": [GLOB] },
+      { "watch:glob": [{ ...GLOB, files: ["/app/src/routes/a.ts"] }] },
+      { "watch:glob": [GLOB] },
+      { "watch:import": ["file:///app/x.ts"] },
+      { "watch:glob": [{ ...GLOB, include: ["/app/src/worker/*.ts"] }] },
+      { "watch:glob": [{ ...GLOB, include: ["/app/src/relay/*.ts"] }] },
+    ]);
+  });
+});
+
 describe("the binding's watch exports", () => {
   // The binding glue is edited by hand, not regenerated; keep every entry and
   // its types in step.

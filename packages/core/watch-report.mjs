@@ -1,7 +1,9 @@
 // Watch mode (`node --watch`, `oxnode watch`) restarts on the files the child
 // reports over IPC as `{ "watch:import": [url] }`. Node.js reports the modules
 // it loads; this reports what only oxc-node knows: the tsconfig files it read
-// and the paths a failed resolve looked for (issue #450).
+// and the paths a failed resolve looked for (issue #450). A loader that expands
+// globs sends `{ "watch:glob": [...] }` through the same sink, for files that
+// appear later.
 //
 // Public as `@oxc-node/core/watch-report`, for a loader of its own built on the
 // binding (issue #871). It loads no binding: `take` is the caller's
@@ -14,7 +16,7 @@ const WATCH_CHANNEL = "@oxc-node/core:watch-deps";
  * Where this thread sends its reports, or `null` when nobody is watching. With
  * `null` nothing is wrapped, opened or listened to.
  *
- * @returns {((message: { "watch:import": string[] }) => void) | null}
+ * @returns {((message: { "watch:import": string[] } | { "watch:glob": object[] }) => void) | null}
  */
 export function watchSink() {
   if (!process.env.WATCH_REPORT_DEPENDENCIES) {
@@ -27,11 +29,17 @@ export function watchSink() {
     }
     const seen = new Set();
     const send = (message) => {
-      const url = message?.["watch:import"]?.[0];
-      if (typeof url !== "string" || seen.has(url) || !process.connected) {
+      if (!process.connected) {
         return;
       }
-      seen.add(url);
+      // A glob report goes as it is: the files it lists are those of this run.
+      if (!Array.isArray(message?.["watch:glob"])) {
+        const url = message?.["watch:import"]?.[0];
+        if (typeof url !== "string" || seen.has(url)) {
+          return;
+        }
+        seen.add(url);
+      }
       try {
         // The callback keeps a failed send from becoming an 'error' event.
         process.send(message, () => {});

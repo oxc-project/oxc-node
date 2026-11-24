@@ -18,6 +18,26 @@ export interface WatchOptions {
    * word tags the log lines. Default: `"oxnode watch"`.
    */
   name?: string;
+  /**
+   * Builds the test for one entry of a `watch:glob` report: whether a file counts for it. `file`
+   * is an absolute path with `/` on every platform, its case kept. Default: an `include`
+   * pattern matches it and no `exclude` pattern does, by `path.matchesGlob`.
+   */
+  globMatcher?: (glob: WatchGlob) => (file: string) => boolean;
+}
+
+/** One entry of a `watch:glob` report, with its paths resolved. */
+export interface WatchGlob {
+  /** Folders to walk. `depth` counts levels below `base` (1: the files in it); absent, no limit. */
+  roots: { base: string; depth?: number }[];
+  /** Absolute patterns with `/`. */
+  include: string[];
+  exclude?: string[];
+  /** Match files whose name starts with `.`, and walk such folders. */
+  dot?: boolean;
+  nocase?: boolean;
+  /** The files that existed when the app listed them. */
+  files?: string[];
 }
 
 /**

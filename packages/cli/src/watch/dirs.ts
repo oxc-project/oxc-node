@@ -111,11 +111,40 @@ interface Root {
   missing: boolean;
 }
 
+/**
+ * A glob the app reported, watched until the next `dropRun`. Only presence counts: a file that
+ * appears in its roots is a change, and so is one that disappears; an edit is not.
+ */
+export interface GlobWatch {
+  /** Folders to walk. `depth` counts levels below `base`: 1 is the files in it. */
+  roots: { base: string; depth: number }[];
+  /** The files that existed when the app listed them. */
+  files?: string[];
+  /** Whether a file counts for the glob. */
+  counts(file: string): boolean;
+  /** Whether the walk skips a folder. */
+  prune(absDir: string): boolean;
+}
+
+interface GlobRoot {
+  glob: GlobWatch;
+  base: string;
+  depth: number;
+  missing: boolean;
+}
+
+interface GlobWalked {
+  dir: string;
+  /** The globs that walked this folder, each at its own level. */
+  walks: { glob: GlobWatch; level: number; depth: number }[];
+}
+
 interface Entry {
   path: string;
   shown: string;
   sig: Sig;
-  own?: "static" | "run";
+  /** `glob`: present for a glob the app reported, which only its presence matters to. */
+  own?: "static" | "run" | "glob";
   target?: string;
   /** The keys of the links between a link and its target, watched too, as the target is. */
   hops?: string[];
@@ -189,6 +218,13 @@ export class DirWatcher {
   #byDir = new Map<string, Set<string>>();
   #roots: Root[] = [];
   #walked = new Map<string, WalkedDir>();
+  // The globs the current run reported, and the folders they walked.
+  #globRoots: GlobRoot[] = [];
+  #globWalked = new Map<string, GlobWalked>();
+  // The files a glob report found changed at once, for this run and the one before: a run that
+  // finds the same again must not restart forever.
+  #fired = new Set<string>();
+  #firedBefore = new Set<string>();
   #handles = new Map<string, Handle>();
   // The first missing folder below each placeholder watch: an event for it means "look again".
   #awaited = new Set<string>();
@@ -251,19 +287,27 @@ export class DirWatcher {
     const sigs = new Map<string, Sig>();
     this.#dropping = { sigs, dirs };
     for (const [k, f] of this.#files) {
-      if (f.own !== "run") continue;
+      if (f.own !== "run" && f.own !== "glob") continue;
       // The next run may not report a file it did not find (a deleted tsconfig.json is looked for,
       // not read), so creating it again must still restart. A deleted import is reported again
       // by the failed resolve, while the app still imports it.
       if (f.gone && f.keepGone) continue;
+      const glob = f.own === "glob";
       f.own = undefined;
       const [link] = f.links ?? [];
       if (link !== undefined) {
         f.shown = this.#files.get(link)?.path ?? f.shown;
         continue;
       }
-      this.#remove(k);
+      // An edit to a file only a glob wanted is no change, between runs either.
+      this.#remove(k, !glob);
     }
+    // The next run reports its globs again: their folders stay watched until then.
+    for (const w of this.#globWalked.values()) dirs.add(w.dir);
+    this.#globRoots = [];
+    this.#globWalked.clear();
+    this.#firedBefore = this.#fired;
+    this.#fired = new Set();
     this.#dropping = undefined;
     this.#droppedSigs = sigs;
     // The folders dropped the time before may be unneeded now.
@@ -279,7 +323,7 @@ export class DirWatcher {
     if (this.#droppedSigs.has(k)) {
       const before = this.#droppedSigs.get(k)!;
       this.#droppedSigs.delete(k);
-      if (changed(before, entry.sig, false)) {
+      if (own !== "glob" && changed(before, entry.sig, false)) {
         queueMicrotask(() => this.#closed || this.#o.onChange(shown));
       }
     }
@@ -306,6 +350,141 @@ export class DirWatcher {
     // Now, before the app starts: what arrives from here on is a change, found when the watch opens.
     this.#walkRoot(root);
     if (this.#o.poll === false) this.#scheduleSync();
+  }
+
+  /**
+   * Watch a glob the app reported, until `dropRun`. A file that appears in its roots and counts
+   * is a change, and so is one of its files that disappears. An edit is not, unless the file is
+   * wanted for itself too. `files` is what the app found: a listed file already gone, or a
+   * counting file the first walk finds that is not listed, is a change at once.
+   */
+  addGlob(glob: GlobWatch): void {
+    if (this.#closed) return;
+    this.#o.debug(`glob ${glob.roots.map((r) => r.base).join(" ")}`);
+    for (const file of glob.files ?? []) {
+      if (!this.#inGlobRoots(glob, file)) continue;
+      const k = this.#key(file);
+      const have = this.#files.get(k);
+      if (have && have.own === undefined) have.own = "glob";
+      const entry = have ?? this.#put(file, file, "glob");
+      if (sigOf(file) === null) this.#fireOnce(k, entry.shown);
+    }
+    for (const { base, depth } of glob.roots) {
+      const root = { glob, base, depth, missing: false };
+      this.#globRoots.push(root);
+      this.#walkGlobRoot(root, glob.files !== undefined);
+    }
+    if (this.#o.poll === false) this.#scheduleSync();
+  }
+
+  // A listed file below one of the glob's roots, and in neither `node_modules` nor `.git` there.
+  #inGlobRoots(glob: GlobWatch, file: string): boolean {
+    return glob.roots.some(({ base }) => {
+      const rel = path.relative(base, file);
+      if (rel === "" || path.isAbsolute(rel)) return false;
+      const parts = rel.split(/[\\/]/).map((p) => (this.#win ? p.toLowerCase() : p));
+      return parts[0] !== ".." && !parts.some((p) => p === "node_modules" || p === ".git");
+    });
+  }
+
+  // `listed`: the first walk, for a glob that came with its files. What it finds is new since the
+  // app listed them. A root that shows up later is new in any case.
+  #walkGlobRoot(root: GlobRoot, listed = false): boolean {
+    if (!isDir(root.base)) {
+      root.missing = true;
+      return false;
+    }
+    const once = listed && !root.missing;
+    this.#globWalk(root.glob, root.base, 0, root.depth, root.missing || once, once);
+    root.missing = false;
+    return true;
+  }
+
+  #globWalk(
+    glob: GlobWatch,
+    dir: string,
+    level: number,
+    depth: number,
+    fire: boolean,
+    once: boolean,
+  ) {
+    const k = this.#key(dir);
+    const walked = this.#globWalked.get(k) ?? { dir, walks: [] };
+    this.#globWalked.set(k, walked);
+    const seen = walked.walks.find((w) => w.glob === glob);
+    if (seen && seen.depth - seen.level >= depth - level) return;
+    if (seen) Object.assign(seen, { level, depth });
+    else walked.walks.push({ glob, level, depth });
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      // Linked folders are not entered, as for `--include` roots.
+      if (e.isDirectory()) {
+        if (level + 1 < depth && !glob.prune(full)) {
+          this.#globWalk(glob, full, level + 1, depth, fire, once);
+        }
+      } else {
+        this.#globFound(glob, full, fire, once);
+      }
+    }
+  }
+
+  #globFound(glob: GlobWatch, file: string, fire: boolean, once: boolean) {
+    const k = this.#key(file);
+    const have = this.#files.get(k);
+    if (have) {
+      // Wanted already, it keeps that behavior. Only a link's target so far: the glob's now too.
+      if (have.own === undefined) have.own = "glob";
+      return;
+    }
+    try {
+      if (!statSync(file).isFile()) return;
+    } catch {
+      return;
+    }
+    if (!glob.counts(file)) return;
+    this.#put(file, file, "glob");
+    if (!fire) return;
+    if (once) this.#fireOnce(k, file);
+    else this.#o.onChange(file);
+  }
+
+  // A change found when a glob is reported. The run before found it too: then the app cannot
+  // see it (its list and the glob disagree), and another restart would find it again.
+  #fireOnce(k: string, shown: string) {
+    if (this.#firedBefore.has(k)) {
+      this.#o.debug(`skip ${shown} (found for the run before)`);
+      return;
+    }
+    this.#fired.add(k);
+    queueMicrotask(() => this.#closed || this.#o.onChange(shown));
+  }
+
+  #globRescan(walked: GlobWalked) {
+    let entries;
+    try {
+      entries = readdirSync(walked.dir);
+    } catch {
+      return;
+    }
+    for (const name of entries) this.#onGlobEntry(walked, path.join(walked.dir, name));
+  }
+
+  #onGlobEntry(walked: GlobWalked, full: string) {
+    const dir = isRealDir(full);
+    for (const w of walked.walks) {
+      if (!dir) {
+        this.#globFound(w.glob, full, true, false);
+      } else if (w.level + 1 < w.depth && !w.glob.prune(full)) {
+        this.#globWalk(w.glob, full, w.level + 1, w.depth, true, false);
+        this.#scheduleSync();
+      }
+    }
   }
 
   close(): void {
@@ -420,12 +599,13 @@ export class DirWatcher {
     else target.shown = this.#files.get(rest)?.path ?? target.shown;
   }
 
-  #remove(k: string) {
+  // `keepSig`: a change made before the next run reports the file again is a change.
+  #remove(k: string, keepSig = true) {
     const entry = this.#files.get(k);
     if (!entry) return;
     this.#files.delete(k);
     if (this.#dropping) {
-      this.#dropping.sigs.set(k, entry.sig);
+      if (keepSig) this.#dropping.sigs.set(k, entry.sig);
       this.#dropping.dirs.add(path.dirname(entry.path));
     }
     for (const h of entry.hops ?? []) this.#release(h, k);
@@ -447,6 +627,11 @@ export class DirWatcher {
       // Known files are skipped, so only new ones count as changes.
       root.missing = true;
       this.#walkRoot(root);
+    }
+    this.#globWalked.clear();
+    for (const root of this.#globRoots) {
+      root.missing = true;
+      this.#walkGlobRoot(root);
     }
   }
 
@@ -477,12 +662,19 @@ export class DirWatcher {
     for (const [k, w] of this.#walked) {
       if (!existsSync(w.dir)) this.#walked.delete(k);
     }
+    for (const [k, w] of this.#globWalked) {
+      if (!existsSync(w.dir)) this.#globWalked.delete(k);
+    }
     for (const root of this.#roots) {
       if (!this.#walkRoot(root)) place(root.base);
+    }
+    for (const root of this.#globRoots) {
+      if (!this.#walkGlobRoot(root)) place(root.base);
     }
     for (const f of this.#files.values()) place(path.dirname(f.path));
     for (const d of this.#dropped) place(d);
     for (const [k, w] of this.#walked) needed.set(k, w.dir);
+    for (const [k, w] of this.#globWalked) needed.set(k, w.dir);
     this.#awaited = awaited;
 
     const now = Date.now();
@@ -499,7 +691,7 @@ export class DirWatcher {
       if (state === "gone") this.#gone(h);
       if (needed.has(k)) {
         h.idle = undefined;
-        if (state === "replaced") this.#refresh(k, h);
+        if (state === "replaced") this.#refresh(h);
       } else {
         // A run that fails early reports fewer files, and the next one reports them again: a
         // restart or a folder moved for a moment must not close and open its watches each time.
@@ -525,9 +717,17 @@ export class DirWatcher {
     // start, or while a folder was missing or replaced.
     for (const dir of fresh) {
       this.#checkDir(dir, false);
-      const walked = this.#walked.get(this.#key(dir));
-      if (walked) this.#rescan(walked);
+      this.#rescanAll(dir);
     }
+  }
+
+  // Look for new entries in a walked folder, for the `--include` roots and the globs that walked it.
+  #rescanAll(dir: string) {
+    const k = this.#key(dir);
+    const walked = this.#walked.get(k);
+    if (walked) this.#rescan(walked);
+    const globWalked = this.#globWalked.get(k);
+    if (globWalked) this.#globRescan(globWalked);
   }
 
   /**
@@ -550,12 +750,11 @@ export class DirWatcher {
   // macOS: a folder replaced under its watch, by `rm -rf` and `mkdir` or a rename over it. The
   // watch reports the new folder's files from now on, but maybe not those already in it: a folder
   // renamed into place is named in an event for its parent only.
-  #refresh(k: string, h: Handle) {
+  #refresh(h: Handle) {
     h.id = idOf(h.dir);
     this.#o.debug(`replaced ${h.dir}`);
     this.#checkDir(h.dir, false);
-    const walked = this.#walked.get(k);
-    if (walked) this.#rescan(walked);
+    this.#rescanAll(h.dir);
   }
 
   // macOS: a folder found missing keeps its watch until it is back or `linger` has passed. Its
@@ -637,8 +836,7 @@ export class DirWatcher {
     if (name === null) {
       // No name (allowed by Node): any file here may have changed, or a new one arrived.
       this.#checkDir(dir);
-      const walked = this.#walked.get(this.#key(dir));
-      if (walked) this.#rescan(walked);
+      this.#rescanAll(dir);
       this.#scheduleSync();
       return;
     }
@@ -649,8 +847,15 @@ export class DirWatcher {
     } else {
       const walked = this.#walked.get(this.#key(dir));
       if (walked) this.#onWalkedEntry(walked, full);
+      const globWalked = this.#globWalked.get(this.#key(dir));
+      if (globWalked) this.#onGlobEntry(globWalked, full);
     }
-    if (this.#awaited.has(k) || this.#handles.has(k) || this.#walked.has(k)) {
+    if (
+      this.#awaited.has(k) ||
+      this.#handles.has(k) ||
+      this.#walked.has(k) ||
+      this.#globWalked.has(k)
+    ) {
       this.#scheduleSync();
     }
     // An event named after the folder, and not for a child of that name, is for the folder itself:
@@ -675,7 +880,7 @@ export class DirWatcher {
       this.#drop(dk, h);
       this.#scheduleSync();
     } else if (state === "replaced") {
-      this.#refresh(dk, h);
+      this.#refresh(h);
       this.#scheduleSync();
     } else if (state === "gone") {
       this.#gone(h);
@@ -704,6 +909,15 @@ export class DirWatcher {
   #check(k: string, event = true) {
     const entry = this.#files.get(k)!;
     const next = sigOf(entry.path);
+    if (entry.own === "glob") {
+      // Only a glob wants it: a file that appears or disappears is a change, an edit is not.
+      const was = entry.sig !== null;
+      entry.sig = next;
+      if (was === (next !== null)) return;
+      entry.gone = was;
+      this.#o.onChange(entry.shown);
+      return;
+    }
     if (!changed(entry.sig, next, event)) {
       // A link stats as its target, so look at the link itself: it may point at another file
       // with the same stat (a hard link of it), or, its target deleted, be gone or pointed at
