@@ -317,8 +317,9 @@ What the two sides agree on, for a loader that does not use these entries:
   covers. A file that `globMatcher` accepts is a change when it appears, and
   a listed or found one is a change when it goes; an edit is not, unless the
   app loaded the file. A listed file already gone, or a matching file the
-  first walk finds that is not listed, is a change at once, but not for two
-  runs in a row. The watcher drops the globs before each rerun.
+  first walk finds that is not listed, is a change at once, but not again in
+  the next run for the same file in the same state. The watcher drops the
+  globs before each rerun.
 - **Ctrl+C.** On POSIX, `OXNODE_SIGNAL_ACK` names a unix socket. While the app
   has a `SIGINT` listener of its own, it writes the byte `I` to the socket for
   each `SIGINT` it gets, and the watcher then does not send it a second one.

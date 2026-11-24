@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, describe, expect, test } from "vitest";
 
@@ -167,7 +167,9 @@ describe("errors", () => {
       `Failed to transform ${pathToFileURL(join(root, "server.ts")).href}:`,
     );
     expect(result.stderr).toContain("x Invalid glob import syntax: Could only use literals");
-    expect(result.stderr).toContain(`${join(root, "server.ts")}:2:33]`);
+    // `join_errors` prints the path with `/` on Windows.
+    const framed = join(root, "server.ts").replaceAll(sep, "/");
+    expect(result.stderr).toContain(`${framed}:2:33]`);
     expect(result.stderr).toContain("2 | const routes = import.meta.glob(pattern);");
   });
 

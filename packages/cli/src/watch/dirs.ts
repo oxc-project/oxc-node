@@ -367,7 +367,7 @@ export class DirWatcher {
       const have = this.#files.get(k);
       if (have && have.own === undefined) have.own = "glob";
       const entry = have ?? this.#put(file, file, "glob");
-      if (sigOf(file) === null) this.#fireOnce(k, entry.shown);
+      if (sigOf(file) === null) this.#fireOnce(k, entry.shown, false);
     }
     for (const { base, depth } of glob.roots) {
       const root = { glob, base, depth, missing: false };
@@ -450,18 +450,20 @@ export class DirWatcher {
     if (!glob.counts(file)) return;
     this.#put(file, file, "glob");
     if (!fire) return;
-    if (once) this.#fireOnce(k, file);
+    if (once) this.#fireOnce(k, file, true);
     else this.#o.onChange(file);
   }
 
   // A change found when a glob is reported. The run before found it too: then the app cannot
   // see it (its list and the glob disagree), and another restart would find it again.
-  #fireOnce(k: string, shown: string) {
-    if (this.#firedBefore.has(k)) {
+  #fireOnce(k: string, shown: string, exists: boolean) {
+    // The state counts too: a file found new for one run and gone for the next changed twice.
+    const key = `${exists ? "+" : "-"}${k}`;
+    if (this.#firedBefore.has(key)) {
       this.#o.debug(`skip ${shown} (found for the run before)`);
       return;
     }
-    this.#fired.add(k);
+    this.#fired.add(key);
     queueMicrotask(() => this.#closed || this.#o.onChange(shown));
   }
 

@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, describe, expect, test } from "vitest";
 
@@ -369,6 +369,9 @@ describe("glob reports", () => {
     roots: [{ base: "/app/src/routes", depth: 1 }],
     include: ["/app/src/routes/*.ts"],
   };
+  // `file:///app` has no drive, so Windows cannot turn it into a path.
+  const APP = pathToFileURL(resolve("/app")).href;
+  const url = (name: string) => `${APP}/${name}`;
 
   test("the main thread, a worker and a relay pass each one on, and do not drop a repeat", async () => {
     const root = project({
@@ -380,8 +383,8 @@ describe("glob reports", () => {
         'sink({ "watch:glob": [glob] });',
         'sink({ "watch:glob": [{ ...glob, files: ["/app/src/routes/a.ts"] }] });',
         'sink({ "watch:glob": [glob] });',
-        'sink({ "watch:import": ["file:///app/x.ts"] });',
-        'sink({ "watch:import": ["file:///app/x.ts"] });',
+        `sink({ "watch:import": [${JSON.stringify(url("x.ts"))}] });`,
+        `sink({ "watch:import": [${JSON.stringify(url("x.ts"))}] });`,
         'const worker = new Worker(new URL("./worker.mjs", import.meta.url));',
         'await new Promise((resolve) => worker.on("exit", resolve));',
         // The reports travel on a channel of their own; give it a turn after the exit.
@@ -402,13 +405,13 @@ describe("glob reports", () => {
     // Node.js reports the modules it loads too.
     const sent = messages.filter((m) => {
       const record = m as Record<string, unknown[]>;
-      return "watch:glob" in record || record["watch:import"]?.[0] === "file:///app/x.ts";
+      return "watch:glob" in record || record["watch:import"]?.[0] === url("x.ts");
     });
     expect(sent).toEqual([
       { "watch:glob": [GLOB] },
       { "watch:glob": [{ ...GLOB, files: ["/app/src/routes/a.ts"] }] },
       { "watch:glob": [GLOB] },
-      { "watch:import": ["file:///app/x.ts"] },
+      { "watch:import": [url("x.ts")] },
       { "watch:glob": [{ ...GLOB, include: ["/app/src/worker/*.ts"] }] },
       { "watch:glob": [{ ...GLOB, include: ["/app/src/relay/*.ts"] }] },
     ]);
@@ -423,10 +426,10 @@ describe("glob reports", () => {
         "const sink = watchSink();",
         `const GLOB = ${JSON.stringify(GLOB)};`,
         "const glob = (name) => ({ ...GLOB, include: [`/app/src/${name}/*.ts`] });",
-        'flush(sink, () => ["file:///app/a.ts"], () => [glob("main"), glob("main2")]);',
+        `flush(sink, () => [${JSON.stringify(url("a.ts"))}], () => [glob("main"), glob("main2")]);`,
         // Nothing to send: no message, and no `takeGlobs` at all is fine too.
         "flush(sink, () => [], () => []);",
-        'flush(sink, () => ["file:///app/b.ts"]);',
+        `flush(sink, () => [${JSON.stringify(url("b.ts"))}]);`,
         'withFlush(() => {}, sink, () => [], () => [glob("hook")])();',
         'const worker = new Worker(new URL("./worker.mjs", import.meta.url));',
         'await new Promise((resolve) => worker.on("exit", resolve));',
@@ -448,13 +451,13 @@ describe("glob reports", () => {
     const sent = messages.filter((m) => {
       const record = m as Record<string, unknown[]>;
       return (
-        "watch:glob" in record || record["watch:import"]?.[0]?.toString().startsWith("file:///app/")
+        "watch:glob" in record || record["watch:import"]?.[0]?.toString().startsWith(`${APP}/`)
       );
     });
     expect(sent).toEqual([
-      { "watch:import": ["file:///app/a.ts"], "oxc-node": true },
+      { "watch:import": [url("a.ts")], "oxc-node": true },
       { "watch:glob": [glob("main"), glob("main2")], "oxc-node": true },
-      { "watch:import": ["file:///app/b.ts"], "oxc-node": true },
+      { "watch:import": [url("b.ts")], "oxc-node": true },
       { "watch:glob": [glob("hook")], "oxc-node": true },
       { "watch:glob": [glob("worker")], "oxc-node": true },
       { "watch:glob": [glob("relay")], "oxc-node": true },

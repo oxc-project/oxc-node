@@ -1373,6 +1373,26 @@ describe("DirWatcher", () => {
       }
     });
 
+    test("a file found new at once, then gone at the next report, is a change both times", async () => {
+      const root = temp();
+      const fresh = join(root, "fresh.ts");
+      writeFileSync(fresh, "1");
+      const { w, changes } = linux();
+      try {
+        w.addGlob(globOf(root, { files: [] }));
+        await settle();
+        expect(changes).toEqual([fresh]);
+        // Removed after the next run listed it, before its report arrived.
+        w.dropRun();
+        rmSync(fresh);
+        w.addGlob(globOf(root, { files: [fresh] }));
+        await settle();
+        expect(changes).toEqual([fresh, fresh]);
+      } finally {
+        w.close();
+      }
+    });
+
     test("a root that does not exist yet is walked when it appears, and its files are changes", async () => {
       const root = temp();
       const base = join(root, "routes");
