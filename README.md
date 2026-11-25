@@ -585,7 +585,8 @@ and `\`. The `picomatch` forms that Vite reads are rewritten to it first:
 classes (`[[:digit:]]`). Without `exhaustive`, a wildcard does not take a name
 that starts with `.`, but a part of the pattern that spells the `.` does
 (`./*/.config/*.ts`), as in `picomatch`. Only a direct call expands:
-`const glob = import.meta.glob` stays as written.
+`const glob = import.meta.glob` stays as written. As in Vite, which finds the calls in the
+source text, `import.meta.gl\u006fb()` with an escape is no glob call.
 
 A call that cannot be expanded fails the transform, with the source line, as a
 syntax error does:

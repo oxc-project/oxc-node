@@ -67,6 +67,7 @@ fn expand_calls<'a>(
     let prefix = free_prefix(program, source);
     let mut expander = Expander {
         allocator,
+        source,
         importer_dir: parent(&importer),
         importer: &importer,
         prefix,
@@ -158,6 +159,8 @@ enum Form {
 
 struct Expander<'a, 'i> {
     allocator: &'a Allocator,
+    /// The importer's source, which the spans point into.
+    source: &'i str,
     /// The importer, absolute and with `/`.
     importer: &'i str,
     importer_dir: &'i str,
@@ -179,7 +182,7 @@ struct Expander<'a, 'i> {
 impl<'a> VisitMut<'a> for Expander<'a, '_> {
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         if let Expression::CallExpression(call) = expression {
-            if is_glob_call(call) {
+            if is_glob_call(call, self.source) {
                 if let Some(replacement) = self.expand_call(call, Form::Map) {
                     *expression = replacement;
                 }
@@ -187,7 +190,7 @@ impl<'a> VisitMut<'a> for Expander<'a, '_> {
             }
             if let Some(form) = keys_or_values(call)
                 && let Some(Argument::CallExpression(glob)) = call.arguments.first()
-                && is_glob_call(glob)
+                && is_glob_call(glob, self.source)
             {
                 if let Some(replacement) = self.expand_call(glob, form) {
                     call.arguments[0] = Argument::from(replacement);
@@ -207,12 +210,16 @@ impl<'a> VisitMut<'a> for Expander<'a, '_> {
 }
 
 /// `import.meta.glob(...)`: a call that is not optional, of the static member `glob` of
-/// `import.meta`, with no parentheses around the callee.
-fn is_glob_call(call: &CallExpression<'_>) -> bool {
+/// `import.meta`, with no parentheses around the callee. The source must spell `glob` as
+/// written, as Vite finds the calls in the source text: `import.meta.glob()` stays a
+/// call of a missing function, whatever else the source contains.
+fn is_glob_call(call: &CallExpression<'_>, source: &str) -> bool {
     !call.optional
         && matches!(&call.callee, Expression::StaticMemberExpression(member)
             if !member.optional
                 && member.property.name.as_str() == "glob"
+                && source.get(member.property.span.start as usize..member.property.span.end as usize)
+                    == Some("glob")
                 && matches!(member.object, Expression::ImportMeta(_)))
 }
 
@@ -1818,6 +1825,22 @@ mod tests {
         // Characters a file name cannot hold on every platform.
         assert_eq!(url_specifier("./a?b\\c\td\ne\rf.ts"), "./a%3Fb%5Cc%09d%0Ae%0Df.ts");
         assert_eq!(url_specifier("./é f.ts"), "./é f.ts");
+    }
+
+    // As in Vite, which finds the calls in the source text, an escaped `glob` is no glob call,
+    // and an unrelated `glob` elsewhere in the source does not change that.
+    #[test]
+    fn an_escaped_glob_is_no_glob_call() {
+        let fixture = Fixture::new("escaped-glob", &["r/a.ts"]);
+        let main = fixture.path("main.mjs");
+        for source in [
+            "const m = import.meta.gl\\u006fb('./r/*.ts');",
+            "/* glob */ const m = import.meta.gl\\u006fb('./r/*.ts');",
+            "const n = import.meta.glob('./r/*.ts');\nconst m = import.meta.gl\\u006fb('./r/*.ts');",
+        ] {
+            let out = code(&main, source);
+            assert!(out.contains("import.meta.glob(\"./r/*.ts\")"), "{source}: {out}");
+        }
     }
 
     // A name spelled with a `\u` escape is not in the source text as the name.
