@@ -19,7 +19,7 @@ use oxc::{
     allocator::{Allocator, TakeIn},
     ast::ast::{
         Argument, ArrayExpressionElement, BindingIdentifier, CallExpression, Expression,
-        IdentifierReference, ImportMeta, ObjectPropertyKind, Program, PropertyKey, PropertyKind,
+        IdentifierReference, ImportMeta, ObjectPropertyKind, Program, PropertyKind,
     },
     ast_visit::{Visit, VisitMut, walk_mut},
     diagnostics::OxcDiagnostic,
@@ -579,7 +579,9 @@ fn parse_options(argument: &Argument<'_>, errors: &mut Vec<OxcDiagnostic>) -> Gl
             errors.push(not_static(property.span()));
             continue;
         };
-        if property.computed
+        // A computed key, `[a]: 1`, starts after the `[` that its property starts with. The spans
+        // tell it in every oxc version: some have a `computed` field, others an expression key.
+        if property.key.span().start != property.span.start
             || property.shorthand
             || property.method
             || !matches!(property.kind, PropertyKind::Init)
@@ -587,20 +589,12 @@ fn parse_options(argument: &Argument<'_>, errors: &mut Vec<OxcDiagnostic>) -> Gl
             errors.push(not_static(property.span));
             continue;
         }
-        let key = match &property.key {
-            PropertyKey::StaticIdentifier(identifier) => identifier.name.as_str().to_owned(),
-            PropertyKey::StringLiteral(string) => match string.value.as_str() {
-                Some(value) => value.to_owned(),
-                None => {
-                    errors.push(not_static(property.span));
-                    continue;
-                }
-            },
-            PropertyKey::NumericLiteral(number) => number.value.to_string(),
-            _ => {
-                errors.push(not_static(property.span));
-                continue;
-            }
+        // An identifier, a string or a number; `static_name` reads each in every oxc version.
+        let Some(key) =
+            property.key.static_name().and_then(|name| name.as_str().map(str::to_owned))
+        else {
+            errors.push(not_static(property.span));
+            continue;
         };
         if key == "query" || key == "as" {
             errors.push(
