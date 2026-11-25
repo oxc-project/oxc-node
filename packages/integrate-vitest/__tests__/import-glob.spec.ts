@@ -152,6 +152,37 @@ describe("the forms", () => {
     // `a.test.ts` sorts before `a.ts`.
     expect(result.stdout).toBe("[ './a.ts', './deep/b.ts' ] b\n2 test\n");
   });
+
+  // A specifier is a URL: without encoding, `#part.ts` would be a fragment, and `%20` would
+  // load `name part.ts`. The keys stay the file names.
+  test("a file name with URL characters loads its own file, eager and lazy", () => {
+    const root = project({
+      "package.json": ESM,
+      "routes/name#part.ts": 'export default "hash";\n',
+      "routes/name%20part.ts": 'export default "percent";\n',
+      "routes/name part.ts": 'export default "space";\n',
+      "eager.ts":
+        "const m = import.meta.glob('./routes/*.ts', { import: 'default', eager: true });\n" +
+        "console.log(JSON.stringify(m));\n",
+      "lazy.ts": [
+        "const m = import.meta.glob('./routes/*.ts', { import: 'default' });",
+        "const out: Record<string, unknown> = {};",
+        "for (const [key, load] of Object.entries(m)) out[key] = await load();",
+        "console.log(JSON.stringify(out));",
+        "",
+      ].join("\n"),
+    });
+    const expected = JSON.stringify({
+      "./routes/name part.ts": "space",
+      "./routes/name#part.ts": "hash",
+      "./routes/name%20part.ts": "percent",
+    });
+    for (const entry of ["./eager.ts", "./lazy.ts"]) {
+      const result = run(root, entry);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim(), entry).toBe(expected);
+    }
+  });
 });
 
 describe("errors", () => {

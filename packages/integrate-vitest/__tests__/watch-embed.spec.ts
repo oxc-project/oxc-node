@@ -331,6 +331,38 @@ ${KEEP}`;
     await o.waitFor(/^RUN a\.mjs\n/m, 20_000, from);
     expect(o.runs()).toEqual(["a.mjs", "a.mjs,b.mjs", "a.mjs"]);
   });
+
+  test("--exclude holds for a file the report lists: removing it restarts nothing", async () => {
+    const root = project(
+      {
+        "package.json": JSON.stringify({ private: true, type: "module" }),
+        "embed.mjs": EMBED_GLOB,
+        "main.mjs": MAIN,
+        "routes/a.mjs": "export default 1;\n",
+        "routes/b.mjs": "export default 2;\n",
+        "routes/skip.mjs": "export default 3;\n",
+      },
+      { linkCli: true },
+    );
+    const routes = join(root, "routes");
+    const o = startOxnode(["--no-clear-screen", "--exclude", "routes/skip.mjs", "main.mjs"], root, {
+      script: join(root, "embed.mjs"),
+    });
+    await o.waitFor(/^RUN a\.mjs,b\.mjs,skip\.mjs\n/m);
+    await o.waitDebug(new RegExp(`^glob ${escape(routes)}$`, "m"));
+    await o.waitDebug(new RegExp(`^ready ${escape(routes)}$`, "m"));
+    // The listed file is not even watched.
+    expect(o.stderr()).not.toMatch(new RegExp(`^watch ${escape(join(routes, "skip.mjs"))}$`, "m"));
+
+    rmSync(join(routes, "skip.mjs"));
+    await new Promise((r) => setTimeout(r, 1000));
+    // A removal that counts, to see that the one before did not.
+    const from = o.mark();
+    rmSync(join(routes, "b.mjs"));
+    await o.waitFor(/^RUN a\.mjs\n/m, 20_000, from);
+    expect(o.runs()).toEqual(["a.mjs,b.mjs,skip.mjs", "a.mjs"]);
+    expect(o.stdout()).not.toMatch(/change in \.[\\/]routes[\\/]skip\.mjs/);
+  });
 });
 
 function escape(text: string) {

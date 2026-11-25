@@ -18,10 +18,10 @@ use std::{
 use oxc::{
     allocator::{Allocator, TakeIn},
     ast::ast::{
-        Argument, ArrayExpressionElement, CallExpression, Expression, ImportMeta,
-        ObjectPropertyKind, Program, PropertyKey, PropertyKind,
+        Argument, ArrayExpressionElement, BindingIdentifier, CallExpression, Expression,
+        IdentifierReference, ImportMeta, ObjectPropertyKind, Program, PropertyKey, PropertyKind,
     },
-    ast_visit::{VisitMut, walk_mut},
+    ast_visit::{Visit, VisitMut, walk_mut},
     diagnostics::OxcDiagnostic,
     span::{GetSpan, Span},
 };
@@ -64,10 +64,7 @@ fn expand_calls<'a>(
     }
     // A `data:` URL or a custom scheme has no folder to match files in.
     let Some(importer) = importer_path(src_path) else { return Ok(Vec::new()) };
-    let mut prefix = NAME_PREFIX.to_owned();
-    while memchr::memmem::find(source.as_bytes(), prefix.as_bytes()).is_some() {
-        prefix.push('_');
-    }
+    let prefix = free_prefix(program, source);
     let mut expander = Expander {
         allocator,
         importer_dir: parent(&importer),
@@ -103,6 +100,49 @@ fn expand_calls<'a>(
         program.body.extend(parse_generated_module(allocator, "export {};"));
     }
     Ok(globs)
+}
+
+/// The prefix of the names the eager imports bind: [`NAME_PREFIX`], with `_` added until no
+/// name of the source starts with it. A name in the source text counts, also one in a string
+/// that `eval` could read. A name spelled with a `\u` escape is in the text only in that
+/// spelling, so then the identifiers of the syntax tree count too: the declared ones, and the
+/// references that a new module binding would shadow.
+fn free_prefix(program: &Program<'_>, source: &str) -> String {
+    let mut names = Vec::new();
+    if memchr::memmem::find(source.as_bytes(), b"\\u").is_some() {
+        let mut scan = NameScan { names: &mut names };
+        scan.visit_program(program);
+    }
+    let mut prefix = NAME_PREFIX.to_owned();
+    while memchr::memmem::find(source.as_bytes(), prefix.as_bytes()).is_some()
+        || names.iter().any(|name| name.starts_with(&prefix))
+    {
+        prefix.push('_');
+    }
+    prefix
+}
+
+/// The identifiers of a program that start with [`NAME_PREFIX`].
+struct NameScan<'n> {
+    names: &'n mut Vec<String>,
+}
+
+impl NameScan<'_> {
+    fn note(&mut self, name: &str) {
+        if name.starts_with(NAME_PREFIX) {
+            self.names.push(name.to_owned());
+        }
+    }
+}
+
+impl<'a> Visit<'a> for NameScan<'_> {
+    fn visit_binding_identifier(&mut self, it: &BindingIdentifier<'a>) {
+        self.note(it.name.as_str());
+    }
+
+    fn visit_identifier_reference(&mut self, it: &IdentifierReference<'a>) {
+        self.note(it.name.as_str());
+    }
 }
 
 /// What a glob call is replaced with.
@@ -282,24 +322,25 @@ impl<'a> Expander<'a, '_> {
                 entries.push(format!("{}: 0", json(&key)));
                 continue;
             }
+            // The key is the path; the specifier is a URL, which Node.js decodes.
+            let specifier = json(&url_specifier(&path));
             let value = if options.eager {
                 let name = format!("{}{index}_{i}", self.prefix);
                 let _ = match import {
                     Some(export) => writeln!(
                         self.imports,
-                        "import {{ {} as {name} }} from {};",
+                        "import {{ {} as {name} }} from {specifier};",
                         export_name(export),
-                        json(&path)
                     ),
-                    None => writeln!(self.imports, "import * as {name} from {};", json(&path)),
+                    None => writeln!(self.imports, "import * as {name} from {specifier};"),
                 };
                 name
             } else {
                 match import {
                     Some(export) => {
-                        format!("() => import({}).then((m) => m[{}])", json(&path), json(export))
+                        format!("() => import({specifier}).then((m) => m[{}])", json(export))
                     }
-                    None => format!("() => import({})", json(&path)),
+                    None => format!("() => import({specifier})"),
                 }
             };
             entries.push(match form {
@@ -319,6 +360,32 @@ impl<'a> Expander<'a, '_> {
 /// A JSON string literal, which is a JavaScript one too.
 fn json(text: &str) -> String {
     serde_json::to_string(text).unwrap_or_default()
+}
+
+/// A relative path as a relative URL: a specifier of `import` is a URL, so `%` would start an
+/// escape, `#` a fragment and `?` a query, and the URL parser reads `\` as `/` and drops tabs
+/// and line breaks. These are percent-encoded, as `pathToFileURL` encodes them; everything
+/// else the URL parser keeps or encodes itself, and Node.js decodes it back to the path. A
+/// file with a glob call stays an ES module, so its imports never become `require()` calls,
+/// which take paths.
+fn url_specifier(path: &str) -> Cow<'_, str> {
+    if !path.contains(['%', '#', '?', '\\', '\t', '\n', '\r']) {
+        return Cow::Borrowed(path);
+    }
+    let mut encoded = String::with_capacity(path.len() + 8);
+    for char in path.chars() {
+        match char {
+            '%' => encoded.push_str("%25"),
+            '#' => encoded.push_str("%23"),
+            '?' => encoded.push_str("%3F"),
+            '\\' => encoded.push_str("%5C"),
+            '\t' => encoded.push_str("%09"),
+            '\n' => encoded.push_str("%0A"),
+            '\r' => encoded.push_str("%0D"),
+            char => encoded.push(char),
+        }
+    }
+    Cow::Owned(encoded)
 }
 
 /// The name in `import { name as local }`: a string for anything but an identifier name.
@@ -1724,6 +1791,50 @@ mod tests {
         );
         assert!(matcher.matches(fixture.path("r/b/.config/new.ts")));
         assert!(!matcher.matches(fixture.path("r/b/.other/new.ts")));
+    }
+
+    // A specifier is a URL: `%`, `#` and `?` in a file name are encoded there, not in the key.
+    #[test]
+    fn url_characters_in_file_names() {
+        let fixture =
+            Fixture::new("url-chars", &["r/name#part.ts", "r/name%20part.ts", "r/name part.ts"]);
+        let main = fixture.path("main.mjs");
+        let lazy = code(&main, "const m = import.meta.glob('./r/*.ts');");
+        for expected in [
+            r#""./r/name part.ts": () => import("./r/name part.ts")"#,
+            r#""./r/name#part.ts": () => import("./r/name%23part.ts")"#,
+            r#""./r/name%20part.ts": () => import("./r/name%2520part.ts")"#,
+        ] {
+            assert!(lazy.contains(expected), "{expected} in {lazy}");
+        }
+        let eager = code(&main, "const m = import.meta.glob('./r/*.ts', { eager: true });");
+        for expected in [
+            r#"__vite_glob_0_1 from "./r/name%23part.ts";"#,
+            r#"__vite_glob_0_2 from "./r/name%2520part.ts";"#,
+            r#""./r/name#part.ts": __vite_glob_0_1"#,
+        ] {
+            assert!(eager.contains(expected), "{expected} in {eager}");
+        }
+        // Characters a file name cannot hold on every platform.
+        assert_eq!(url_specifier("./a?b\\c\td\ne\rf.ts"), "./a%3Fb%5Cc%09d%0Ae%0Df.ts");
+        assert_eq!(url_specifier("./é f.ts"), "./é f.ts");
+    }
+
+    // A name spelled with a `\u` escape is not in the source text as the name.
+    #[test]
+    fn generated_names_avoid_escaped_identifiers() {
+        let fixture = Fixture::new("escaped-names", &["r/a.ts"]);
+        let main = fixture.path("main.mjs");
+        let glob = "const m = import.meta.glob('./r/*.ts', { eager: true });";
+        // A declaration that the import would redeclare.
+        let declared = code(&main, &format!("const \\u005f_vite_glob_0_0 = 'mine';\n{glob}"));
+        assert!(declared.contains("import * as __vite_glob__0_0 from"), "{declared}");
+        // A global that the import would shadow.
+        let referenced = code(&main, &format!("console.log(\\u005f_vite_glob_0_0);\n{glob}"));
+        assert!(referenced.contains("import * as __vite_glob__0_0 from"), "{referenced}");
+        // Without an escape, the source text is enough.
+        let plain = code(&main, glob);
+        assert!(plain.contains("import * as __vite_glob_0_0 from"), "{plain}");
     }
 
     // The rules the watcher's `GlobMatcher` applies are the transform's.

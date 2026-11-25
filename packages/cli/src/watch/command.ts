@@ -238,11 +238,13 @@ export function runWatch(argv: string[], options: WatchOptions = {}): Promise<nu
         log(`cannot watch a glob: ${(error as Error).message}`);
         return;
       }
+      const excluded = (file: string) => matcher.classify(file, "literal") === "exclude";
       watcher.addGlob({
         roots: roots.map((r) => ({ base: r.base, depth: r.depth ?? Infinity })),
-        files: glob.files,
+        // `--exclude` holds for the listed files as for new ones: removing one restarts nothing.
+        files: glob.files?.filter((file) => !excluded(file)),
         counts: (file) => {
-          if (matcher.classify(file, "literal") === "exclude") return false;
+          if (excluded(file)) return false;
           try {
             return test(slash(file));
           } catch {
