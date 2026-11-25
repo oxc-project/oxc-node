@@ -1,6 +1,6 @@
 {
   "name": "@oxc-node/core",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -1131,7 +1131,7 @@
   },
   "devDependencies": {
     "@napi-rs/cli": "catalog:",
-    "@oxc-project/runtime": "^0.159.0"
+    "@oxc-project/runtime": "^0.160.0"
   },
   "napi": {
     "binaryName": "oxc-node",

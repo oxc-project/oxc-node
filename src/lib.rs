@@ -2688,9 +2688,14 @@ fn transform_program<'a>(
                 emit_decorator_metadata: compiler_options
                     .and_then(|c| c.emit_decorator_metadata)
                     .unwrap_or(false),
+                // Decides whether metadata keeps `null`/`undefined` in a union
+                // (`string | null` is `Object`, not `String`). `tsc` reads
+                // `strictNullChecks` and falls back to `strict`, which TypeScript 6 and
+                // later default to `true` (issue #927). Rolldown resolves it the same way
+                // (rolldown#9590), and `true` is also oxc's own default.
                 strict_null_checks: compiler_options
-                    .and_then(|c| c.strict_null_checks)
-                    .unwrap_or(false),
+                    .and_then(|c| c.strict_null_checks.or(c.strict))
+                    .unwrap_or(true),
             },
             jsx: {
                 // `compilerOptions.jsx` holds `tsc`'s values (`react`, `react-jsx`,
@@ -3837,7 +3842,6 @@ fn pattern_target<'a>(
                     property.span,
                     property.key,
                     maybe_default(property.value),
-                    property.computed,
                     &builder,
                 )
             }));
@@ -6938,6 +6942,38 @@ mod tests {
         // A file without module syntax is untouched CommonJS, as before.
         let code = run("cjs/plain.ts", "module.exports = 1;\n");
         assert!(!code.contains("__esModule"), "{code}");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // Issue #927: `strictNullChecks` defaults to `strict`, as `tsc` resolves it,
+    // so a nullable property records `Object` for `design:type` under `strict`.
+    #[test]
+    fn strict_flag_enables_strict_null_checks() {
+        // Resolving a tsconfig records it for the watch report.
+        let _lock = watch_lock();
+        let root = env::temp_dir().join(format!("oxc-node-strict-927-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("tsconfig.json"),
+            r#"{ "compilerOptions": { "strict": true, "experimentalDecorators": true, "emitDecoratorMetadata": true } }"#,
+        )
+        .unwrap();
+        let path = root.join("a.ts");
+        let source = "class A {\n    @Dec()\n    name: string | null = null;\n}\n";
+        fs::write(&path, source).unwrap();
+        let transformer = OxcTransformer::new(Some(root.to_string_lossy().into_owned()), None);
+        let code = match transformer
+            .transform(path.to_string_lossy().into_owned(), Either::A(source.to_owned()))
+        {
+            Ok(output) => output.code,
+            // Dropping a napi `Error` calls into Node-API, which a test binary lacks.
+            Err(error) => panic!("{}", mem::ManuallyDrop::new(error).reason),
+        };
+        // A nullable union has no runtime constructor: `tsc` records `Object`.
+        assert!(code.contains("\"design:type\", Object"), "{code}");
+        assert!(!code.contains("\"design:type\", String"), "{code}");
 
         let _ = fs::remove_dir_all(&root);
     }

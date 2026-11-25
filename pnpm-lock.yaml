@@ -191,8 +191,8 @@ importers:
         specifier: workspace:*
         version: link:packages/core
       '@oxc-project/runtime':
-        specifier: ^0.159.0
-        version: 0.159.0
+        specifier: ^0.160.0
+        version: 0.160.0
       '@types/node':
         specifier: ^26.6.4
         version: 26.6.4
@@ -255,8 +255,8 @@ importers:
         specifier: 'catalog:'
         version: 3.10.12(@emnapi/core@2.0.0-beta.3)(@emnapi/runtime@2.0.0-beta.3)(@types/node@26.6.4)(emnapi@2.0.0-beta.3)(supports-color@7.2.0)
       '@oxc-project/runtime':
-        specifier: ^0.159.0
-        version: 0.159.0
+        specifier: ^0.160.0
+        version: 0.160.0
 
   packages/integrate-commonjs: {}
 
@@ -328,8 +328,8 @@ importers:
         specifier: workspace:*
         version: link:../cli
       '@oxc-project/runtime':
-        specifier: ^0.159.0
-        version: 0.159.0
+        specifier: ^0.160.0
+        version: 0.160.0
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
@@ -1356,8 +1356,8 @@ packages:
     resolution: {integrity: sha512-cBQNGoh659BNgvA8OC/e4BNDtFkv03dJaYdkp2adgOQNtISNAPQ+nB4S8XvWtNk7Xl+0g+7aa+iRGR25Xycd1Q==}
     engines: {node: ^20.19.0 || >=22.12.0}
 
-  '@oxc-project/runtime@0.159.0':
-    resolution: {integrity: sha512-z+wJlHpqB2rsnQ5PbQlWKC7lYISlHrniQ3N5JF4LGaa+kOopx5u5DMT2P7pN12fsXFg1gVcoLdRXPRyIS61OKQ==}
+  '@oxc-project/runtime@0.160.0':
+    resolution: {integrity: sha512-6XWuvmQVELB5jlf3CR0dXt5ZjJn9lKWJBy2BetZNU9CbYIvDdqWGZRoVtDhF0jb2TaW8GWx+TawTRQpPPfBSvA==}
     engines: {node: ^20.19.0 || >=22.12.0}
 
   '@oxc-project/types@0.154.0':
@@ -5235,7 +5235,7 @@ snapshots:
 
   '@oxc-project/runtime@0.154.0': {}
 
-  '@oxc-project/runtime@0.159.0': {}
+  '@oxc-project/runtime@0.160.0': {}
 
   '@oxc-project/types@0.154.0': {}
 
