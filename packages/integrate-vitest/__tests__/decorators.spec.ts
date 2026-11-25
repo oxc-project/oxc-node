@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, expect, test } from "vitest";
+import { afterAll, describe, expect, test } from "vitest";
 
 /**
  * oxc lowers only legacy (`experimentalDecorators`) decorators. No Node.js release parses
@@ -149,4 +149,100 @@ test("a declaration file is erased whole, decorators included", () => {
   );
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout.trim()).toBe("ran:dts");
+});
+
+describe("emitDecoratorMetadata follows strictNullChecks like tsc (issue #927)", () => {
+  // `tsc` resolves `strictNullChecks` as `strictNullChecks ?? strict`, and TypeScript 6
+  // and later default `strict` to `true`. With null checks on, `T | null` and
+  // `T | undefined` are recorded as `Object`; with them off, `null`/`undefined` drop out
+  // of the union and `T` itself is recorded. Each row's expectation is what `tsc` 7.0.2
+  // emits for that tsconfig. A member's decorators run bottom-up, as `tsc`'s `__decorate`
+  // applies them, so a method records `design:returntype` first.
+  const ENTRY = [
+    "// A stand-in for reflect-metadata: print each value as it is recorded.",
+    "(Reflect as any).metadata = (key: string, value: any) => (_target: object, prop: string) => {",
+    '  const name = Array.isArray(value) ? `[${value.map((v) => v.name).join(",")}]` : value.name;',
+    "  console.log(`${prop} ${key}=${name}`);",
+    "};",
+    "function Dec(): any {",
+    "  return () => {};",
+    "}",
+    "class Entity {",
+    "  @Dec() name: string | null = null;",
+    "  @Dec() count: number | undefined;",
+    "  @Dec() find(id: string | undefined): string | null {",
+    "    return id ?? null;",
+    "  }",
+    "}",
+    "console.log(`ran:${Entity.name}`);",
+  ].join("\n");
+
+  const NULLABLE = [
+    "name design:type=Object",
+    "count design:type=Object",
+    "find design:returntype=Object",
+    "find design:paramtypes=[Object]",
+    "find design:type=Function",
+    "ran:Entity",
+  ];
+  const STRIPPED = [
+    "name design:type=String",
+    "count design:type=Number",
+    "find design:returntype=String",
+    "find design:paramtypes=[String]",
+    "find design:type=Function",
+    "ran:Entity",
+  ];
+
+  const DECORATORS = { experimentalDecorators: true, emitDecoratorMetadata: true };
+
+  test.each([
+    ["strict alone", { strict: true }, {}, NULLABLE],
+    ["strict with strictNullChecks", { strict: true, strictNullChecks: true }, {}, NULLABLE],
+    ["neither flag (TypeScript 6+ defaults strict to true)", {}, {}, NULLABLE],
+    ["strict: false", { strict: false }, {}, STRIPPED],
+    [
+      "strictNullChecks: false over strict",
+      { strict: true, strictNullChecks: false },
+      {},
+      STRIPPED,
+    ],
+    [
+      "strictNullChecks over strict: false",
+      { strict: false, strictNullChecks: true },
+      {},
+      NULLABLE,
+    ],
+    [
+      "a child strictNullChecks: false over a base strict",
+      { strictNullChecks: false },
+      { strict: true },
+      STRIPPED,
+    ],
+    [
+      "a base strictNullChecks: false over a child strict",
+      { strict: true },
+      { strictNullChecks: false },
+      STRIPPED,
+    ],
+    ["strict: false inherited from a base", {}, { strict: false }, STRIPPED],
+  ] as const)("%s", (_, compilerOptions, baseCompilerOptions, expected) => {
+    const extendsBase = Object.keys(baseCompilerOptions).length > 0;
+    const result = run(
+      {
+        "package.json": JSON.stringify({ type: "module" }),
+        ...(extendsBase && {
+          "tsconfig.base.json": JSON.stringify({ compilerOptions: baseCompilerOptions }),
+        }),
+        "tsconfig.json": JSON.stringify({
+          ...(extendsBase && { extends: "./tsconfig.base.json" }),
+          compilerOptions: { ...DECORATORS, ...compilerOptions },
+        }),
+        "main.ts": ENTRY,
+      },
+      "./main.ts",
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual(expected);
+  });
 });
