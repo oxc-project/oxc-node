@@ -3685,7 +3685,6 @@ fn pattern_target<'a>(
                     property.span,
                     property.key,
                     maybe_default(property.value),
-                    property.computed,
                     &builder,
                 )
             }));
