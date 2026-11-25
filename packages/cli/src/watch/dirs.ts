@@ -8,6 +8,7 @@ import {
   unwatchFile,
   watch,
   watchFile,
+  type BigIntStats,
   type FSWatcher,
 } from "node:fs";
 import path from "node:path";
@@ -15,14 +16,6 @@ import path from "node:path";
 import { isDirOnDisk as isDir, type Matcher } from "./glob.js";
 
 type Sig = { ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint } | null;
-
-function isRealDir(p: string): boolean {
-  try {
-    return lstatSync(p).isDirectory();
-  } catch {
-    return false;
-  }
-}
 
 function isLink(p: string): boolean {
   try {
@@ -32,15 +25,44 @@ function isLink(p: string): boolean {
   }
 }
 
+function sigFrom(s: BigIntStats): Sig {
+  return { ino: s.ino, size: s.size, mtimeNs: s.mtimeNs, ctimeNs: s.ctimeNs };
+}
+
 function sigOf(p: string): Sig {
   try {
     const s = statSync(p, { bigint: true });
     // A folder where a file was wanted (a literal --include): its walk sees what is in it.
     if (s.isDirectory()) return null;
-    return { ino: s.ino, size: s.size, mtimeNs: s.mtimeNs, ctimeNs: s.ctimeNs };
+    return sigFrom(s);
   } catch {
     return null;
   }
+}
+
+/** The stat of a file, through a link: `undefined` when it is no file, or gone. */
+function fileSigOf(p: string): Sig | undefined {
+  try {
+    const s = statSync(p, { bigint: true });
+    return s.isFile() ? sigFrom(s) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The stat of a file a walk or an event came across, taken when an owner first asks for it. */
+type FileSig = () => Sig | undefined;
+
+function onceSig(take: FileSig): FileSig {
+  let sig: Sig | undefined;
+  let taken = false;
+  return () => {
+    if (!taken) {
+      taken = true;
+      sig = take();
+    }
+    return sig;
+  };
 }
 
 /** The links between a link and the file it ends at: `a -> b -> c -> file` gives `b`, `c`. */
@@ -105,12 +127,6 @@ export interface DirWatcherOptions {
   linger?: number;
 }
 
-interface Root {
-  base: string;
-  depth: number;
-  missing: boolean;
-}
-
 /**
  * A glob the app reported, watched until the next `dropRun`. Only presence counts: a file that
  * appears in its roots is a change, and so is one that disappears; an edit is not.
@@ -126,25 +142,40 @@ export interface GlobWatch {
   prune(absDir: string): boolean;
 }
 
-interface GlobRoot {
-  glob: GlobWatch;
+/**
+ * Whether a file a walk finds is a change: no, yes, or `"once"`, once for each state over two
+ * runs ({@link DirWatcher}'s `#fireOnce`).
+ */
+type Fire = boolean | "once";
+
+/**
+ * What walks a root: the `--include` roots share one owner, and each glob the current run
+ * reported is one. Each owner has its own rules for the folders it enters and the files it keeps.
+ */
+interface Owner {
+  /** A glob of the current run: `dropRun` drops its roots and walks. */
+  run: boolean;
+  /** Whether the walk skips a folder below one of the roots. */
+  prune(absDir: string): boolean;
+  /** A file the walk came across. `sig` takes its stat; absent, it is known to be no file. */
+  found(file: string, fire: Fire, sig?: FileSig): void;
+}
+
+interface Root {
+  owner: Owner;
   base: string;
   depth: number;
   missing: boolean;
-}
-
-interface GlobWalked {
-  dir: string;
-  /** The globs that walked this folder, each at its own level. */
-  walks: { glob: GlobWatch; level: number; depth: number }[];
 }
 
 interface Entry {
   path: string;
   shown: string;
   sig: Sig;
-  /** `glob`: present for a glob the app reported, which only its presence matters to. */
-  own?: "static" | "run" | "glob";
+  /** Wanted itself: for the whole session, or by the current run (its imports or a glob it reported). */
+  own?: "static" | "run";
+  /** With `own: "run"`: only a glob the run reported wants it, so only its presence counts. */
+  presence?: boolean;
   target?: string;
   /** The keys of the links between a link and its target, watched too, as the target is. */
   hops?: string[];
@@ -159,8 +190,8 @@ interface Entry {
 
 interface WalkedDir {
   dir: string;
-  depth: number;
-  level: number;
+  /** The owners that walked this folder, each at its own level; the `--include` one first. */
+  walks: { owner: Owner; level: number; depth: number }[];
 }
 
 interface Handle {
@@ -195,7 +226,8 @@ function realOf(dir: string): string | undefined {
 /**
  * One non-recursive `fs.watch` per folder that holds a wanted file. A file whose folder does
  * not exist yet is watched at the nearest existing ancestor, one level deeper as folders appear.
- * `--include` roots are walked, and new folders in them are walked as they appear.
+ * `--include` roots and the roots of the globs the app reports are walked, and new folders in
+ * them are walked as they appear.
  *
  * On macOS a folder's watch stays while the folder is replaced, and for `linger` once it is
  * missing or no longer needed: libuv's FSEvents stream watches the path, not the folder. Each open or close rebuilds
@@ -216,11 +248,15 @@ export class DirWatcher {
    */
   #files = new Map<string, Entry>();
   #byDir = new Map<string, Set<string>>();
+  // The `--include` roots, then those of the globs the current run reported.
   #roots: Root[] = [];
   #walked = new Map<string, WalkedDir>();
-  // The globs the current run reported, and the folders they walked.
-  #globRoots: GlobRoot[] = [];
-  #globWalked = new Map<string, GlobWalked>();
+  // The owner of the `--include` roots. It follows links to their targets; a glob does not.
+  #static: Owner = {
+    run: false,
+    prune: (dir) => this.#o.matcher.pruneDir(dir),
+    found: (file, fire, sig) => this.#found(file, fire, sig),
+  };
   // The files a glob report found changed at once, for this run and the one before: a run that
   // finds the same again must not restart forever.
   #fired = new Set<string>();
@@ -267,8 +303,10 @@ export class DirWatcher {
   add(file: string, run = false, keepGone = false): void {
     const have = this.#files.get(this.#key(file));
     if (have) {
-      // Wanted itself now, not only as a link's target: kept whatever the links do.
+      // Wanted itself now, not only as a link's target or by a glob: kept whatever the links
+      // do, and an edit is a change.
       if (have.own !== "static") have.own = run ? "run" : "static";
+      have.presence = false;
       have.shown = file;
       if (keepGone) have.keepGone = true;
       // A hop of another link's chain: its own target was that link's to watch.
@@ -287,25 +325,31 @@ export class DirWatcher {
     const sigs = new Map<string, Sig>();
     this.#dropping = { sigs, dirs };
     for (const [k, f] of this.#files) {
-      if (f.own !== "run" && f.own !== "glob") continue;
+      if (f.own !== "run") continue;
       // The next run may not report a file it did not find (a deleted tsconfig.json is looked for,
       // not read), so creating it again must still restart. A deleted import is reported again
       // by the failed resolve, while the app still imports it.
       if (f.gone && f.keepGone) continue;
-      const glob = f.own === "glob";
+      const presence = f.presence;
       f.own = undefined;
+      f.presence = false;
       const [link] = f.links ?? [];
       if (link !== undefined) {
         f.shown = this.#files.get(link)?.path ?? f.shown;
         continue;
       }
       // An edit to a file only a glob wanted is no change, between runs either.
-      this.#remove(k, !glob);
+      this.#remove(k, !presence);
     }
     // The next run reports its globs again: their folders stay watched until then.
-    for (const w of this.#globWalked.values()) dirs.add(w.dir);
-    this.#globRoots = [];
-    this.#globWalked.clear();
+    for (const [k, w] of this.#walked) {
+      const kept = w.walks.filter((walk) => !walk.owner.run);
+      if (kept.length === w.walks.length) continue;
+      dirs.add(w.dir);
+      if (kept.length > 0) w.walks = kept;
+      else this.#walked.delete(k);
+    }
+    this.#roots = this.#roots.filter((root) => !root.owner.run);
     this.#firedBefore = this.#fired;
     this.#fired = new Set();
     this.#dropping = undefined;
@@ -315,15 +359,16 @@ export class DirWatcher {
     this.#dropped = [...dirs];
   }
 
-  #put(file: string, shown: string, own: Entry["own"]): Entry {
+  // `sig`: the file's stat, when the caller took it already.
+  #put(file: string, shown: string, own: Entry["own"], presence = false, sig = sigOf(file)): Entry {
     const k = this.#key(file);
-    const entry: Entry = { path: file, shown, sig: sigOf(file), own };
+    const entry: Entry = { path: file, shown, sig, own, presence };
     this.#files.set(k, entry);
     // Dropped at the restart and changed since: the new run may have read it before the change.
     if (this.#droppedSigs.has(k)) {
       const before = this.#droppedSigs.get(k)!;
       this.#droppedSigs.delete(k);
-      if (own !== "glob" && changed(before, entry.sig, false)) {
+      if (!presence && changed(before, entry.sig, false)) {
         queueMicrotask(() => this.#closed || this.#o.onChange(shown));
       }
     }
@@ -345,8 +390,10 @@ export class DirWatcher {
 
   /** Walk `base` to `depth` levels for files the matcher accepts, now and as they appear. */
   addRoot(base: string, depth: number): void {
-    const root = { base, depth, missing: false };
-    this.#roots.push(root);
+    const root: Root = { owner: this.#static, base, depth, missing: false };
+    // Before the globs' roots, as its walks come first.
+    const globs = this.#roots.findIndex((r) => r.owner.run);
+    this.#roots.splice(globs < 0 ? this.#roots.length : globs, 0, root);
     // Now, before the app starts: what arrives from here on is a change, found when the watch opens.
     this.#walkRoot(root);
     if (this.#o.poll === false) this.#scheduleSync();
@@ -362,96 +409,65 @@ export class DirWatcher {
     if (this.#closed) return;
     this.#o.debug(`glob ${glob.roots.map((r) => r.base).join(" ")}`);
     for (const file of glob.files ?? []) {
-      if (!this.#inGlobRoots(glob, file)) continue;
+      if (!this.#lists(glob, file)) continue;
       const k = this.#key(file);
       const have = this.#files.get(k);
-      if (have && have.own === undefined) have.own = "glob";
-      const entry = have ?? this.#put(file, file, "glob");
-      if (sigOf(file) === null) this.#fireOnce(k, entry.shown, false);
+      if (have && have.own === undefined) {
+        have.own = "run";
+        have.presence = true;
+      }
+      const entry = have ?? this.#put(file, file, "run", true);
+      if ((have ? sigOf(file) : entry.sig) === null) this.#fireOnce(k, entry.shown, false);
     }
+    const owner: Owner = {
+      run: true,
+      prune: (dir) => glob.prune(dir),
+      found: (file, fire, sig) => this.#globFound(glob, file, fire, sig),
+    };
     for (const { base, depth } of glob.roots) {
-      const root = { glob, base, depth, missing: false };
-      this.#globRoots.push(root);
-      this.#walkGlobRoot(root, glob.files !== undefined);
+      const root: Root = { owner, base, depth, missing: false };
+      this.#roots.push(root);
+      this.#walkRoot(root, glob.files !== undefined);
     }
     if (this.#o.poll === false) this.#scheduleSync();
   }
 
-  // A listed file below one of the glob's roots, and in neither `node_modules` nor `.git` there.
-  #inGlobRoots(glob: GlobWatch, file: string): boolean {
-    return glob.roots.some(({ base }) => {
+  // A listed file that the glob's walk would find: below one of its roots, within that root's
+  // depth, in no folder the walk skips, and counting for the glob.
+  #lists(glob: GlobWatch, file: string): boolean {
+    const below = glob.roots.some(({ base, depth }) => {
       const rel = path.relative(base, file);
       if (rel === "" || path.isAbsolute(rel)) return false;
-      const parts = rel.split(/[\\/]/).map((p) => (this.#win ? p.toLowerCase() : p));
-      return parts[0] !== ".." && !parts.some((p) => p === "node_modules" || p === ".git");
-    });
-  }
-
-  // `listed`: the first walk, for a glob that came with its files. What it finds is new since the
-  // app listed them. A root that shows up later is new in any case.
-  #walkGlobRoot(root: GlobRoot, listed = false): boolean {
-    if (!isDir(root.base)) {
-      root.missing = true;
-      return false;
-    }
-    const once = listed && !root.missing;
-    this.#globWalk(root.glob, root.base, 0, root.depth, root.missing || once, once);
-    root.missing = false;
-    return true;
-  }
-
-  #globWalk(
-    glob: GlobWatch,
-    dir: string,
-    level: number,
-    depth: number,
-    fire: boolean,
-    once: boolean,
-  ) {
-    const k = this.#key(dir);
-    const walked = this.#globWalked.get(k) ?? { dir, walks: [] };
-    this.#globWalked.set(k, walked);
-    const seen = walked.walks.find((w) => w.glob === glob);
-    if (seen && seen.depth - seen.level >= depth - level) return;
-    if (seen) Object.assign(seen, { level, depth });
-    else walked.walks.push({ glob, level, depth });
-    let entries;
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      const full = path.join(dir, e.name);
-      // Linked folders are not entered, as for `--include` roots.
-      if (e.isDirectory()) {
-        if (level + 1 < depth && !glob.prune(full)) {
-          this.#globWalk(glob, full, level + 1, depth, fire, once);
-        }
-      } else {
-        this.#globFound(glob, full, fire, once);
+      const parts = rel.split(/[\\/]/);
+      if (parts[0] === ".." || parts.length > depth) return false;
+      let dir = base;
+      for (const part of parts.slice(0, -1)) {
+        dir = path.join(dir, part);
+        if (glob.prune(dir)) return false;
       }
-    }
+      return true;
+    });
+    return below && glob.counts(file);
   }
 
-  #globFound(glob: GlobWatch, file: string, fire: boolean, once: boolean) {
+  // A file a glob's walk found.
+  #globFound(glob: GlobWatch, file: string, fire: Fire, sig?: FileSig) {
     const k = this.#key(file);
     const have = this.#files.get(k);
     if (have) {
       // Wanted already, it keeps that behavior. Only a link's target so far: the glob's now too.
-      if (have.own === undefined) have.own = "glob";
+      if (have.own === undefined) {
+        have.own = "run";
+        have.presence = true;
+      }
       return;
     }
-    try {
-      if (!statSync(file).isFile()) return;
-    } catch {
-      return;
-    }
-    if (!glob.counts(file)) return;
-    this.#put(file, file, "glob");
-    if (!fire) return;
-    if (once) this.#fireOnce(k, file, true);
-    else this.#o.onChange(file);
+    if (!sig || !glob.counts(file)) return;
+    const next = sig();
+    if (next === undefined) return;
+    this.#put(file, file, "run", true, next);
+    if (fire === "once") this.#fireOnce(k, file, true);
+    else if (fire) this.#o.onChange(file);
   }
 
   // A change found when a glob is reported. The run before found it too: then the app cannot
@@ -465,28 +481,6 @@ export class DirWatcher {
     }
     this.#fired.add(key);
     queueMicrotask(() => this.#closed || this.#o.onChange(shown));
-  }
-
-  #globRescan(walked: GlobWalked) {
-    let entries;
-    try {
-      entries = readdirSync(walked.dir);
-    } catch {
-      return;
-    }
-    for (const name of entries) this.#onGlobEntry(walked, path.join(walked.dir, name));
-  }
-
-  #onGlobEntry(walked: GlobWalked, full: string) {
-    const dir = isRealDir(full);
-    for (const w of walked.walks) {
-      if (!dir) {
-        this.#globFound(w.glob, full, true, false);
-      } else if (w.level + 1 < w.depth && !w.glob.prune(full)) {
-        this.#globWalk(w.glob, full, w.level + 1, w.depth, true, false);
-        this.#scheduleSync();
-      }
-    }
   }
 
   close(): void {
@@ -509,23 +503,30 @@ export class DirWatcher {
     }
   }
 
-  #walkRoot(root: Root) {
+  // Files under a root that shows up later are new; at start they are not. `listed`: the first
+  // walk of a glob that came with its files: what it finds is new since the app listed them.
+  #walkRoot(root: Root, listed = false) {
     if (!isDir(root.base)) {
       root.missing = true;
       return false;
     }
-    // Files under a root that shows up later are new; at start they are not.
-    this.#walk(root.base, 0, root.depth, root.missing);
+    const fire: Fire = root.missing ? true : listed ? "once" : false;
+    this.#walk(root.owner, root.base, 0, root.depth, fire);
     root.missing = false;
     return true;
   }
 
-  #walk(dir: string, level: number, depth: number, fire: boolean) {
+  #walk(owner: Owner, dir: string, level: number, depth: number, fire: Fire) {
     const k = this.#key(dir);
-    const seen = this.#walked.get(k);
+    const walked = this.#walked.get(k);
+    const seen = walked?.walks.find((w) => w.owner === owner);
     // Roots can share folders (`src/*.ts` and `src/**/*.json`): the deeper walk wins.
     if (seen && seen.depth - seen.level >= depth - level) return;
-    this.#walked.set(k, { dir, depth, level });
+    if (seen) Object.assign(seen, { level, depth });
+    else if (!walked) this.#walked.set(k, { dir, walks: [{ owner, level, depth }] });
+    // The `--include` walk first: a file it finds is not a glob's.
+    else if (owner.run) walked.walks.push({ owner, level, depth });
+    else walked.walks.unshift({ owner, level, depth });
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -536,27 +537,30 @@ export class DirWatcher {
       const full = path.join(dir, e.name);
       // Linked folders are not entered, so a link cannot make a loop.
       if (e.isDirectory()) {
-        if (level + 1 < depth && !this.#o.matcher.pruneDir(full))
-          this.#walk(full, level + 1, depth, fire);
+        if (level + 1 < depth && !owner.prune(full))
+          this.#walk(owner, full, level + 1, depth, fire);
       } else {
-        this.#found(full, fire);
+        // A file, or a link to one: its stat is taken when the owner wants the file.
+        const sig = e.isFile() || e.isSymbolicLink() ? () => fileSigOf(full) : undefined;
+        owner.found(full, fire, sig);
       }
     }
   }
 
-  #found(file: string, fire: boolean) {
+  // A file an `--include` walk found.
+  #found(file: string, fire: Fire, sig?: FileSig) {
     const have = this.#files.get(this.#key(file));
-    if (have?.own === "static") return;
-    try {
-      if (!statSync(file).isFile()) return;
-    } catch {
+    if (have?.own === "static" || !sig) return;
+    if (this.#o.matcher.classify(file, "walk") !== "watch") return;
+    const next = sig();
+    if (next === undefined) return;
+    // Known from the imports or as a link's target: the walk keeps it now, and it is no change.
+    if (have) {
+      this.add(file);
       return;
     }
-    if (this.#o.matcher.classify(file, "walk") !== "watch") return;
-    this.add(file);
-    // Known from the imports or as a link's target: the walk keeps it now, and it is no change.
-    if (have) return;
-    this.#follow(this.#files.get(this.#key(file))!);
+    if (this.#closed) return;
+    this.#follow(this.#put(file, file, "static", false, next));
     if (fire) this.#o.onChange(file);
   }
 
@@ -630,11 +634,6 @@ export class DirWatcher {
       root.missing = true;
       this.#walkRoot(root);
     }
-    this.#globWalked.clear();
-    for (const root of this.#globRoots) {
-      root.missing = true;
-      this.#walkGlobRoot(root);
-    }
   }
 
   #sync() {
@@ -664,19 +663,12 @@ export class DirWatcher {
     for (const [k, w] of this.#walked) {
       if (!existsSync(w.dir)) this.#walked.delete(k);
     }
-    for (const [k, w] of this.#globWalked) {
-      if (!existsSync(w.dir)) this.#globWalked.delete(k);
-    }
     for (const root of this.#roots) {
       if (!this.#walkRoot(root)) place(root.base);
-    }
-    for (const root of this.#globRoots) {
-      if (!this.#walkGlobRoot(root)) place(root.base);
     }
     for (const f of this.#files.values()) place(path.dirname(f.path));
     for (const d of this.#dropped) place(d);
     for (const [k, w] of this.#walked) needed.set(k, w.dir);
-    for (const [k, w] of this.#globWalked) needed.set(k, w.dir);
     this.#awaited = awaited;
 
     const now = Date.now();
@@ -719,17 +711,8 @@ export class DirWatcher {
     // start, or while a folder was missing or replaced.
     for (const dir of fresh) {
       this.#checkDir(dir, false);
-      this.#rescanAll(dir);
+      this.#rescan(dir);
     }
-  }
-
-  // Look for new entries in a walked folder, for the `--include` roots and the globs that walked it.
-  #rescanAll(dir: string) {
-    const k = this.#key(dir);
-    const walked = this.#walked.get(k);
-    if (walked) this.#rescan(walked);
-    const globWalked = this.#globWalked.get(k);
-    if (globWalked) this.#globRescan(globWalked);
   }
 
   /**
@@ -756,7 +739,7 @@ export class DirWatcher {
     h.id = idOf(h.dir);
     this.#o.debug(`replaced ${h.dir}`);
     this.#checkDir(h.dir, false);
-    this.#rescanAll(h.dir);
+    this.#rescan(h.dir);
   }
 
   // macOS: a folder found missing keeps its watch until it is back or `linger` has passed. Its
@@ -788,7 +771,10 @@ export class DirWatcher {
     }, 250);
   }
 
-  #rescan(walked: WalkedDir) {
+  // Look for new entries in a walked folder, for each owner that walked it.
+  #rescan(dir: string) {
+    const walked = this.#walked.get(this.#key(dir));
+    if (!walked) return;
     let entries;
     try {
       entries = readdirSync(walked.dir);
@@ -838,7 +824,7 @@ export class DirWatcher {
     if (name === null) {
       // No name (allowed by Node): any file here may have changed, or a new one arrived.
       this.#checkDir(dir);
-      this.#rescanAll(dir);
+      this.#rescan(dir);
       this.#scheduleSync();
       return;
     }
@@ -849,15 +835,8 @@ export class DirWatcher {
     } else {
       const walked = this.#walked.get(this.#key(dir));
       if (walked) this.#onWalkedEntry(walked, full);
-      const globWalked = this.#globWalked.get(this.#key(dir));
-      if (globWalked) this.#onGlobEntry(globWalked, full);
     }
-    if (
-      this.#awaited.has(k) ||
-      this.#handles.has(k) ||
-      this.#walked.has(k) ||
-      this.#globWalked.has(k)
-    ) {
+    if (this.#awaited.has(k) || this.#handles.has(k) || this.#walked.has(k)) {
       this.#scheduleSync();
     }
     // An event named after the folder, and not for a child of that name, is for the folder itself:
@@ -892,16 +871,31 @@ export class DirWatcher {
     }
   }
 
+  // One `lstat` for every owner that walked the folder.
   #onWalkedEntry(walked: WalkedDir, full: string) {
+    let st: BigIntStats | undefined;
+    try {
+      st = lstatSync(full, { bigint: true });
+    } catch {}
     // Not following links, as the first walk: a linked folder is not entered.
-    if (isRealDir(full)) {
-      if (walked.level + 1 < walked.depth && !this.#o.matcher.pruneDir(full)) {
-        this.#walk(full, walked.level + 1, walked.depth, true);
-        this.#scheduleSync();
+    if (st?.isDirectory()) {
+      for (const w of walked.walks) {
+        if (w.level + 1 < w.depth && !w.owner.prune(full)) {
+          this.#walk(w.owner, full, w.level + 1, w.depth, true);
+          this.#scheduleSync();
+        }
       }
-    } else {
-      this.#found(full, true);
+      return;
     }
+    // A file's own stat is its `lstat`; a link's is its target's, taken once for every owner.
+    let sig: FileSig | undefined;
+    if (st?.isFile()) {
+      const own = sigFrom(st);
+      sig = () => own;
+    } else if (st?.isSymbolicLink()) {
+      sig = onceSig(() => fileSigOf(full));
+    }
+    for (const w of walked.walks) w.owner.found(full, true, sig);
   }
 
   #checkDir(dir: string, event = true) {
@@ -911,7 +905,7 @@ export class DirWatcher {
   #check(k: string, event = true) {
     const entry = this.#files.get(k)!;
     const next = sigOf(entry.path);
-    if (entry.own === "glob") {
+    if (entry.presence) {
       // Only a glob wants it: a file that appears or disappears is a change, an edit is not.
       const was = entry.sig !== null;
       entry.sig = next;

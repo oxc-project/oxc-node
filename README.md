@@ -237,27 +237,28 @@ process.exitCode = await runWatch(process.argv.slice(2), {
   loaderArgs: ["--enable-source-maps", "--require", preloadPath, "--import", hooksURL],
   ignoreDirs: [loaderDir],
   // Optional: match the globs your loader reports as your loader does. With the
-  // oxc-node binding, its `GlobMatcher` is the code that listed the files.
+  // oxc-node binding, its `GlobMatcher` is the code that listed the files: it
+  // has `matches(file)` and `mayEnter(dir)`.
   globMatcher: ({ include, exclude, dot, nocase }) => {
     const { GlobMatcher } = createRequire(import.meta.url)("<your binding>");
-    const matcher = new GlobMatcher(include, exclude, dot, nocase);
-    return (file) => matcher.matches(file);
+    return new GlobMatcher(include, exclude, dot, nocase);
   },
 });
 ```
 
-`globMatcher` gets each `watch:glob` entry once per run, and the test it
-returns gets absolute paths with `/` on every platform. If it throws, the
-watcher logs the error and skips that entry. Load the binding in it, not at
-the top, so that a run without globs does not load it. `oxnode watch` passes
-the `GlobMatcher` of `@oxc-node/core`.
+`globMatcher` gets each `watch:glob` entry once per run, and returns
+`{ matches(file), mayEnter?(dir) }`: whether a file counts, and whether the
+walk enters a folder. Both get absolute paths with `/` on every platform. If
+`globMatcher` throws, the watcher logs the error and skips that entry. Load
+the binding in it, not at the top, so that a run without globs does not load
+it. `oxnode watch` passes the `GlobMatcher` of `@oxc-node/core`.
 
 | Option        | Default                                                                          | What it does                                                                                    |
 | ------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `loaderArgs`  | `["--enable-source-maps", "--import", "@oxc-node/core/register"]`                | Node.js flags that load your hooks, put before the user's Node.js options                       |
 | `ignoreDirs`  | the folder of `@oxc-node/core/register`, if `loaderArgs` is not given, else none | Folders of your loader's own files: Node.js reports them, but they are not watched              |
 | `name`        | `"oxnode watch"`                                                                 | The command in errors, the usage line and `--help`; its first word tags the log lines (`[vpx]`) |
-| `globMatcher` | `include` and `exclude` matched with `path.matchesGlob`                          | Builds the test for one `watch:glob` entry: `(glob) => (file) => boolean`, see below            |
+| `globMatcher` | `include` and `exclude` matched with `path.matchesGlob`                          | Builds the test for one `watch:glob` entry: `(glob) => ({ matches, mayEnter? })`, see below     |
 
 `runWatch` resolves with the exit code once the watcher stops. Until then it
 handles `SIGINT`, `SIGTERM`, `SIGHUP`, stdin (Return) and the IPC channel of
@@ -312,11 +313,14 @@ What the two sides agree on, for a loader that does not use these entries:
   walk, `depth` 1 for the files in `base` only, absent for no limit),
   `include` and `exclude` (absolute patterns with `/`), `dot` and `nocase`,
   and `files` (what the app found). Paths are `file:` URLs or absolute
-  paths. The watcher walks the roots, skipping `node_modules`, `.git`,
-  folders that start with `.` unless `dot` is set, and what `--exclude`
-  covers. A file that `globMatcher` accepts is a change when it appears, and
-  a listed or found one is a change when it goes; an edit is not, unless the
-  app loaded the file. A listed file already gone, or a matching file the
+  paths. The watcher walks the roots. It skips `.git` and what `--exclude`
+  covers, and enters the folders that `mayEnter` accepts; without `mayEnter`,
+  it also skips `node_modules`, and folders that start with `.` unless `dot`
+  is set. A file that `matches` accepts is a change when it appears, and a
+  listed or found one is a change when it goes; an edit is not, unless the
+  app loaded the file. A listed file is watched only where the walk would
+  find it: below a root, within its depth, in folders the walk enters, and
+  accepted by `matches`. A listed file already gone, or a matching file the
   first walk finds that is not listed, is a change at once, but not again in
   the next run for the same file in the same state. The watcher drops the
   globs before each rerun.
@@ -549,11 +553,13 @@ console.log(Object.keys(routes)); // [ './routes/health.ts' ]
 OXC_IMPORT_GLOB=1 npx oxnode ./src/server.ts
 ```
 
-A tool that wraps the loader can call `setImportGlob(true)` instead. The switch
-is per JavaScript thread and has no deadline: a file transformed after the
-call expands its globs. `@oxc-node/core/register` passes it on to the
-`module.register()` hook thread, and `@oxc-node/core/importer` reads
-`OXC_IMPORT_GLOB` too.
+The binding reads the variable when it transforms a file, so the loader,
+`@oxc-node/core/importer` and `OxcTransformer` all follow it. A tool that wraps
+the loader can call `setImportGlob(true)` or `setImportGlob(false)` instead,
+whatever the variable says; `getImportGlob()` returns the value in effect. The
+switch is per JavaScript thread and has no deadline: a file transformed after
+the call follows it. `@oxc-node/core/register` passes it on to the
+`module.register()` hook thread.
 
 ```js
 import { setImportGlob } from "@oxc-node/core";

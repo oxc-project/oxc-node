@@ -9,8 +9,9 @@ import { nestedWatcher, parseWatchArgs, tsconfigEnv } from "./args.js";
 import { DirWatcher } from "./dirs.js";
 import {
   defaultGlobMatcher,
-  globPruneDir,
+  globWatch,
   makeMatcher,
+  type GlobTest,
   type Matcher,
   type Source,
 } from "./glob.js";
@@ -53,11 +54,13 @@ export interface WatchOptions {
    */
   name?: string;
   /**
-   * Builds the test for one entry of a `watch:glob` report: whether a file counts for it. `file`
-   * is an absolute path with `/` on every platform, its case kept. Default: an `include`
-   * pattern matches it and no `exclude` pattern does, by `path.matchesGlob`.
+   * Builds the test for one entry of a `watch:glob` report: `matches(file)`, whether a file
+   * counts for it, and optionally `mayEnter(dir)`, whether the walk enters a folder. Each gets an
+   * absolute path with `/` on every platform, its case kept. Default: an `include` pattern
+   * matches the file and no `exclude` pattern does, by `path.matchesGlob`; without `mayEnter`,
+   * the walk skips `node_modules`, and folders that start with `.` unless `dot` is set.
    */
-  globMatcher?: (glob: WatchGlob) => (file: string) => boolean;
+  globMatcher?: (glob: WatchGlob) => GlobTest;
 }
 
 /**
@@ -222,8 +225,6 @@ export function runWatch(argv: string[], options: WatchOptions = {}): Promise<nu
       } catch {}
     };
     const globMatcher = options.globMatcher ?? defaultGlobMatcher;
-    const slash =
-      process.platform === "win32" ? (p: string) => p.replaceAll("\\", "/") : (p: string) => p;
     // The globs the current run reported, by everything but their files.
     const runGlobs = new Set<string>();
     const wantGlob = (glob: WatchGlob) => {
@@ -231,28 +232,14 @@ export function runWatch(argv: string[], options: WatchOptions = {}): Promise<nu
       const key = JSON.stringify([roots, include, exclude, dot, nocase]);
       if (runGlobs.has(key)) return;
       runGlobs.add(key);
-      let test: (file: string) => boolean;
+      let test: GlobTest;
       try {
         test = globMatcher(glob);
       } catch (error) {
         log(`cannot watch a glob: ${(error as Error).message}`);
         return;
       }
-      const excluded = (file: string) => matcher.classify(file, "literal") === "exclude";
-      watcher.addGlob({
-        roots: roots.map((r) => ({ base: r.base, depth: r.depth ?? Infinity })),
-        // `--exclude` holds for the listed files as for new ones: removing one restarts nothing.
-        files: glob.files?.filter((file) => !excluded(file)),
-        counts: (file) => {
-          if (excluded(file)) return false;
-          try {
-            return test(slash(file));
-          } catch {
-            return false;
-          }
-        },
-        prune: globPruneDir(matcher, dot, process.platform),
-      });
+      watcher.addGlob(globWatch(glob, test, matcher, process.platform));
     };
 
     const newRun = () => {

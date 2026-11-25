@@ -19,11 +19,16 @@ export interface WatchOptions {
    */
   name?: string;
   /**
-   * Builds the test for one entry of a `watch:glob` report: whether a file counts for it. `file`
-   * is an absolute path with `/` on every platform, its case kept. Default: an `include`
-   * pattern matches it and no `exclude` pattern does, by `path.matchesGlob`.
+   * Builds the test for one entry of a `watch:glob` report: `matches(file)`, whether a file
+   * counts for it, and optionally `mayEnter(dir)`, whether the walk enters a folder. Each gets an
+   * absolute path with `/` on every platform, its case kept. Default: an `include` pattern
+   * matches the file and no `exclude` pattern does, by `path.matchesGlob`; without `mayEnter`,
+   * the walk skips `node_modules`, and folders that start with `.` unless `dot` is set.
    */
-  globMatcher?: (glob: WatchGlob) => (file: string) => boolean;
+  globMatcher?: (glob: WatchGlob) => {
+    matches(file: string): boolean;
+    mayEnter?(dir: string): boolean;
+  };
 }
 
 /** One entry of a `watch:glob` report, with its paths resolved. */

@@ -5,11 +5,11 @@
 //! TypeScript transform. The generated code is parsed from text, so it builds no node
 //! by hand and has no mapping; everything else keeps its place in the source map.
 //! Patterns must be relative: oxc-node has neither a project root nor aliases.
-//! [`GlobSet`] matches the files, here and for the watcher ([`crate::GlobMatcher`]).
+//! [`GlobSet`] matches the files and picks the folders to walk, here and for the watcher
+//! ([`crate::GlobMatcher`]).
 
 use std::{
     borrow::Cow,
-    env,
     fmt::Write as _,
     fs,
     path::{Path, PathBuf},
@@ -29,8 +29,8 @@ use oxc::{
 use globstar::{CompileOptions, DirMatch, Glob};
 
 use crate::{
-    WatchGlob, WatchGlobRoot, file_url_to_path, generated_expression, has_module_declaration,
-    parse_generated_module, report_watch_globs, watching,
+    WatchGlob, WatchGlobRoot, encode_file_url_path, file_url_to_path, generated_expression,
+    has_module_declaration, parse_generated_module, report_watch_globs, scheme_len, watching,
 };
 
 /// The prefix of the names eager imports bind, as in Vite.
@@ -38,14 +38,16 @@ const NAME_PREFIX: &str = "__vite_glob_";
 
 /// Expand every glob call in `program`, the importer's syntax tree after the TypeScript
 /// transform, and record the calls for the watch parent. `source` is the importer's
-/// source: the spans of the errors point into it.
+/// source: the spans of the errors point into it. A relative `src_path` is resolved
+/// against `cwd`, the transformer's working directory.
 pub(crate) fn expand<'a>(
     allocator: &'a Allocator,
     src_path: &Path,
+    cwd: Option<&Path>,
     program: &mut Program<'a>,
     source: &str,
 ) -> Result<(), Vec<OxcDiagnostic>> {
-    let globs = expand_calls(allocator, src_path, program, source, watching())?;
+    let globs = expand_calls(allocator, src_path, cwd, program, source, watching())?;
     report_watch_globs(globs);
     Ok(())
 }
@@ -55,15 +57,16 @@ pub(crate) fn expand<'a>(
 fn expand_calls<'a>(
     allocator: &'a Allocator,
     src_path: &Path,
+    cwd: Option<&Path>,
     program: &mut Program<'a>,
     source: &str,
     report: bool,
 ) -> Result<Vec<WatchGlob>, Vec<OxcDiagnostic>> {
-    if memchr::memmem::find(source.as_bytes(), b"glob").is_none() {
+    if !has_glob_word(source.as_bytes()) {
         return Ok(Vec::new());
     }
     // A `data:` URL or a custom scheme has no folder to match files in.
-    let Some(importer) = importer_path(src_path) else { return Ok(Vec::new()) };
+    let Some(importer) = importer_path(src_path, cwd) else { return Ok(Vec::new()) };
     let prefix = free_prefix(program, source);
     let mut expander = Expander {
         allocator,
@@ -73,14 +76,13 @@ fn expand_calls<'a>(
         prefix,
         report,
         calls: 0,
-        expanded: 0,
         other_import_metas: 0,
         imports: String::new(),
         errors: Vec::new(),
         globs: Vec::new(),
     };
     expander.visit_program(program);
-    let Expander { expanded, other_import_metas, imports, errors, globs, .. } = expander;
+    let Expander { calls, other_import_metas, imports, errors, globs, .. } = expander;
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -96,11 +98,25 @@ fn expand_calls<'a>(
     }
     // The `pirates` path hands the output to Node.js' CommonJS loader, which decides the
     // format from syntax: a file whose only module syntax was the glob call would run as
-    // CommonJS there, and as an ES module through `import`.
-    if expanded > 0 && other_import_metas == 0 && !has_module_declaration(program) {
+    // CommonJS there, and as an ES module through `import`. A call that failed returned
+    // the errors above, so here every call expanded.
+    if calls > 0 && other_import_metas == 0 && !has_module_declaration(program) {
         program.body.extend(parse_generated_module(allocator, "export {};"));
     }
     Ok(globs)
+}
+
+/// Whether `source` holds `glob` as a word of its own, as a glob call spells it: with no
+/// identifier byte (`[A-Za-z0-9_$]`, the `\` of an escape, or a byte of a non-ASCII
+/// character) on either side. A name that only contains it, such as `globalThis`, skips
+/// the pass.
+fn has_glob_word(source: &[u8]) -> bool {
+    let in_name = |byte: u8| {
+        byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b'\\') || byte >= 0x80
+    };
+    memchr::memmem::find_iter(source, b"glob").any(|at| {
+        !(at > 0 && in_name(source[at - 1])) && !source.get(at + 4).is_some_and(|&b| in_name(b))
+    })
 }
 
 /// The prefix of the names the eager imports bind: [`NAME_PREFIX`], with `_` added until no
@@ -170,7 +186,6 @@ struct Expander<'a, 'i> {
     report: bool,
     /// The glob calls seen so far, in source order.
     calls: usize,
-    expanded: usize,
     /// The `import.meta` expressions that are not the callee of an expanded call.
     other_import_metas: usize,
     /// The eager import statements, in call order.
@@ -283,12 +298,14 @@ impl<'a> Expander<'a, '_> {
         let mut walked: Vec<&WatchGlobRoot> = Vec::new();
         for root in &roots {
             if !walked.contains(&root) {
-                walk(&root.base, root.depth, options.exhaustive, &set, &mut files);
+                walk(&root.base, root.depth, &set, &mut files);
                 walked.push(root);
             }
         }
         files.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
         files.dedup();
+        let text = self.generate(index, form, &dir, &options, &files);
+        // The watcher gets the importer too: the glob matches it.
         if self.report && !include.is_empty() {
             self.globs.push(WatchGlob {
                 roots,
@@ -296,12 +313,9 @@ impl<'a> Expander<'a, '_> {
                 exclude: (!exclude.is_empty()).then_some(exclude),
                 dot: options.exhaustive.then_some(true),
                 nocase: nocase.then_some(true),
-                files: Some(files.clone()),
+                files: Some(files),
             });
         }
-        files.retain(|file| file != self.importer);
-        let text = self.generate(index, form, &dir, &options, &files);
-        self.expanded += 1;
         let expression = generated_expression(self.allocator, &text);
         Some(match expression {
             // `({ ... })`: an object at the start of a statement needs them.
@@ -310,7 +324,8 @@ impl<'a> Expander<'a, '_> {
         })
     }
 
-    /// The source of the replacement, Vite's shape. The eager imports go to `imports`.
+    /// The source of the replacement, Vite's shape, for `files` but the importer. The eager
+    /// imports go to `imports`.
     fn generate(
         &mut self,
         index: usize,
@@ -321,7 +336,7 @@ impl<'a> Expander<'a, '_> {
     ) -> String {
         let import = options.import.as_deref().filter(|name| *name != "*");
         let mut entries = Vec::with_capacity(files.len());
-        for (i, file) in files.iter().enumerate() {
+        for (i, file) in files.iter().filter(|file| *file != self.importer).enumerate() {
             let path = relative_import(self.importer_dir, file);
             let key =
                 if options.base.is_some() { relative_import(dir, file) } else { path.clone() };
@@ -371,28 +386,11 @@ fn json(text: &str) -> String {
 
 /// A relative path as a relative URL: a specifier of `import` is a URL, so `%` would start an
 /// escape, `#` a fragment and `?` a query, and the URL parser reads `\` as `/` and drops tabs
-/// and line breaks. These are percent-encoded, as `pathToFileURL` encodes them; everything
-/// else the URL parser keeps or encodes itself, and Node.js decodes it back to the path. A
-/// file with a glob call stays an ES module, so its imports never become `require()` calls,
-/// which take paths.
+/// and line breaks. The path is percent-encoded as `pathToFileURL` encodes one, `/` and `.`
+/// kept, and Node.js decodes it back to the path. A file with a glob call stays an ES
+/// module, so its imports never become `require()` calls, which take paths.
 fn url_specifier(path: &str) -> Cow<'_, str> {
-    if !path.contains(['%', '#', '?', '\\', '\t', '\n', '\r']) {
-        return Cow::Borrowed(path);
-    }
-    let mut encoded = String::with_capacity(path.len() + 8);
-    for char in path.chars() {
-        match char {
-            '%' => encoded.push_str("%25"),
-            '#' => encoded.push_str("%23"),
-            '?' => encoded.push_str("%3F"),
-            '\\' => encoded.push_str("%5C"),
-            '\t' => encoded.push_str("%09"),
-            '\n' => encoded.push_str("%0A"),
-            '\r' => encoded.push_str("%0D"),
-            char => encoded.push(char),
-        }
-    }
-    Cow::Owned(encoded)
+    encode_file_url_path(path)
 }
 
 /// The name in `import { name as local }`: a string for anything but an identifier name.
@@ -640,8 +638,9 @@ fn parse_options(argument: &Argument<'_>, errors: &mut Vec<OxcDiagnostic>) -> Gl
 }
 
 /// The importer as an absolute, normalized path with `/`, or `None` when `src_path` is
-/// not a file: a `data:` URL or a custom scheme. The load hook passes a `file:` URL.
-fn importer_path(src_path: &Path) -> Option<String> {
+/// not a file: a `data:` URL or a custom scheme. The load hook passes a `file:` URL; a
+/// transformer may pass a path relative to its working directory, `cwd`.
+fn importer_path(src_path: &Path, cwd: Option<&Path>) -> Option<String> {
     let text = src_path.to_str()?;
     let path = if text.starts_with("file:") {
         file_url_to_path(text)?
@@ -650,7 +649,7 @@ fn importer_path(src_path: &Path) -> Option<String> {
     } else if src_path.is_absolute() {
         src_path.to_path_buf()
     } else {
-        env::current_dir().ok()?.join(src_path)
+        cwd?.join(src_path)
     };
     if !path.is_absolute() {
         return None;
@@ -664,13 +663,7 @@ fn importer_path(src_path: &Path) -> Option<String> {
 /// Whether `text` starts with a URL scheme of two characters or more: one letter is a
 /// Windows drive.
 fn is_url(text: &str) -> bool {
-    text.find(':').is_some_and(|colon| {
-        colon >= 2
-            && text[..colon].bytes().enumerate().all(|(at, byte)| {
-                byte.is_ascii_alphabetic()
-                    || (at > 0 && (byte.is_ascii_digit() || matches!(byte, b'+' | b'-' | b'.')))
-            })
-    })
+    scheme_len(text).is_some_and(|len| len >= 2)
 }
 
 /// The length of the root of a path with `/`: `/`, `C:/` or `//server/share/`, and 0
@@ -902,15 +895,18 @@ fn class_end(chars: &[char], start: usize) -> Option<usize> {
         match chars[at] {
             '\\' => at += 2,
             '[' if chars.get(at + 1) == Some(&':') => {
-                let name_end = (at + 2..chars.len().saturating_sub(1))
-                    .find(|&end| chars[end] == ':' && chars[end + 1] == ']');
-                at = name_end.map_or(at + 1, |end| end + 2);
+                at = posix_name_end(chars, at).map_or(at + 1, |end| end + 2);
             }
             ']' => return Some(at),
             _ => at += 1,
         }
     }
     None
+}
+
+/// The index of the `:` of the `:]` that ends the POSIX class name whose `[:` is at `at`.
+fn posix_name_end(chars: &[char], at: usize) -> Option<usize> {
+    (at + 2..chars.len().saturating_sub(1)).find(|&end| chars[end] == ':' && chars[end + 1] == ']')
 }
 
 /// A bracket, `[` to `]`, with each POSIX class it names written as ranges. An unknown name
@@ -924,16 +920,16 @@ fn rewrite_class(class: &[char], out: &mut String) {
             at += 2;
             continue;
         }
-        if at > 0 && class[at] == '[' && class.get(at + 1) == Some(&':') {
-            let name_end = (at + 2..class.len().saturating_sub(1))
-                .find(|&end| class[end] == ':' && class[end + 1] == ']');
-            if let Some(end) = name_end {
-                let name: String = class[at + 2..end].iter().collect();
-                if let Some(ranges) = posix_class(&name) {
-                    out.push_str(ranges);
-                    at = end + 2;
-                    continue;
-                }
+        if at > 0
+            && class[at] == '['
+            && class.get(at + 1) == Some(&':')
+            && let Some(end) = posix_name_end(class, at)
+        {
+            let name: String = class[at + 2..end].iter().collect();
+            if let Some(ranges) = posix_class(&name) {
+                out.push_str(ranges);
+                at = end + 2;
+                continue;
             }
         }
         out.push(class[at]);
@@ -1054,8 +1050,10 @@ fn resolve(dir: &str, pattern: &str) -> Resolved {
         None => ("", pattern),
     };
     let dir = if literal.is_empty() { dir.to_owned() } else { join(dir, &unescape(literal)) };
-    let depth = (!rest.contains("**") && !rest.contains('{'))
-        .then(|| u32::try_from(rest.split('/').count()).unwrap_or(u32::MAX));
+    // `globstar` reads only a literal `**` as any number of levels. A brace expands to no
+    // more `/` than its text holds, so the segments of the text bound every alternative.
+    let depth =
+        (!rest.contains("**")).then(|| u32::try_from(rest.split('/').count()).unwrap_or(u32::MAX));
     let mut glob = escape(&dir);
     if !glob.ends_with('/') {
         glob.push('/');
@@ -1065,7 +1063,7 @@ fn resolve(dir: &str, pattern: &str) -> Resolved {
 }
 
 /// The patterns of one glob call, and the rules that both the transform and the watcher
-/// match files with ([`crate::GlobMatcher`]), so the two cannot disagree.
+/// match files and enter folders with ([`crate::GlobMatcher`]), so the two cannot disagree.
 pub(crate) struct GlobSet {
     include: Vec<Pattern>,
     exclude: Vec<Pattern>,
@@ -1145,30 +1143,34 @@ impl GlobSet {
         }) && !self.exclude.iter().any(|pattern| pattern.matches(&path))
     }
 
-    /// Whether the walk enters the absolute folder `dir`, with `/`: a positive pattern may
-    /// match something below it. A folder that starts with `.` is entered only when a
-    /// pattern spells its `.`, or with `exhaustive`.
+    /// Whether the walk enters the absolute folder `dir`, with `/`, here and in the watcher
+    /// ([`crate::GlobMatcher`]): a positive pattern may match something below it, and the
+    /// folder is not named `node_modules`, unless `exhaustive`. A folder that starts with
+    /// `.` is entered only when a pattern spells its `.`, or with `exhaustive`.
+    pub(crate) fn enters(&self, dir: &str) -> bool {
+        let name = dir.rsplit('/').next().unwrap_or(dir);
+        (self.dot || name != "node_modules") && self.may_enter(dir)
+    }
+
     fn may_enter(&self, dir: &str) -> bool {
         let dir = self.fold(dir);
         self.include.iter().any(|pattern| pattern.may_enter(&dir))
     }
 }
 
-/// Add to `found` the files below `root` (to `depth` levels) that `set` accepts.
-/// Without `dot`, folders named `node_modules` are skipped; the patterns decide on folders
-/// that start with `.`. A linked folder is walked under the link's path, unless it leads
-/// back into the branch.
-fn walk(root: &str, depth: Option<u32>, dot: bool, set: &GlobSet, found: &mut Vec<String>) {
+/// Add to `found` the files below `root` (to `depth` levels) that `set` accepts, in the
+/// folders that [`GlobSet::enters`] allows. A linked folder is walked under the link's
+/// path, unless it leads back into the branch.
+fn walk(root: &str, depth: Option<u32>, set: &GlobSet, found: &mut Vec<String>) {
     let mut branch = vec![fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root))];
-    walk_dir(root, 1, depth, dot, set, &mut branch, found);
+    walk_dir(root, 1, depth, set, &mut branch, found);
 }
 
-/// `branch` holds the canonical path of each folder from the root to `dir`.
+/// `branch` holds the canonical path of each folder from the root to `dir`: never empty.
 fn walk_dir(
     dir: &str,
     level: u32,
     depth: Option<u32>,
-    dot: bool,
     set: &GlobSet,
     branch: &mut Vec<PathBuf>,
     found: &mut Vec<String>,
@@ -1195,11 +1197,7 @@ fn walk_dir(
             }
             continue;
         }
-        if !is_dir
-            || depth.is_some_and(|depth| level >= depth)
-            || (!dot && name == "node_modules")
-            || !set.may_enter(&path)
-        {
+        if !is_dir || depth.is_some_and(|depth| level >= depth) || !set.enters(&path) {
             continue;
         }
         let canonical = if link {
@@ -1209,17 +1207,17 @@ fn walk_dir(
                 _ => continue,
             }
         } else {
-            branch.last().map_or_else(|| PathBuf::from(&path), |parent| parent.join(&name))
+            branch[branch.len() - 1].join(&name)
         };
         branch.push(canonical);
-        walk_dir(&path, level + 1, depth, dot, set, branch, found);
+        walk_dir(&path, level + 1, depth, set, branch, found);
         branch.pop();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::mem::ManuallyDrop;
+    use std::{env, mem::ManuallyDrop};
 
     use napi::Either;
     use oxc::{
@@ -1283,7 +1281,7 @@ mod tests {
         let ParserReturn { mut program, diagnostics, .. } =
             Parser::new(&allocator, source, SourceType::mjs()).parse();
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
-        match expand_calls(&allocator, Path::new(importer), &mut program, source, true) {
+        match expand_calls(&allocator, Path::new(importer), None, &mut program, source, true) {
             Ok(globs) => Ok((Codegen::new().build(&program).code, globs)),
             Err(errors) => Err(errors
                 .into_iter()
@@ -1628,7 +1626,7 @@ mod tests {
                 WatchGlob {
                     roots: vec![
                         WatchGlobRoot { base: fixture.path("a"), depth: None },
-                        WatchGlobRoot { base: base.clone(), depth: None },
+                        WatchGlobRoot { base: base.clone(), depth: Some(2) },
                     ],
                     include: vec![
                         format!("{}/**/*.ts", escape(&fixture.path("a"))),
@@ -1654,7 +1652,7 @@ mod tests {
         let source = "import.meta.glob('./*.ts');\n";
         let mut program = Parser::new(&allocator, source, SourceType::mjs()).parse().program;
         assert!(
-            expand_calls(&allocator, Path::new(&main), &mut program, source, false)
+            expand_calls(&allocator, Path::new(&main), None, &mut program, source, false)
                 .unwrap()
                 .is_empty()
         );
@@ -1698,7 +1696,7 @@ mod tests {
         assert_eq!(keys("'./r/*.ts', { caseSensitive: false }"), ["./r/B.TS", "./r/a.ts"]);
         assert_eq!(keys("'./r/*.TS', { caseSensitive: false }"), ["./r/B.TS", "./r/a.ts"]);
         assert_eq!(keys("'./r/*.ts', { caseSensitive: true }"), ["./r/a.ts"]);
-        // `{` and `**` walk any depth; otherwise as deep as the pattern reaches.
+        // `**` walks any depth; otherwise, braces too, as deep as the pattern's text reaches.
         assert_eq!(keys("'./*/{a,b}.ts'"), ["./r/a.ts"]);
         assert_eq!(
             keys("'./*/*/*.ts', { exhaustive: true }"),
@@ -1792,9 +1790,15 @@ mod tests {
         );
         assert!(matcher.matches(fixture.path("r/b/.config/new.ts")));
         assert!(!matcher.matches(fixture.path("r/b/.other/new.ts")));
+        // The watcher's walk enters the folders the transform's does.
+        assert!(matcher.may_enter(fixture.path("r/b")));
+        assert!(matcher.may_enter(fixture.path("r/b/.config")));
+        assert!(!matcher.may_enter(fixture.path("r/b/.other")));
+        assert!(!matcher.may_enter(fixture.path("r/b/.config/deeper")));
     }
 
-    // A specifier is a URL: `%`, `#` and `?` in a file name are encoded there, not in the key.
+    // A specifier is a URL: a file name is encoded there as `pathToFileURL` encodes it, not in
+    // the key.
     #[test]
     fn url_characters_in_file_names() {
         let fixture =
@@ -1802,7 +1806,7 @@ mod tests {
         let main = fixture.path("main.mjs");
         let lazy = code(&main, "const m = import.meta.glob('./r/*.ts');");
         for expected in [
-            r#""./r/name part.ts": () => import("./r/name part.ts")"#,
+            r#""./r/name part.ts": () => import("./r/name%20part.ts")"#,
             r#""./r/name#part.ts": () => import("./r/name%23part.ts")"#,
             r#""./r/name%20part.ts": () => import("./r/name%2520part.ts")"#,
         ] {
@@ -1818,7 +1822,8 @@ mod tests {
         }
         // Characters a file name cannot hold on every platform.
         assert_eq!(url_specifier("./a?b\\c\td\ne\rf.ts"), "./a%3Fb%5Cc%09d%0Ae%0Df.ts");
-        assert_eq!(url_specifier("./é f.ts"), "./é f.ts");
+        assert_eq!(url_specifier("./é f.ts"), "./%C3%A9%20f.ts");
+        assert_eq!(url_specifier("../a/b.c.ts"), "../a/b.c.ts");
     }
 
     // As in Vite, which finds the calls in the source text, an escaped `glob` is no glob call,
@@ -1834,6 +1839,20 @@ mod tests {
         ] {
             let out = code(&main, source);
             assert!(out.contains("import.meta.glob(\"./r/*.ts\")"), "{source}: {out}");
+        }
+    }
+
+    // The pass runs only on a source that spells `glob` as a word of its own.
+    #[test]
+    fn the_pass_needs_glob_as_a_word() {
+        assert!(has_glob_word(b"import.meta.glob('./*.ts')"));
+        assert!(has_glob_word(b"import.meta.glob<T>('./*.ts')"));
+        assert!(has_glob_word(b"glob"));
+        assert!(has_glob_word(b"globalThis; /* glob */"));
+        for source in
+            ["globalThis.x", "$glob", "_glob", "glob$", "globs", "\\u0067glob", "églob", "glob1"]
+        {
+            assert!(!has_glob_word(source.as_bytes()), "{source}");
         }
     }
 
@@ -1876,6 +1895,14 @@ mod tests {
         assert!(!routes.matches("/p/routes/A.TS".into()));
         let dot = matcher(&["/p/routes/**/*.ts"], &[], true, true);
         assert!(dot.matches("/p/routes/node_modules/.x/A.TS".into()));
+        // The walk enters `node_modules` only with `exhaustive`, and a dot folder only where
+        // a pattern spells it.
+        assert!(routes.may_enter("/p/routes/deep".into()));
+        assert!(!routes.may_enter("/p/routes/node_modules".into()));
+        assert!(!routes.may_enter("/p/routes/.git".into()));
+        assert!(!routes.may_enter("/p/other".into()));
+        assert!(dot.may_enter("/p/routes/node_modules".into()));
+        assert!(dot.may_enter("/p/routes/.cache".into()));
         // A folder named like a glob is literal once escaped.
         let literal = matcher(&["/p/a\\[1\\]/*.ts"], &[], false, false);
         assert!(literal.matches("/p/a[1]/x.ts".into()));
@@ -2054,7 +2081,16 @@ mod tests {
         assert_eq!(relative_import("/a", "/a/d.ts"), "./d.ts");
         assert_eq!(relative_import("/", "/d.ts"), "./d.ts");
         assert!(is_url("data:text/javascript,1") && is_url("custom+x:a") && !is_url("C:/a.ts"));
-        assert_eq!(importer_path(Path::new("data:text/javascript,1")), None);
+        assert_eq!(importer_path(Path::new("data:text/javascript,1"), None), None);
+        // A relative path is the transformer's: against its working directory.
+        let cwd = if cfg!(windows) { "C:/app" } else { "/app" };
+        assert_eq!(
+            importer_path(Path::new("src/main.ts"), Some(Path::new(cwd))),
+            Some(format!("{cwd}/src/main.ts"))
+        );
+        assert_eq!(importer_path(Path::new("src/main.ts"), None), None);
+        // Braces no longer walk any depth: their text bounds it.
+        assert_eq!(resolve("/app", "./{a,b/c}/*.ts").depth, Some(3));
         let r = resolve("/app/x [1]", "./a/\\{b\\}/*.ts");
         assert_eq!(
             (r.dir.as_str(), r.pattern.as_str(), r.depth),

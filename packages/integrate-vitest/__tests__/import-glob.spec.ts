@@ -161,6 +161,7 @@ describe("the forms", () => {
       "routes/name#part.ts": 'export default "hash";\n',
       "routes/name%20part.ts": 'export default "percent";\n',
       "routes/name part.ts": 'export default "space";\n',
+      "routes/né.ts": 'export default "accent";\n',
       "eager.ts":
         "const m = import.meta.glob('./routes/*.ts', { import: 'default', eager: true });\n" +
         "console.log(JSON.stringify(m));\n",
@@ -176,6 +177,7 @@ describe("the forms", () => {
       "./routes/name part.ts": "space",
       "./routes/name#part.ts": "hash",
       "./routes/name%20part.ts": "percent",
+      "./routes/né.ts": "accent",
     });
     for (const entry of ["./eager.ts", "./lazy.ts"]) {
       const result = run(root, entry);

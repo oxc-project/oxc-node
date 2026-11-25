@@ -17,15 +17,17 @@ export function parseWatchMessage(msg: unknown): string[] | null {
   const record = msg as Record<string, unknown>;
   const lists = [record["watch:require"], record["watch:import"]];
   if (lists.every((list) => list === undefined)) return null;
+  return lists.flatMap((list) => (Array.isArray(list) ? toPaths(list) : []));
+}
+
+/** The entries of `list` that are paths, as paths: a bad one is dropped alone. */
+function toPaths(list: unknown[]): string[] {
   const paths: string[] = [];
-  for (const list of lists) {
-    if (!Array.isArray(list)) continue;
-    for (const entry of list) {
-      try {
-        const path = toPath(entry);
-        if (path !== undefined) paths.push(path);
-      } catch {}
-    }
+  for (const entry of list) {
+    try {
+      const path = toPath(entry);
+      if (path !== undefined) paths.push(path);
+    } catch {}
   }
   return paths;
 }
@@ -103,14 +105,6 @@ function parseGlob(entry: unknown): WatchGlob | undefined {
   if (exclude !== undefined) glob.exclude = exclude;
   if (dot !== undefined) glob.dot = dot;
   if (nocase !== undefined) glob.nocase = nocase;
-  if (files !== undefined) {
-    glob.files = [];
-    for (const file of files) {
-      try {
-        const path = toPath(file);
-        if (path !== undefined) glob.files.push(path);
-      } catch {}
-    }
-  }
+  if (files !== undefined) glob.files = toPaths(files);
   return glob;
 }

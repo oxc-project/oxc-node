@@ -1,6 +1,9 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 
+import type { GlobWatch } from "./dirs.js";
+import type { WatchGlob } from "./messages.js";
+
 // "oxc": reported by oxc-node (a tsconfig, a missing file), not by Node.js. Like "graph",
 // it counts for one run.
 export type Source = "graph" | "oxc" | "walk" | "literal";
@@ -15,8 +18,27 @@ export interface Matcher {
   literals(): string[];
   /** Whether a walk skips a folder below one of its roots. */
   pruneDir(absDir: string): boolean;
+  /** Whether `--exclude` covers a file: `classify` says `"exclude"` for it, whatever the source. */
+  excludes(absPath: string): boolean;
   /** Whether `--exclude` covers a folder and everything in it: the part of `pruneDir` that globs reported by the app obey too. */
   excludesDir(absDir: string): boolean;
+}
+
+/** What the embedder's `globMatcher` returns for one `watch:glob` entry. */
+export interface GlobTest {
+  /** Whether a file counts: an absolute path with `/` on every platform, its case kept. */
+  matches(file: string): boolean;
+  /** Whether the walk enters a folder, an absolute path with `/`: the rule the app's files were listed with. */
+  mayEnter?(dir: string): boolean;
+}
+
+/** `path.posix.matchesGlob`, which Node.js 22.5 added; `what` names the globs that need it. */
+function nodeMatchesGlob(what: string): (p: string, g: string) => boolean {
+  const matchesGlob = path.posix.matchesGlob as ((p: string, g: string) => boolean) | undefined;
+  if (typeof matchesGlob !== "function") {
+    throw new Error(`${what} need Node.js 22.5 or later (path.matchesGlob)`);
+  }
+  return matchesGlob;
 }
 
 // `@ + !` mean something only before `(`: scoped packages and `(group)` folders are literal.
@@ -125,10 +147,7 @@ export function makeMatcher(opts: {
   };
 
   const globs = [...include, ...exclude].filter((p) => GLOB_CHARS.test(p));
-  const matchesGlob = path.posix.matchesGlob as ((p: string, g: string) => boolean) | undefined;
-  if (globs.length && typeof matchesGlob !== "function") {
-    throw new Error(`--include and --exclude globs need Node.js 22.5 or later (path.matchesGlob)`);
-  }
+  const matchesGlob = globs.length ? nodeMatchesGlob("--include and --exclude globs") : undefined;
 
   // A literal matches itself and everything below it. A root (`/`, `c:/`) already ends in `/`.
   const literal = (lit: string) => {
@@ -237,13 +256,15 @@ export function makeMatcher(opts: {
         );
       return skipped || excludesDir(n);
     },
+    excludes: (absPath) => excluded(norm(absPath)),
     excludesDir: (absDir) => excludesDir(norm(absDir)),
   };
 }
 
 /**
- * The folders the walk of a glob that the app reported skips: `node_modules` and `.git`, other
- * folders whose name starts with `.` unless `dot` is set, and what `--exclude` covers.
+ * The folders the walk of a glob that the app reported skips when the embedder's matcher has no
+ * `mayEnter`: `node_modules` and `.git`, other folders whose name starts with `.` unless `dot` is
+ * set, and what `--exclude` covers.
  */
 export function globPruneDir(
   matcher: Pick<Matcher, "excludesDir">,
@@ -266,17 +287,57 @@ export function globPruneDir(
 /**
  * The default test for a glob the app reported, when the embedder gives no `globMatcher`: a
  * file counts when an `include` pattern matches it and no `exclude` pattern does, by
- * `path.matchesGlob`. `dot` and `nocase` do not change it.
+ * `path.matchesGlob`. `dot` and `nocase` do not change it. It has no `mayEnter`, so the walk
+ * skips the folders {@link globPruneDir} names.
  */
-export function defaultGlobMatcher(glob: {
-  include: string[];
-  exclude?: string[];
-}): (file: string) => boolean {
-  const matchesGlob = path.posix.matchesGlob as ((p: string, g: string) => boolean) | undefined;
-  if (typeof matchesGlob !== "function") {
-    throw new Error(`globs need Node.js 22.5 or later (path.matchesGlob)`);
-  }
+export function defaultGlobMatcher(glob: { include: string[]; exclude?: string[] }): GlobTest {
+  const matchesGlob = nodeMatchesGlob("globs");
   const { include, exclude = [] } = glob;
-  return (file) =>
-    include.some((g) => matchesGlob(file, g)) && !exclude.some((g) => matchesGlob(file, g));
+  return {
+    matches: (file) =>
+      include.some((g) => matchesGlob(file, g)) && !exclude.some((g) => matchesGlob(file, g)),
+  };
+}
+
+/**
+ * The watch of one entry of a `watch:glob` report, by `test`, what the embedder's `globMatcher`
+ * returned for it. `--exclude` holds for every file and folder, the files the app listed too,
+ * and the walk skips `.git`, as Vite's watcher does. Beyond that, `mayEnter` decides which
+ * folders the walk enters, the rule the app's files were listed with; without it, the rule of
+ * {@link globPruneDir}.
+ */
+export function globWatch(
+  glob: WatchGlob,
+  test: GlobTest,
+  matcher: Pick<Matcher, "excludes" | "excludesDir">,
+  platform: NodeJS.Platform,
+): GlobWatch {
+  const win = platform === "win32";
+  const slash = win ? (p: string) => p.replaceAll("\\", "/") : (p: string) => p;
+  const isGit = (dir: string) => {
+    const name = (win ? path.win32 : path.posix).basename(dir);
+    return (win ? name.toLowerCase() : name) === ".git";
+  };
+  return {
+    roots: glob.roots.map((r) => ({ base: r.base, depth: r.depth ?? Infinity })),
+    files: glob.files,
+    counts: (file) => {
+      if (matcher.excludes(file)) return false;
+      try {
+        return test.matches(slash(file));
+      } catch {
+        return false;
+      }
+    },
+    prune: test.mayEnter
+      ? (dir) => {
+          if (matcher.excludesDir(dir) || isGit(dir)) return true;
+          try {
+            return !test.mayEnter!(slash(dir));
+          } catch {
+            return true;
+          }
+        }
+      : globPruneDir(matcher, glob.dot ?? false, platform),
+  };
 }

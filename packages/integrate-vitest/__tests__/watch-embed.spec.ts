@@ -267,9 +267,11 @@ process.exitCode = await runWatch(process.argv.slice(2), {
   loaderArgs: [],
   globMatcher: ({ include }) => {
     const dirs = include.map((p) => p.slice(0, p.lastIndexOf("/") + 1));
-    return (file) => {
-      console.log("MATCH " + file);
-      return file.endsWith(".mjs") && dirs.some((dir) => file.startsWith(dir));
+    return {
+      matches(file) {
+        console.log("MATCH " + file);
+        return file.endsWith(".mjs") && dirs.some((dir) => file.startsWith(dir));
+      },
     };
   },
 });

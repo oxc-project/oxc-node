@@ -15,9 +15,11 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { GlobMatcher } from "@oxc-node/core";
 import { afterAll, describe, expect, test, vi } from "vitest";
 
 import { DirWatcher, type DirWatcherOptions, type GlobWatch } from "../../cli/src/watch/dirs.js";
+import { globWatch, makeMatcher } from "../../cli/src/watch/glob.js";
 import {
   descendants,
   parseProcStat,
@@ -28,7 +30,12 @@ import {
 } from "../../cli/src/watch/kill-tree.js";
 import { DEFAULT_NAMES, help, namesFor, usage } from "../../cli/src/watch/help.js";
 import { createLog } from "../../cli/src/watch/log.js";
-import { fromOxcNode, parseWatchGlobs, parseWatchMessage } from "../../cli/src/watch/messages.js";
+import {
+  fromOxcNode,
+  parseWatchGlobs,
+  parseWatchMessage,
+  type WatchGlob,
+} from "../../cli/src/watch/messages.js";
 
 const abs = (p: string) => resolve(p);
 
@@ -1465,6 +1472,57 @@ describe("DirWatcher", () => {
         await until(() => changes.includes(b), "the new file");
         await new Promise((r) => setTimeout(r, 300));
         expect(changes).toEqual([b]);
+      } finally {
+        w.close();
+      }
+    });
+
+    // `oxnode watch` builds each glob's watch from the binding's `GlobMatcher`, whose `mayEnter`
+    // is the folder rule the transform listed the files with.
+    test("with the binding's mayEnter: a dot folder that a pattern names after a wildcard, and node_modules with exhaustive", async () => {
+      const root = temp();
+      const [r, n] = [join(root, "r"), join(root, "n")];
+      const x = join(r, "a", ".config", "x.ts");
+      const y = join(n, "node_modules", "y.ts");
+      for (const file of [x, y]) {
+        mkdirSync(join(file, ".."), { recursive: true });
+        writeFileSync(file, "1");
+      }
+      const slashed = (p: string) => p.replaceAll("\\", "/");
+      const globs: WatchGlob[] = [
+        { roots: [{ base: r, depth: 3 }], include: [`${slashed(r)}/*/.config/*.ts`], files: [x] },
+        { roots: [{ base: n }], include: [`${slashed(n)}/**/*.ts`], dot: true, files: [y] },
+      ];
+      const matcher = makeMatcher({
+        cwd: root,
+        include: [],
+        exclude: [],
+        platform: process.platform,
+      });
+      const { w, changes, emit, ready } = linux();
+      try {
+        for (const glob of globs) {
+          const binding = new GlobMatcher(glob.include, glob.exclude, glob.dot, glob.nocase);
+          w.addGlob(globWatch(glob, binding, matcher, process.platform));
+        }
+        // Both folders are walked: the default rule skips them.
+        await ready(join(r, "a", ".config"));
+        await ready(join(n, "node_modules"));
+        expect(changes).toEqual([]);
+        const fresh = join(r, "b", ".config", "new.ts");
+        mkdirSync(join(fresh, ".."), { recursive: true });
+        writeFileSync(fresh, "1");
+        writeFileSync(join(r, "b", ".config.ts"), "1");
+        emit(r, "b");
+        expect(changes).toEqual([fresh]);
+        const z = join(n, "node_modules", "z.ts");
+        writeFileSync(z, "1");
+        emit(join(n, "node_modules"), "z.ts");
+        expect(changes).toEqual([fresh, z]);
+        // The listed file in node_modules is watched too: it counts for the glob.
+        rmSync(y);
+        emit(join(n, "node_modules"), "y.ts");
+        expect(changes).toEqual([fresh, z, y]);
       } finally {
         w.close();
       }

@@ -25,7 +25,6 @@ import {
   getImportGlob,
   initTracing,
   load as oxcLoad,
-  setImportGlob,
   takeWatchDependencies,
   takeWatchGlobs,
   transformsDep,
@@ -45,14 +44,6 @@ if (isMainThread) {
 const watch = watchSink();
 if (watch) {
   enableWatchReport();
-}
-
-// `import.meta.glob` is not Node.js syntax, and a script may test for it, so its
-// expansion is opt-in. The grammar is `OXC_TRANSFORM_ALL`'s: absent, empty, "0"
-// and "false" leave it off. A preload may also have called `setImportGlob(true)`.
-const importGlob = process.env.OXC_IMPORT_GLOB;
-if (importGlob !== undefined && importGlob !== "" && importGlob !== "0" && importGlob !== "false") {
-  setImportGlob(true);
 }
 
 // Destructure from NodeModule namespace to support older Node.js versions
@@ -193,9 +184,9 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
   const searchedElsewhere = Array.isArray(options?.paths);
   if (!searchedElsewhere && mapsThroughTsconfig(request, parent)) {
     const candidates = tsconfigPathCandidates(process.cwd(), parent.filename, request);
-    // Finding the importer's tsconfig reads it.
+    // Finding the importer's tsconfig reads it. A resolve expands no glob.
     if (watch) {
-      flush(watch, takeWatchDependencies, takeWatchGlobs);
+      flush(watch, takeWatchDependencies);
     }
     for (const candidate of candidates) {
       try {
@@ -901,9 +892,9 @@ function resolveNative(request, filename, options) {
   } catch {
     return undefined;
   } finally {
-    // Resolving records the files it looked for, and the tsconfig it read.
+    // Resolving records the files it looked for, and the tsconfig it read; it expands no glob.
     if (watch) {
-      flush(watch, takeWatchDependencies, takeWatchGlobs);
+      flush(watch, takeWatchDependencies);
     }
   }
 }
@@ -1178,12 +1169,13 @@ function canRegisterSyncHooks() {
 // `module.registerHooks()` on every runtime that implements it completely.
 if (canRegisterSyncHooks()) {
   initTracing();
-  // A hook records what it read or looked for, and then reports it.
+  // A hook records what it read or looked for, and then reports it. Only a load expands
+  // globs.
   registerHooks(
     watch
       ? {
           load: withFlush(load, watch, takeWatchDependencies, takeWatchGlobs),
-          resolve: withFlush(resolve, watch, takeWatchDependencies, takeWatchGlobs),
+          resolve: withFlush(resolve, watch, takeWatchDependencies),
         }
       : { load, resolve },
   );

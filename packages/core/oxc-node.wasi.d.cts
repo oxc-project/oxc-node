@@ -5,8 +5,8 @@
 export declare const __napiBindingTarget: "wasm32-wasi";
 
 /**
- * Whether a file counts for one `watch:glob` entry, by the rules the transform listed
- * its files with. For the `globMatcher` of `runWatch`.
+ * Whether a file counts for one `watch:glob` entry, and which folders its walk enters, by
+ * the rules the transform listed its files with. For the `globMatcher` of `runWatch`.
  */
 export declare class GlobMatcher {
   constructor(
@@ -17,6 +17,11 @@ export declare class GlobMatcher {
   );
   /** Whether `file`, an absolute path with `/`, counts. */
   matches(file: string): boolean;
+  /**
+   * Whether the walk enters the folder `dir`, an absolute path with `/`, as the
+   * transform's walk does: a file below it may count.
+   */
+  mayEnter(dir: string): boolean;
 }
 
 export declare class Output {
@@ -70,7 +75,11 @@ export declare function enableWatchReport(): void;
  */
 export declare function freezeTransformDeps(): string;
 
-/** Whether this thread's transforms expand `import.meta.glob` calls. */
+/**
+ * Whether this thread's transforms expand `import.meta.glob` calls: what `setImportGlob`
+ * set, else this thread's `OXC_IMPORT_GLOB`. Absent, empty, `"0"` and `"false"` leave it
+ * off, as for `OXC_TRANSFORM_ALL`.
+ */
 export declare function getImportGlob(): boolean;
 
 /**
@@ -187,10 +196,10 @@ export interface ResolveFnOutput {
 export declare function setTransformDeps(mode?: string | undefined | null): void;
 
 /**
- * Turn the expansion of `import.meta.glob` calls on or off for this thread. A file
- * transformed after the call sees the new value. Off by default. A loader passes
- * [`get_import_glob`] to its `module.register()` hook thread, whose context starts
- * with it off.
+ * Turn the expansion of `import.meta.glob` calls on or off for this thread, whatever
+ * `OXC_IMPORT_GLOB` says. A file transformed after the call sees the new value. A
+ * loader passes [`get_import_glob`] to its `module.register()` hook thread, whose
+ * context starts without the override.
  */
 export declare function setImportGlob(enabled: boolean): void;
 

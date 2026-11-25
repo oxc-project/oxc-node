@@ -167,8 +167,9 @@ function initialize(data) {
   if (port) {
     port.unref();
     const sink = (message) => port.postMessage(message);
+    // Only a load expands globs.
     watchHooks = {
-      resolve: withFlush(resolve, sink, takeWatchDependencies, takeWatchGlobs),
+      resolve: withFlush(resolve, sink, takeWatchDependencies),
       load: withFlush(load, sink, takeWatchDependencies, takeWatchGlobs),
     };
     // A WASI copy has a recorder of its own; on native this repeats the main thread.
@@ -183,9 +184,10 @@ function initialize(data) {
   if (data?.transformDeps != null) {
     setTransformDeps(data.transformDeps);
   }
-  // `import.meta.glob` expansion, as the registering thread has it.
-  if (data?.importGlob) {
-    setImportGlob(true);
+  // `import.meta.glob` expansion, as the registering thread has it, whatever this
+  // thread's `OXC_IMPORT_GLOB` says.
+  if (typeof data?.importGlob === "boolean") {
+    setImportGlob(data.importGlob);
   }
 }
 

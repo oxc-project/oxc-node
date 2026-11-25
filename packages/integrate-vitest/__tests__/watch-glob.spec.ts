@@ -4,6 +4,7 @@ import {
   defaultGlobMatcher,
   expandBraces,
   globPruneDir,
+  globWatch,
   makeMatcher,
 } from "../../cli/src/watch/glob.js";
 
@@ -30,11 +31,61 @@ describe("globs the app reports", () => {
       include: ["/p/routes/*.ts", "/p/api/**/*.ts"],
       exclude: ["/p/**/*.test.ts"],
     });
-    expect(test("/p/routes/a.ts")).toBe(true);
-    expect(test("/p/api/v1/b.ts")).toBe(true);
-    expect(test("/p/routes/a.test.ts")).toBe(false);
-    expect(test("/p/routes/a.js")).toBe(false);
-    expect(test("/p/routes/deep/a.ts")).toBe(false);
+    expect(test.matches("/p/routes/a.ts")).toBe(true);
+    expect(test.matches("/p/api/v1/b.ts")).toBe(true);
+    expect(test.matches("/p/routes/a.test.ts")).toBe(false);
+    expect(test.matches("/p/routes/a.js")).toBe(false);
+    expect(test.matches("/p/routes/deep/a.ts")).toBe(false);
+    // It does not say which folders the walk enters: `globPruneDir` does.
+    expect("mayEnter" in test).toBe(false);
+  });
+
+  test("with the embedder's mayEnter, the walk enters what it says, but not .git or what --exclude covers", () => {
+    const glob = { roots: [{ base: "/proj/src" }], include: ["/proj/src/**/*.ts"] };
+    const asked: string[] = [];
+    const mayEnter = (dir: string) => {
+      asked.push(dir);
+      return !dir.endsWith("/no");
+    };
+    const watch = globWatch(
+      glob,
+      { matches: (file) => file.endsWith(".ts"), mayEnter },
+      matcher([], ["src/dist/**", "src/skip.ts"]),
+      "linux",
+    );
+    expect(watch.roots).toEqual([{ base: "/proj/src", depth: Infinity }]);
+    expect(watch.prune("/proj/src/node_modules")).toBe(false);
+    expect(watch.prune("/proj/src/.config")).toBe(false);
+    expect(watch.prune("/proj/src/no")).toBe(true);
+    expect(watch.prune("/proj/src/.git")).toBe(true);
+    expect(watch.prune("/proj/src/dist")).toBe(true);
+    expect(asked).toEqual(["/proj/src/node_modules", "/proj/src/.config", "/proj/src/no"]);
+    // `--exclude` holds for a file before the embedder's matcher is asked.
+    expect(watch.counts("/proj/src/skip.ts")).toBe(false);
+    expect(watch.counts("/proj/src/a.ts")).toBe(true);
+    expect(watch.counts("/proj/src/a.md")).toBe(false);
+    // Without `mayEnter`: the rule of `globPruneDir`.
+    const plain = globWatch(glob, { matches: () => true }, matcher([]), "linux");
+    expect(plain.prune("/proj/src/node_modules")).toBe(true);
+    expect(plain.prune("/proj/src/.config")).toBe(true);
+    expect(plain.prune("/proj/src/routes")).toBe(false);
+  });
+
+  test("Windows: the embedder's matcher gets paths with /, and .git is skipped in any case", () => {
+    const seen: string[] = [];
+    const watch = globWatch(
+      { roots: [{ base: "C:\\proj", depth: 1 }], include: ["C:/proj/*.ts"] },
+      {
+        matches: (file) => (seen.push(file), true),
+        mayEnter: (dir) => (seen.push(dir), true),
+      },
+      { excludes: () => false, excludesDir: () => false },
+      "win32",
+    );
+    expect(watch.counts("C:\\proj\\a.ts")).toBe(true);
+    expect(watch.prune("C:\\proj\\sub")).toBe(false);
+    expect(watch.prune("C:\\proj\\.GIT")).toBe(true);
+    expect(seen).toEqual(["C:/proj/a.ts", "C:/proj/sub"]);
   });
 
   test("the walk skips node_modules and .git, dot folders unless dot, and what --exclude covers", () => {
@@ -159,6 +210,10 @@ describe("makeMatcher", () => {
     expect(m.classify("/proj/src/a.ts", "walk")).toBe("watch");
     expect(m.classify("/proj/node_modules/pkg/dist/x.js", "graph")).toBe("exclude");
     expect(m.classify("/proj/node_modules/pkg/src/x.js", "graph")).toBe("watch");
+    // `excludes` is that verdict, whatever the source.
+    expect(m.excludes("/proj/src/a.test.ts")).toBe(true);
+    expect(m.excludes("/proj/node_modules/pkg/dist/x.js")).toBe(true);
+    expect(m.excludes("/proj/src/a.ts")).toBe(false);
   });
 
   test("exclude wins over literals, even the entry", () => {

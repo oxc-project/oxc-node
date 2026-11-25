@@ -12,19 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { types } from "node:util";
 import vm from "node:vm";
 
-import { createResolve, setImportGlob, transformModuleRunner, transformsDep } from "./index.js";
-
-// `import.meta.glob` expansion is opt-in, with `OXC_TRANSFORM_ALL`'s grammar, as in
-// `register.mjs`: absent, empty, "0" and "false" leave it off.
-const IMPORT_GLOB = process.env.OXC_IMPORT_GLOB;
-if (
-  IMPORT_GLOB !== undefined &&
-  IMPORT_GLOB !== "" &&
-  IMPORT_GLOB !== "0" &&
-  IMPORT_GLOB !== "false"
-) {
-  setImportGlob(true);
-}
+import { createResolve, transformModuleRunner, transformsDep } from "./index.js";
 
 const IMPORT_CONDITIONS = ["node", "import"];
 const REQUIRE_CONDITIONS = ["node", "require"];

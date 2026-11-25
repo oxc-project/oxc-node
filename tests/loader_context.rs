@@ -243,3 +243,46 @@ fn import_glob_is_per_context_and_off_by_default() {
             .unwrap();
     });
 }
+
+// `OXC_IMPORT_GLOB` decides until `set_import_glob` overrides it, either way. The variable
+// is the process's here, so the test runs again as a child process that has it set.
+#[test]
+fn import_glob_follows_the_environment_until_overridden() {
+    const NAME: &str = "import_glob_follows_the_environment_until_overridden";
+    const EXPECTED: &str = "OXC_NODE_TEST_IMPORT_GLOB";
+    if let Ok(expected) = std::env::var(EXPECTED) {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.0.join("routes")).unwrap();
+        fs::write(fixture.0.join("routes/a.ts"), "export {};\n").unwrap();
+        let transformer = fixture.transformer();
+        // A relative path is the transformer's, against its working directory.
+        let expanded = || {
+            let source = "console.log(Object.keys(import.meta.glob('./routes/*.ts')));\n";
+            unwrap_oxc(transformer.transform("glob.ts".into(), Either::A(source.into())))
+                .source()
+                .contains(r#""./routes/a.ts": 0"#)
+        };
+        let on = expected == "on";
+        assert_eq!(get_import_glob(), on);
+        assert_eq!(expanded(), on);
+        set_import_glob(!on);
+        assert_eq!(get_import_glob(), !on);
+        assert_eq!(expanded(), !on);
+        set_import_glob(on);
+        assert_eq!(expanded(), on);
+        return;
+    }
+    for (value, on) in
+        [("1", true), ("true", true), ("yes", true), ("", false), ("0", false), ("false", false)]
+    {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--test-threads=1"])
+            .env("OXC_IMPORT_GLOB", value)
+            .env(EXPECTED, if on { "on" } else { "off" })
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{value:?}: {stdout}");
+        assert!(stdout.contains("1 passed"), "{value:?}: {stdout}");
+    }
+}
