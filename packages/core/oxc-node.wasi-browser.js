@@ -1440,18 +1440,22 @@ try {
   throw __attachCleanupErrors(error, cleanupErrors)
 }
 export default __napiModule.exports
+export const GlobMatcher = __napiModule.exports.GlobMatcher
 export const Output = __napiModule.exports.Output
 export const OxcTransformer = __napiModule.exports.OxcTransformer
 export const createResolve = __napiModule.exports.createResolve
 export const enableWatchReport = __napiModule.exports.enableWatchReport
 export const freezeTransformDeps = __napiModule.exports.freezeTransformDeps
+export const getImportGlob = __napiModule.exports.getImportGlob
 export const getTransformDeps = __napiModule.exports.getTransformDeps
 export const getTsconfigPath = __napiModule.exports.getTsconfigPath
 export const initTracing = __napiModule.exports.initTracing
 export const load = __napiModule.exports.load
+export const setImportGlob = __napiModule.exports.setImportGlob
 export const setTransformDeps = __napiModule.exports.setTransformDeps
 export const setTsconfigPath = __napiModule.exports.setTsconfigPath
 export const takeWatchDependencies = __napiModule.exports.takeWatchDependencies
+export const takeWatchGlobs = __napiModule.exports.takeWatchGlobs
 export const transform = __napiModule.exports.transform
 export const transformAsync = __napiModule.exports.transformAsync
 export const transformModuleRunner = __napiModule.exports.transformModuleRunner

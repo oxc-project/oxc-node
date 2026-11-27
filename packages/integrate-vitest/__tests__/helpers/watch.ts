@@ -91,6 +91,7 @@ export function cleanEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     "WATCH_REPORT_DEPENDENCIES",
     "OXC_TSCONFIG_PATH",
     "TS_NODE_PROJECT",
+    "OXC_IMPORT_GLOB",
     "OXNODE_SIGNAL_ACK",
     "OXNODE_WATCH_DEBUG",
     "FORCE_COLOR",

@@ -7,7 +7,14 @@ import { fileURLToPath } from "node:url";
 import { createSignalAck, FORWARDED, gateSignals, SignalGate, sigintFromTerminal } from "../run.js";
 import { nestedWatcher, parseWatchArgs, tsconfigEnv } from "./args.js";
 import { DirWatcher } from "./dirs.js";
-import { makeMatcher, type Matcher, type Source } from "./glob.js";
+import {
+  defaultGlobMatcher,
+  globWatch,
+  makeMatcher,
+  type GlobTest,
+  type Matcher,
+  type Source,
+} from "./glob.js";
 import { help, namesFor, usage } from "./help.js";
 import {
   killTree,
@@ -19,7 +26,7 @@ import {
 } from "./kill-tree.js";
 import { createLog, debug } from "./log.js";
 import { step, type Effect, type Event, type State } from "./machine.js";
-import { fromOxcNode, parseWatchMessage } from "./messages.js";
+import { fromOxcNode, parseWatchGlobs, parseWatchMessage, type WatchGlob } from "./messages.js";
 
 const isBareReturn = (chunk: string) => /[\r\n]/.test(chunk) && chunk.replace(/[\r\n]/g, "") === "";
 /** How soon a rerun looks again for what the app left running: fast first, then every 250 ms. */
@@ -46,6 +53,14 @@ export interface WatchOptions {
    * word tags the log lines. Default: `"oxnode watch"`.
    */
   name?: string;
+  /**
+   * Builds the test for one entry of a `watch:glob` report: `matches(file)`, whether a file
+   * counts for it, and optionally `mayEnter(dir)`, whether the walk enters a folder. Each gets an
+   * absolute path with `/` on every platform, its case kept. Default: an `include` pattern
+   * matches the file and no `exclude` pattern does, by `path.matchesGlob`; without `mayEnter`,
+   * the walk skips `node_modules`, and folders that start with `.` unless `dot` is set.
+   */
+  globMatcher?: (glob: WatchGlob) => GlobTest;
 }
 
 /**
@@ -209,8 +224,27 @@ export function runWatch(argv: string[], options: WatchOptions = {}): Promise<nu
         }
       } catch {}
     };
+    const globMatcher = options.globMatcher ?? defaultGlobMatcher;
+    // The globs the current run reported, by everything but their files.
+    const runGlobs = new Set<string>();
+    const wantGlob = (glob: WatchGlob) => {
+      const { roots, include, exclude = [], dot = false, nocase = false } = glob;
+      const key = JSON.stringify([roots, include, exclude, dot, nocase]);
+      if (runGlobs.has(key)) return;
+      runGlobs.add(key);
+      let test: GlobTest;
+      try {
+        test = globMatcher(glob);
+      } catch (error) {
+        log(`cannot watch a glob: ${(error as Error).message}`);
+        return;
+      }
+      watcher.addGlob(globWatch(glob, test, matcher, process.platform));
+    };
+
     const newRun = () => {
       runSeen.clear();
+      runGlobs.clear();
       for (const k of runAliases) reported.delete(k);
       runAliases.clear();
       watcher.dropRun();
@@ -236,10 +270,13 @@ export function runWatch(argv: string[], options: WatchOptions = {}): Promise<nu
       latest = c;
       c.on("message", (msg) => {
         const paths = parseWatchMessage(msg);
-        if (paths) {
+        const globs = parseWatchGlobs(msg);
+        if (paths || globs) {
           // A late report from the run before must not add back what the new run dropped.
+          if (c !== latest) return;
           const source = fromOxcNode(msg) ? "oxc" : "graph";
-          if (c === latest) for (const p of paths) want(p, source);
+          for (const p of paths ?? []) want(p, source);
+          for (const glob of globs ?? []) wantGlob(glob);
         } else if (process.send && process.connected) {
           // Like Node.js' watcher, pass the app's own messages on.
           process.send(msg as never, () => {});

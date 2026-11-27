@@ -22,9 +22,11 @@ import {
   enableWatchReport,
   freezeTsconfig,
   freezeTransformDeps,
+  getImportGlob,
   initTracing,
   load as oxcLoad,
   takeWatchDependencies,
+  takeWatchGlobs,
   transformsDep,
   tsconfigPathCandidates,
 } from "./index.js";
@@ -182,7 +184,7 @@ Module._resolveFilename = function oxcResolveFilename(request, parent, isMain, o
   const searchedElsewhere = Array.isArray(options?.paths);
   if (!searchedElsewhere && mapsThroughTsconfig(request, parent)) {
     const candidates = tsconfigPathCandidates(process.cwd(), parent.filename, request);
-    // Finding the importer's tsconfig reads it.
+    // Finding the importer's tsconfig reads it. A resolve expands no glob.
     if (watch) {
       flush(watch, takeWatchDependencies);
     }
@@ -890,7 +892,7 @@ function resolveNative(request, filename, options) {
   } catch {
     return undefined;
   } finally {
-    // Resolving records the files it looked for, and the tsconfig it read.
+    // Resolving records the files it looked for, and the tsconfig it read; it expands no glob.
     if (watch) {
       flush(watch, takeWatchDependencies);
     }
@@ -994,7 +996,7 @@ addHook(
     } finally {
       // A transform reads the tsconfig of the file it compiles.
       if (watch) {
-        flush(watch, takeWatchDependencies);
+        flush(watch, takeWatchDependencies, takeWatchGlobs);
       }
     }
     let transformed = output.source();
@@ -1167,11 +1169,12 @@ function canRegisterSyncHooks() {
 // `module.registerHooks()` on every runtime that implements it completely.
 if (canRegisterSyncHooks()) {
   initTracing();
-  // A hook records what it read or looked for, and then reports it.
+  // A hook records what it read or looked for, and then reports it. Only a load expands
+  // globs.
   registerHooks(
     watch
       ? {
-          load: withFlush(load, watch, takeWatchDependencies),
+          load: withFlush(load, watch, takeWatchDependencies, takeWatchGlobs),
           resolve: withFlush(resolve, watch, takeWatchDependencies),
         }
       : { load, resolve },
@@ -1182,7 +1185,7 @@ if (canRegisterSyncHooks()) {
   // and ESM use different configs. Send explicit discovery too: the hook thread's
   // environment can be an older snapshot than the registering worker's.
   // That thread has no `process.send`, so its watch reports use `watchPort`.
-  const watchPort = watch ? createRelay(watch, takeWatchDependencies) : undefined;
+  const watchPort = watch ? createRelay(watch, takeWatchDependencies, takeWatchGlobs) : undefined;
   // The hook thread tags the helpers it emits with its own module's URL. A file it
   // compiles to CommonJS `require()`s them on this thread, so that tag resolves here
   // too, against this same copy.
@@ -1193,6 +1196,8 @@ if (canRegisterSyncHooks()) {
     data: {
       tsconfig: freezeTsconfig(process.cwd()),
       transformDeps: freezeTransformDeps(),
+      // No deadline: the switch as it is now, on the thread that registers.
+      importGlob: getImportGlob(),
       watchPort,
     },
     transferList: watchPort ? [watchPort] : [],

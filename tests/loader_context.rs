@@ -13,8 +13,8 @@ use std::{
 
 use napi::Either;
 use oxc_node::{
-    CapturedLoaderContext, OxcTransformer, get_tsconfig_path, initialize_loader_js,
-    set_transform_deps, set_tsconfig_path,
+    CapturedLoaderContext, OxcTransformer, get_import_glob, get_tsconfig_path,
+    initialize_loader_js, set_import_glob, set_transform_deps, set_tsconfig_path,
 };
 
 const SOURCE: &str = r#"
@@ -197,4 +197,92 @@ fn embedders_initialize_loaders_from_a_frozen_selection() {
             .join()
             .unwrap();
     });
+}
+
+#[test]
+fn import_glob_is_per_context_and_off_by_default() {
+    let fixture = Fixture::new();
+    fs::create_dir_all(fixture.0.join("routes")).unwrap();
+    fs::write(fixture.0.join("routes/a.ts"), "export {};\n").unwrap();
+    let path = fixture.0.join("glob.ts").to_string_lossy().into_owned();
+    let glob = |transformer: &OxcTransformer| {
+        let source = "console.log(Object.keys(import.meta.glob('./routes/*.ts')));\n";
+        unwrap_oxc(transformer.transform(path.clone(), Either::A(source.into()))).source()
+    };
+    let expanded = |code: &str| code.contains(r#""./routes/a.ts": 0"#);
+    thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let transformer = fixture.transformer();
+                assert!(!get_import_glob());
+                assert!(!expanded(&glob(&transformer)));
+                // No deadline: the next file sees it, after this thread's first transform.
+                set_import_glob(true);
+                assert!(get_import_glob());
+                assert!(expanded(&glob(&transformer)));
+                let context = transformer.capture_context();
+                thread::scope(|inner| {
+                    inner
+                        .spawn(|| {
+                            // A thread of its own starts with it off; a captured context
+                            // carries it.
+                            assert!(!get_import_glob());
+                            assert!(!expanded(&glob(&transformer)));
+                            assert!(
+                                context.with(|| get_import_glob() && expanded(&glob(&transformer)))
+                            );
+                            assert!(!get_import_glob());
+                        })
+                        .join()
+                        .unwrap();
+                });
+                set_import_glob(false);
+                assert!(!expanded(&glob(&transformer)));
+            })
+            .join()
+            .unwrap();
+    });
+}
+
+// `OXC_IMPORT_GLOB` decides until `set_import_glob` overrides it, either way. The variable
+// is the process's here, so the test runs again as a child process that has it set.
+#[test]
+fn import_glob_follows_the_environment_until_overridden() {
+    const NAME: &str = "import_glob_follows_the_environment_until_overridden";
+    const EXPECTED: &str = "OXC_NODE_TEST_IMPORT_GLOB";
+    if let Ok(expected) = std::env::var(EXPECTED) {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.0.join("routes")).unwrap();
+        fs::write(fixture.0.join("routes/a.ts"), "export {};\n").unwrap();
+        let transformer = fixture.transformer();
+        // A relative path is the transformer's, against its working directory.
+        let expanded = || {
+            let source = "console.log(Object.keys(import.meta.glob('./routes/*.ts')));\n";
+            unwrap_oxc(transformer.transform("glob.ts".into(), Either::A(source.into())))
+                .source()
+                .contains(r#""./routes/a.ts": 0"#)
+        };
+        let on = expected == "on";
+        assert_eq!(get_import_glob(), on);
+        assert_eq!(expanded(), on);
+        set_import_glob(!on);
+        assert_eq!(get_import_glob(), !on);
+        assert_eq!(expanded(), !on);
+        set_import_glob(on);
+        assert_eq!(expanded(), on);
+        return;
+    }
+    for (value, on) in
+        [("1", true), ("true", true), ("yes", true), ("", false), ("0", false), ("false", false)]
+    {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--test-threads=1"])
+            .env("OXC_IMPORT_GLOB", value)
+            .env(EXPECTED, if on { "on" } else { "off" })
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{value:?}: {stdout}");
+        assert!(stdout.contains("1 passed"), "{value:?}: {stdout}");
+    }
 }

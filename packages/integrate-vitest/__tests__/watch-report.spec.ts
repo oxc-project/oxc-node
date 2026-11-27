@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, describe, expect, test } from "vitest";
 
@@ -26,6 +26,7 @@ const ENV = {
   TS_NODE_PROJECT: undefined,
   OXNODE_SIGNAL_ACK: undefined,
   WATCH_REPORT_DEPENDENCIES: undefined,
+  OXC_IMPORT_GLOB: undefined,
 };
 
 const roots: string[] = [];
@@ -361,20 +362,177 @@ describe("paths a failed resolve looked for", () => {
   });
 });
 
+describe("glob reports", () => {
+  // A loader that expands globs sends them through the same sink. They load no binding.
+  const WATCH_REPORT = pathToFileURL(join(CORE, "watch-report.mjs")).href;
+  const GLOB = {
+    roots: [{ base: "/app/src/routes", depth: 1 }],
+    include: ["/app/src/routes/*.ts"],
+  };
+  // `file:///app` has no drive, so Windows cannot turn it into a path.
+  const APP = pathToFileURL(resolve("/app")).href;
+  const url = (name: string) => `${APP}/${name}`;
+
+  test("the main thread, a worker and a relay pass each one on, and do not drop a repeat", async () => {
+    const root = project({
+      "main.mjs": [
+        'import { Worker } from "node:worker_threads";',
+        `import { createRelay, watchSink } from ${JSON.stringify(WATCH_REPORT)};`,
+        "const sink = watchSink();",
+        `const glob = ${JSON.stringify(GLOB)};`,
+        'sink({ "watch:glob": [glob] });',
+        'sink({ "watch:glob": [{ ...glob, files: ["/app/src/routes/a.ts"] }] });',
+        'sink({ "watch:glob": [glob] });',
+        `sink({ "watch:import": [${JSON.stringify(url("x.ts"))}] });`,
+        `sink({ "watch:import": [${JSON.stringify(url("x.ts"))}] });`,
+        'const worker = new Worker(new URL("./worker.mjs", import.meta.url));',
+        'await new Promise((resolve) => worker.on("exit", resolve));',
+        // The reports travel on a channel of their own; give it a turn after the exit.
+        "await new Promise((resolve) => setTimeout(resolve, 200));",
+        "const port = createRelay(sink, () => []);",
+        'port.postMessage({ "watch:glob": [{ ...glob, include: ["/app/src/relay/*.ts"] }] });',
+        "",
+      ].join("\n"),
+      "worker.mjs": [
+        `import { watchSink } from ${JSON.stringify(WATCH_REPORT)};`,
+        `const glob = ${JSON.stringify(GLOB)};`,
+        'watchSink()({ "watch:glob": [{ ...glob, include: ["/app/src/worker/*.ts"] }] });',
+        "",
+      ].join("\n"),
+    });
+    const { messages, code, stderr } = await spy(root, ["./main.mjs"]);
+    expect(code, stderr).toBe(0);
+    // Node.js reports the modules it loads too.
+    const sent = messages.filter((m) => {
+      const record = m as Record<string, unknown[]>;
+      return "watch:glob" in record || record["watch:import"]?.[0] === url("x.ts");
+    });
+    expect(sent).toEqual([
+      { "watch:glob": [GLOB] },
+      { "watch:glob": [{ ...GLOB, files: ["/app/src/routes/a.ts"] }] },
+      { "watch:glob": [GLOB] },
+      { "watch:import": [url("x.ts")] },
+      { "watch:glob": [{ ...GLOB, include: ["/app/src/worker/*.ts"] }] },
+      { "watch:glob": [{ ...GLOB, include: ["/app/src/relay/*.ts"] }] },
+    ]);
+  });
+
+  test("flush sends what takeGlobs returns, from the main thread, a worker and a relay", async () => {
+    const glob = (name: string) => ({ ...GLOB, include: [`/app/src/${name}/*.ts`] });
+    const root = project({
+      "main.mjs": [
+        'import { Worker } from "node:worker_threads";',
+        `import { createRelay, flush, watchSink, withFlush } from ${JSON.stringify(WATCH_REPORT)};`,
+        "const sink = watchSink();",
+        `const GLOB = ${JSON.stringify(GLOB)};`,
+        "const glob = (name) => ({ ...GLOB, include: [`/app/src/${name}/*.ts`] });",
+        `flush(sink, () => [${JSON.stringify(url("a.ts"))}], () => [glob("main"), glob("main2")]);`,
+        // Nothing to send: no message, and no `takeGlobs` at all is fine too.
+        "flush(sink, () => [], () => []);",
+        `flush(sink, () => [${JSON.stringify(url("b.ts"))}]);`,
+        'withFlush(() => {}, sink, () => [], () => [glob("hook")])();',
+        'const worker = new Worker(new URL("./worker.mjs", import.meta.url));',
+        'await new Promise((resolve) => worker.on("exit", resolve));',
+        "await new Promise((resolve) => setTimeout(resolve, 200));",
+        // Drained when the process ends.
+        'createRelay(sink, () => [], () => [glob("relay")]);',
+        "",
+      ].join("\n"),
+      "worker.mjs": [
+        `import { flush, watchSink } from ${JSON.stringify(WATCH_REPORT)};`,
+        `const GLOB = ${JSON.stringify(GLOB)};`,
+        "const glob = (name) => ({ ...GLOB, include: [`/app/src/${name}/*.ts`] });",
+        'flush(watchSink(), () => [], () => [glob("worker")]);',
+        "",
+      ].join("\n"),
+    });
+    const { messages, code, stderr } = await spy(root, ["./main.mjs"]);
+    expect(code, stderr).toBe(0);
+    const sent = messages.filter((m) => {
+      const record = m as Record<string, unknown[]>;
+      return (
+        "watch:glob" in record || record["watch:import"]?.[0]?.toString().startsWith(`${APP}/`)
+      );
+    });
+    expect(sent).toEqual([
+      { "watch:import": [url("a.ts")], "oxc-node": true },
+      { "watch:glob": [glob("main"), glob("main2")], "oxc-node": true },
+      { "watch:import": [url("b.ts")], "oxc-node": true },
+      { "watch:glob": [glob("hook")], "oxc-node": true },
+      { "watch:glob": [glob("worker")], "oxc-node": true },
+      { "watch:glob": [glob("relay")], "oxc-node": true },
+    ]);
+  });
+
+  test("the binding reports the import.meta.glob calls it expanded, in the main thread and a worker", async () => {
+    const root = project({
+      "package.json": ESM,
+      "main.ts": [
+        'import { Worker } from "node:worker_threads";',
+        "console.log(Object.keys(import.meta.glob('./routes/*.ts')));",
+        'const worker = new Worker(new URL("./worker.ts", import.meta.url));',
+        'await new Promise((resolve) => worker.on("exit", resolve));',
+        "await new Promise((resolve) => setTimeout(resolve, 200));",
+        "",
+      ].join("\n"),
+      "worker.ts":
+        "console.log(Object.keys(import.meta.glob(['./jobs/**/*.ts', '!**/*.test.ts'], { exhaustive: true })));\n",
+      "routes/a.ts": "export {};\n",
+      "jobs/deep/b.ts": "export {};\n",
+      "jobs/deep/b.test.ts": "export {};\n",
+    });
+    const { messages, stdout, code, stderr } = await spy(root, [...REGISTER, "./main.ts"], {
+      WATCH_REPORT_DEPENDENCIES: "1",
+      OXC_IMPORT_GLOB: "1",
+    });
+    expect(code, stderr).toBe(0);
+    expect(stdout).toBe("[ './routes/a.ts' ]\n[ './jobs/deep/b.ts' ]\n");
+    const slashed = root.replaceAll("\\", "/");
+    const globs = messages
+      .filter((m) => "watch:glob" in (m as object))
+      .flatMap((m) => {
+        expect(m).toMatchObject({ "oxc-node": true });
+        return (m as { "watch:glob": unknown[] })["watch:glob"];
+      });
+    // The fields that are not set are not sent at all: the watcher would drop a `null`.
+    expect(globs).toEqual([
+      {
+        roots: [{ base: `${slashed}/routes`, depth: 1 }],
+        include: [`${slashed}/routes/*.ts`],
+        files: [`${slashed}/routes/a.ts`],
+      },
+      {
+        roots: [{ base: `${slashed}/jobs` }],
+        include: [`${slashed}/jobs/**/*.ts`],
+        exclude: ["**/*.test.ts"],
+        dot: true,
+        files: [`${slashed}/jobs/deep/b.ts`],
+      },
+    ]);
+  });
+});
+
 describe("the binding's watch exports", () => {
   // The binding glue is edited by hand, not regenerated; keep every entry and
   // its types in step.
   test.each([
     ["index.js", "module.exports.NAME = nativeBinding.NAME"],
-    ["index.d.ts", "export declare function NAME("],
+    ["index.d.ts", "export declare function NAME(", "export declare class NAME {"],
     ["oxc-node.wasi.cjs", "module.exports.NAME = __napiModule.exports.NAME"],
-    ["oxc-node.wasi.d.cts", "export declare function NAME("],
+    ["oxc-node.wasi.d.cts", "export declare function NAME(", "export declare class NAME {"],
     ["oxc-node.wasi-browser.js", "export const NAME = __napiModule.exports.NAME"],
-  ])("%s", (file, pattern) => {
+  ])("%s", (file, pattern, classPattern = pattern) => {
     const source = readFileSync(join(CORE, file), "utf8");
-    for (const name of ["enableWatchReport", "takeWatchDependencies"]) {
+    for (const name of [
+      "enableWatchReport",
+      "takeWatchDependencies",
+      "takeWatchGlobs",
+      "setImportGlob",
+      "getImportGlob",
+    ]) {
       expect(source).toContain(pattern.replaceAll("NAME", name));
     }
+    expect(source).toContain(classPattern.replaceAll("NAME", "GlobMatcher"));
   });
 });
 

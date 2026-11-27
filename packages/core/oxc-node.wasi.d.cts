@@ -4,6 +4,26 @@
 /** The WASI flavor this loader instantiates. */
 export declare const __napiBindingTarget: "wasm32-wasi";
 
+/**
+ * Whether a file counts for one `watch:glob` entry, and which folders its walk enters, by
+ * the rules the transform listed its files with. For the `globMatcher` of `runWatch`.
+ */
+export declare class GlobMatcher {
+  constructor(
+    include: Array<string>,
+    exclude?: Array<string> | undefined | null,
+    dot?: boolean | undefined | null,
+    nocase?: boolean | undefined | null,
+  );
+  /** Whether `file`, an absolute path with `/`, counts. */
+  matches(file: string): boolean;
+  /**
+   * Whether the walk enters the folder `dir`, an absolute path with `/`, as the
+   * transform's walk does: a file below it may count.
+   */
+  mayEnter(dir: string): boolean;
+}
+
 export declare class Output {
   /**
    * Returns the generated code
@@ -54,6 +74,13 @@ export declare function enableWatchReport(): void;
  * the deadline on every `module.register()` runtime.
  */
 export declare function freezeTransformDeps(): string;
+
+/**
+ * Whether this thread's transforms expand `import.meta.glob` calls: what `setImportGlob`
+ * set, else this thread's `OXC_IMPORT_GLOB`. Absent, empty, `"0"` and `"false"` leave it
+ * off, as for `OXC_TRANSFORM_ALL`.
+ */
+export declare function getImportGlob(): boolean;
 
 /**
  * The mode last passed to [`set_transform_deps`] — `"off"`, `"typescript"`
@@ -169,6 +196,14 @@ export interface ResolveFnOutput {
 export declare function setTransformDeps(mode?: string | undefined | null): void;
 
 /**
+ * Turn the expansion of `import.meta.glob` calls on or off for this thread, whatever
+ * `OXC_IMPORT_GLOB` says. A file transformed after the call sees the new value. A
+ * loader passes [`get_import_glob`] to its `module.register()` hook thread, whose
+ * context starts without the override.
+ */
+export declare function setImportGlob(enabled: boolean): void;
+
+/**
  * Pin one `tsconfig.json` for every file, as `OXC_TSCONFIG_PATH` does, but
  * without touching `process.env` — so the user's script and the processes it
  * spawns do not inherit a config chosen for the loader (issue #806).
@@ -191,6 +226,12 @@ export declare function setTsconfigPath(path?: string | undefined | null): void;
  * Always empty while recording is off.
  */
 export declare function takeWatchDependencies(): Array<string>;
+
+/**
+ * The `import.meta.glob` calls expanded since the last call, one entry for each call
+ * with a positive pattern. Always empty while recording is off.
+ */
+export declare function takeWatchGlobs(): Array<WatchGlob>;
 
 export declare function transform(path: string, source: string | Uint8Array): Output;
 
@@ -228,3 +269,30 @@ export declare function transformModuleRunner(
  * `setTransformDeps` call made after `@oxc-node/core/register` loaded.
  */
 export declare function transformsDep(path: string): boolean;
+
+/**
+ * An `import.meta.glob` call the transform expanded, as `@oxc-node/core/watch-report`
+ * sends it to the watcher in a `watch:glob` report.
+ */
+export interface WatchGlob {
+  /** One folder for each positive pattern. */
+  roots: Array<WatchGlobRoot>;
+  /** The positive patterns: absolute, with `/`, and the literal folder escaped. */
+  include: Array<string>;
+  /** The negative patterns, without their `!`. */
+  exclude?: Array<string>;
+  /** `exhaustive`: names that start with `.` and `node_modules` count too. */
+  dot?: boolean;
+  /** `caseSensitive: false`. */
+  nocase?: boolean;
+  /** The files the call listed, the importer included. */
+  files?: Array<string>;
+}
+
+/** A folder the watcher walks for one [`WatchGlob`]. */
+export interface WatchGlobRoot {
+  /** An absolute path with `/`. */
+  base: string;
+  /** Levels below `base` to walk: 1 for the files in it, absent for no limit. */
+  depth?: number;
+}

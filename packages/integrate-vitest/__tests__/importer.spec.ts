@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, renameSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, expect, test } from "vitest";
 
 /**
@@ -103,4 +103,46 @@ test("the importer probes pass", () => {
     "memory-failed-caught-new-files",
     "no-leak",
   ]);
+});
+
+// The importer runs the load hook's transform, so `OXC_IMPORT_GLOB` turns the expansion on
+// here too; the module runner then turns the generated imports into its own calls.
+test("import.meta.glob, lazy and eager", () => {
+  const files: Record<string, string> = {
+    "glob/package.json": JSON.stringify({ private: true }),
+    "glob/main.ts": [
+      'export const lazy = import.meta.glob("./routes/*.ts", { import: "name" });',
+      'export const eager = import.meta.glob("./routes/*.ts", { eager: true });',
+      "",
+    ].join("\n"),
+    "glob/routes/a.ts": 'export const name: string = "a";\n',
+    "glob/routes/b.ts": 'export const name: string = "b";\n',
+    "glob/host.mjs": [
+      `import { createImporter } from ${JSON.stringify(pathToFileURL(IMPORTER).href)};`,
+      'const { lazy, eager } = await createImporter(import.meta.url).import("./main.ts");',
+      "const names = await Promise.all(Object.values(lazy).map((load) => load()));",
+      "const modules = Object.entries(eager).map(([key, module]) => [key, module.name]);",
+      "console.log(JSON.stringify({ keys: Object.keys(lazy), names, modules }));",
+      "",
+    ].join("\n"),
+  };
+  for (const [name, contents] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, name)), { recursive: true });
+    writeFileSync(join(root, name), contents);
+  }
+  const result = spawnSync(process.execPath, [join(root, "glob/host.mjs")], {
+    cwd: join(root, "glob"),
+    encoding: "utf8",
+    env: { ...process.env, NODE_OPTIONS: undefined, OXC_LOG: undefined, OXC_IMPORT_GLOB: "1" },
+    timeout: 50_000,
+  });
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    keys: ["./routes/a.ts", "./routes/b.ts"],
+    names: ["a", "b"],
+    modules: [
+      ["./routes/a.ts", "a"],
+      ["./routes/b.ts", "b"],
+    ],
+  });
 });
